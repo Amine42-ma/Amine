@@ -287,15 +287,23 @@ class Stickman {
     const rageMul = this.rageActive ? 1.3 : 1;
     const moveInput = canAct && !this.blocking ? this.control.move : 0;
     this._moveInput = moveInput;
-    const speed = (grounded ? 0.5 : 0.3) * rageMul;
+    const speed = (grounded ? 0.55 : 0.3) * rageMul;
     if (moveInput !== 0) {
+      // Snappy reversal: cancel opposing momentum instantly so turning around
+      // feels tight rather than slippery.
+      if (grounded) {
+        for (const p of [this.pelvis, this.chest]) {
+          const vx = p.x - p.px;
+          if (Math.sign(vx) === -Math.sign(moveInput) && Math.abs(vx) > 0.4) p.px = p.x;
+        }
+      }
       const push = moveInput * speed;
-      this.pelvis.applyForce(push * 6, 0);
+      this.pelvis.applyForce(push * 7, 0);
       this.chest.applyForce(push * 3, 0);
       this.footA.applyForce(push * 3, 0);
       this.footB.applyForce(push * 3, 0);
       // Cap horizontal cruise speed so movement stays controllable
-      const maxV = 4.5 * rageMul;
+      const maxV = 4.6 * rageMul;
       for (const p of [this.pelvis, this.chest, this.footA, this.footB]) {
         const vx = p.x - p.px;
         if (Math.abs(vx) > maxV) p.px = p.x - Math.sign(vx) * maxV;
@@ -471,11 +479,11 @@ class Stickman {
       return;
     }
 
-    const stance = 13;
-    const phase = performance.now() * 0.013;
+    const stance = 10;                     // tighter stance → less splayed, more planted
+    const phase = performance.now() * 0.014;
     const moving = moveInput !== 0;
-    const walk = moving ? Math.sin(phase) * 11 : 0;
-    const lift = moving ? Math.max(0, -Math.cos(phase)) * 10 : 0;
+    const walk = moving ? Math.sin(phase) * 8 : 0;
+    const lift = moving ? Math.max(0, -Math.cos(phase)) * 8 : 0;
 
     // Hold the pelvis at standing height above the lowest foot.
     // Shift BOTH y and py so we reposition without injecting upward velocity —

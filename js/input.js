@@ -58,8 +58,12 @@ class InputManager {
       const ang = Math.atan2(dy, dx);
       const sx = Math.cos(ang) * clamped, sy = Math.sin(ang) * clamped;
       joyStick.style.transform = `translate(${sx}px, ${sy}px)`;
-      this.touch.move = Utils.clamp(dx / radius, -1, 1);
-      if (dy < -radius * 0.5) this.touch.jump = true; else this.touch.jump = false;
+      // Response curve: a small tilt past a dead-zone already moves decisively,
+      // ramping to full — so the character feels responsive, not slippery.
+      const raw = Utils.clamp(dx / radius, -1, 1);
+      const a = Math.abs(raw), dead = 0.16;
+      this.touch.move = a < dead ? 0 : Math.sign(raw) * Math.min(1, 0.5 + (a - dead) * 1.4);
+      this.touch.jump = dy < -radius * 0.45;
     };
     const endJoy = () => {
       joyId = null;

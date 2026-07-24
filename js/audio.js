@@ -151,41 +151,53 @@ class AudioManager {
   /* ---- Layered looping music: pads + bass + arpeggio + drums ---- */
   startMusic() {
     if (!this.enabled || !this.ctx || this._musicTimer) return;
-    // A-minor progression: Am – F – C – G (one chord per bar, 16 steps/bar)
+    // 8-bar A-minor journey (Am–F–C–G ×2 with a lead melody) for more interest
     const chords = [
       { bass: 55.00, notes: [220.00, 261.63, 329.63] }, // Am
       { bass: 43.65, notes: [174.61, 220.00, 261.63] }, // F
       { bass: 65.41, notes: [261.63, 329.63, 392.00] }, // C
       { bass: 49.00, notes: [196.00, 246.94, 293.66] }, // G
     ];
-    const arpPat = [0, 2, 1, 2, 0, 1, 2, 1]; // index into chord.notes over 8 eighth-notes
+    const arpPat = [0, 2, 1, 2, 0, 1, 2, 1];
+    // Lead melody: [step, chord-tone index, octave] played over each bar (bars 4-7)
+    const leadBars = [
+      [[0, 2, 2], [4, 1, 2], [6, 2, 2], [10, 0, 3], [12, 1, 2]],
+      [[0, 1, 2], [3, 2, 2], [8, 0, 2], [12, 2, 2], [14, 1, 3]],
+      [[0, 0, 3], [4, 2, 2], [6, 1, 2], [10, 2, 2], [12, 0, 3]],
+      [[2, 2, 2], [6, 1, 2], [8, 2, 2], [11, 0, 3], [14, 2, 2]],
+    ];
     this._musicStep = 0;
-    const bpm = 104;
+    const bpm = 106;
     const stepTime = 60 / bpm / 4; // 16th notes
     const loop = () => {
       if (!this.musicEnabled) return;
       const s = this._musicStep;
-      const bar = Math.floor(s / 16) % chords.length;
-      const step = s % 16;             // 0..15 within the bar
+      const barAbs = Math.floor(s / 16) % 8;      // 0..7 over the 8-bar loop
+      const bar = barAbs % 4;
+      const step = s % 16;
       const chord = chords[bar];
       const pad = this.musicGain;
+      const secondHalf = barAbs >= 4;             // lead only in the second half
 
-      // Pad chord at the start of each bar (soft, sustained)
       if (step === 0) {
         chord.notes.forEach((f) => this.tone(f, 1.9, 'sine', 0.045, pad));
         this.tone(chord.notes[0] * 2, 1.9, 'triangle', 0.02, pad);
       }
-      // Bassline: root on every beat, with a little octave bounce
+      // Bassline
       if (step % 4 === 0) this.tone(chord.bass, 0.42, 'sawtooth', 0.11, pad, chord.bass * 0.99);
       if (step % 4 === 2) this.tone(chord.bass * 2, 0.2, 'square', 0.05, pad);
-      // Arpeggio melody on eighth notes
-      if (step % 2 === 0) {
-        const n = chord.notes[arpPat[(step / 2) % arpPat.length]] * 2;
-        this.tone(n, 0.22, 'triangle', 0.06, pad);
+      // Arpeggio
+      if (step % 2 === 0) this.tone(chord.notes[arpPat[(step / 2) % arpPat.length]] * 2, 0.22, 'triangle', 0.06, pad);
+      // Lead melody (second half of the loop) — a bright square line
+      if (secondHalf) {
+        for (const [ls, idx, oct] of leadBars[bar]) {
+          if (ls === step) this.tone(chord.notes[idx] * (oct === 3 ? 4 : 2), 0.2, 'square', 0.05, pad, undefined);
+        }
       }
-      // Drums: kick on 1 & 3, snare on 2 & 4, hats on every 8th
+      // Drums (fuller groove in the second half)
       if (step === 0 || step === 8 || step === 6) this.kick(pad);
       if (step === 4 || step === 12) this.snare(pad);
+      if (secondHalf && step === 14) this.snare(pad);       // fill
       if (step % 2 === 0) this.hat(pad, step % 8 === 6);
 
       this._musicStep++;

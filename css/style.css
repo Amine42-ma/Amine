@@ -213,23 +213,28 @@ html, body {
 .result-sub { text-align: center; color: var(--muted); font-size: 1.3rem; margin: 0 0 0.8rem; font-weight: 800; letter-spacing: 3px; }
 
 /* ============================= HUD ============================= */
+/* Force LTR ordering so Player 1 (blue, spawns LEFT) has its bar on the LEFT
+   and the CPU (red, spawns RIGHT) on the RIGHT — matching the fighters. */
 #hud {
   position: absolute; top: 0; left: 0; right: 0; z-index: 10;
+  direction: ltr;
   display: flex; justify-content: space-between; align-items: flex-start;
   padding: max(12px, env(safe-area-inset-top)) 16px 0;
   pointer-events: none; gap: 12px;
 }
 .hud-side { flex: 1; max-width: 42%; }
-.hud-side.right { text-align: left; }
+.hud-side.left { text-align: left; }
+.hud-side.right { text-align: right; }
+/* right player's bars drain toward the centre */
+.hud-side.right .health-bar, .hud-side.right .special-bar { direction: rtl; }
 .hud-name { font-weight: 800; font-size: clamp(0.8rem, 2.5vw, 1.05rem); margin-bottom: 4px; text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6); }
 .health-bar {
   height: 18px; background: rgba(0, 0, 0, 0.45); border-radius: 10px; overflow: hidden;
   border: 2px solid rgba(255, 255, 255, 0.18); box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4);
 }
 .health-fill { height: 100%; border-radius: 8px; transition: width 0.18s ease; }
-.health-fill.p1 { background: linear-gradient(90deg, #1e5bff, #6ba0ff); }
-.health-fill.p2 { background: linear-gradient(270deg, #ff2b45, #ff7a8c); }
-.hud-side.right .health-bar { transform: scaleX(1); }
+.health-fill.p1 { background: linear-gradient(90deg, #6ba0ff, #1e5bff); }
+.health-fill.p2 { background: linear-gradient(90deg, #ff7a8c, #ff2b45); }
 
 .special-bar {
   height: 7px; margin-top: 4px; background: rgba(0, 0, 0, 0.4); border-radius: 6px;
@@ -244,7 +249,8 @@ html, body {
 @keyframes ragePulse { from { box-shadow: 0 0 4px rgba(255,90,110,0.4); } to { box-shadow: 0 0 14px rgba(255,90,110,0.9); } }
 
 .hud-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
-.hud-side.right .hud-row { justify-content: flex-start; flex-direction: row; }
+.hud-side.left .hud-row { justify-content: flex-start; }
+.hud-side.right .hud-row { justify-content: flex-end; }
 .weapon-name { font-size: 0.72rem; color: var(--muted); font-weight: 600; }
 .pips { display: flex; gap: 5px; }
 .pip { width: 12px; height: 12px; border-radius: 50%; background: rgba(255, 255, 255, 0.18); border: 1px solid rgba(255, 255, 255, 0.25); transition: background 0.2s, transform 0.2s; }

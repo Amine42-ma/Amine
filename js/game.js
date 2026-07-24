@@ -948,6 +948,29 @@ class Game {
     ctx.fillStyle = g;
     ctx.fillRect(-400, -600, STAGE_W + 800, STAGE_H + 800);
 
+    // atmospheric halo — a soft radial glow high in the sky adds depth so the
+    // background never reads as a flat wash of colour
+    const halo = ctx.createRadialGradient(STAGE_W / 2, STAGE_H * 0.28, 60, STAGE_W / 2, STAGE_H * 0.28, STAGE_W * 0.62);
+    halo.addColorStop(0, this._hexA(this._shade(m.accent, 0.25), 0.28));
+    halo.addColorStop(0.5, this._hexA(m.accent, 0.06));
+    halo.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = halo;
+    ctx.fillRect(-400, -600, STAGE_W + 800, STAGE_H + 800);
+
+    // gentle god-rays sweeping from the top for a sense of light and space
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.05;
+    for (let i = 0; i < 5; i++) {
+      const rx = STAGE_W * (0.2 + i * 0.16) + Math.sin(this.time * 0.01 + i) * 40;
+      ctx.fillStyle = this._shade(m.accent, 0.3);
+      ctx.beginPath();
+      ctx.moveTo(rx - 40, -600); ctx.lineTo(rx + 40, -600);
+      ctx.lineTo(rx + 180, STAGE_H); ctx.lineTo(rx - 100, STAGE_H);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+
     // parallax offset from camera
     const par = this.camera.x - STAGE_W / 2;
 
