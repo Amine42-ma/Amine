@@ -1,0 +1,2052 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Steel Arena: Factory Wars</title>
+<style>
+  :root{
+    --bg:#0a0d12; --panel:#121821e6; --panel2:#0e141bcc; --line:#25313f;
+    --accent:#ffb020; --accent2:#4fd1ff; --danger:#ff4d4d; --ok:#4ade80;
+    --txt:#dbe6f2; --dim:#7d8fa3;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);
+    font-family:"Segoe UI",Tahoma,system-ui,Arial,sans-serif;color:var(--txt);
+    user-select:none;touch-action:none}
+  canvas{display:block;position:absolute;inset:0}
+  #game{cursor:crosshair}
+
+  /* ---------- HUD ---------- */
+  .hud{position:absolute;pointer-events:none;z-index:10}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    backdrop-filter:blur(6px);box-shadow:0 8px 30px #0008;pointer-events:auto}
+
+  /* Top resource bar */
+  #topbar{top:8px;left:8px;right:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;
+    padding:8px 10px}
+  .res{display:flex;align-items:center;gap:6px;font-weight:700;font-size:14px;
+    padding:3px 8px;border-radius:8px;background:#0c1219;border:1px solid #1d2732;min-width:78px}
+  .res .ic{width:18px;height:18px;border-radius:5px;flex:0 0 auto;box-shadow:inset 0 0 0 1px #0006}
+  .res small{color:var(--dim);font-weight:600;font-size:10px;margin-inline-start:2px}
+  .res .v{margin-inline-start:auto}
+  .spacer{flex:1}
+  #wavebox{display:flex;gap:10px;align-items:center}
+  .badge{padding:4px 10px;border-radius:8px;background:#0c1219;border:1px solid #1d2732;
+    font-weight:800;font-size:13px;display:flex;gap:6px;align-items:center}
+  .badge b{color:var(--accent)}
+  #nextWaveBtn{pointer-events:auto;cursor:pointer;background:linear-gradient(180deg,#ff6a2b,#d63a12);
+    border:1px solid #ff8a4d;color:#fff;padding:6px 12px;border-radius:8px;font-weight:800;font-size:13px}
+  #nextWaveBtn:hover{filter:brightness(1.1)}
+  #nextWaveBtn:disabled{opacity:.45;cursor:default}
+
+  /* Energy bar */
+  #energywrap{top:60px;left:8px;width:230px;padding:8px 10px}
+  .bar{height:12px;border-radius:6px;background:#0b1017;border:1px solid #1d2732;overflow:hidden;position:relative}
+  .bar>i{position:absolute;inset:0;transform-origin:left;border-radius:6px;transition:transform .12s linear}
+  .lbl{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-bottom:4px;font-weight:700}
+  .lbl b{color:var(--txt)}
+
+  /* Minimap */
+  #minimap{top:60px;right:8px;padding:6px;border-radius:10px}
+  #miniCv{display:block;border-radius:6px;background:#070b10;image-rendering:pixelated}
+  #miniLabel{font-size:10px;color:var(--dim);text-align:center;margin-top:3px;font-weight:700}
+
+  /* Build menu */
+  #buildbar{bottom:8px;left:8px;right:8px;padding:8px;display:flex;gap:6px;align-items:stretch;
+    overflow-x:auto;scrollbar-width:thin}
+  .cat{display:flex;gap:6px;padding-inline-end:6px;border-inline-end:1px solid var(--line)}
+  .btn{position:relative;min-width:64px;padding:6px 6px 5px;border-radius:9px;background:#0c1219;
+    border:1px solid #1d2732;cursor:pointer;text-align:center;font-size:11px;font-weight:700;
+    display:flex;flex-direction:column;align-items:center;gap:3px;transition:.1s}
+  .btn:hover{border-color:#3a4a5c;background:#111a24}
+  .btn.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 0 14px #ffb02066}
+  .btn .g{width:30px;height:30px;border-radius:7px;display:grid;place-items:center;font-size:18px}
+  .btn .c{font-size:9px;color:var(--dim);font-weight:600;line-height:1.15;white-space:nowrap}
+  .btn.dis{opacity:.4;filter:grayscale(.6)}
+  .btn .key{position:absolute;top:2px;inset-inline-start:3px;font-size:8px;color:#54677a;font-weight:800}
+
+  /* Right side tool buttons */
+  #tools{bottom:74px;left:8px;display:flex;gap:6px}
+  .tool{width:40px;height:40px;border-radius:9px;background:var(--panel);border:1px solid var(--line);
+    cursor:pointer;display:grid;place-items:center;font-size:18px;pointer-events:auto}
+  .tool.on{border-color:var(--accent);color:var(--accent)}
+  .tool:hover{background:#111a24}
+
+  /* Upgrade / Robot / Menu panels overlay */
+  .overlay{position:absolute;inset:0;z-index:30;background:#040609cc;display:none;
+    align-items:center;justify-content:center;backdrop-filter:blur(3px)}
+  .overlay.open{display:flex}
+  .modal{width:min(920px,94vw);max-height:88vh;display:flex;flex-direction:column;
+    background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 20px 80px #000c}
+  .mhead{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#141c26,#0f151d)}
+  .mhead h2{margin:0;font-size:18px;letter-spacing:.5px}
+  .mhead .x{margin-inline-start:auto;cursor:pointer;font-size:22px;color:var(--dim);width:32px;height:32px;
+    display:grid;place-items:center;border-radius:8px}
+  .mhead .x:hover{background:#1c2733;color:#fff}
+  .tabs{display:flex;gap:6px;padding:10px 14px 0;flex-wrap:wrap}
+  .tab{padding:6px 12px;border-radius:8px 8px 0 0;background:#0d141c;border:1px solid var(--line);
+    border-bottom:none;cursor:pointer;font-size:12px;font-weight:700;color:var(--dim)}
+  .tab.on{color:var(--accent);background:#131c26}
+  .mbody{padding:14px;overflow:auto}
+  .ugrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+  .ucard{background:#0c1219;border:1px solid #1d2732;border-radius:11px;padding:10px 11px}
+  .ucard h4{margin:0 0 3px;font-size:13px;display:flex;align-items:center;gap:6px}
+  .ucard .lv{margin-inline-start:auto;font-size:10px;color:var(--accent);font-weight:800}
+  .ucard p{margin:0 0 8px;font-size:11px;color:var(--dim);line-height:1.35}
+  .ucard .cost{display:flex;gap:8px;flex-wrap:wrap;font-size:11px;margin-bottom:8px}
+  .ucard .cost span{color:var(--dim)}
+  .ubtn{width:100%;padding:6px;border-radius:8px;border:1px solid #2a6b3a;background:#123522;color:#7ef0a0;
+    font-weight:800;cursor:pointer;font-size:12px}
+  .ubtn:hover{filter:brightness(1.15)}
+  .ubtn.dis{border-color:#31404d;background:#131a22;color:#4d5f70;cursor:default;filter:none}
+  .ubtn.max{border-color:#5a4a1a;background:#2a230d;color:var(--accent)}
+
+  .robrow{display:flex;gap:6px;flex-wrap:wrap}
+  .robcard{width:190px;background:#0c1219;border:1px solid #1d2732;border-radius:11px;padding:10px}
+  .robcard h4{margin:0 0 4px;font-size:13px}
+  .robcard .desc{font-size:11px;color:var(--dim);min-height:34px;margin-bottom:6px;line-height:1.3}
+
+  /* Toast / log */
+  #log{bottom:120px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:5px;
+    align-items:center;z-index:20;pointer-events:none}
+  .toast{background:#0d141ce6;border:1px solid var(--line);padding:6px 14px;border-radius:20px;
+    font-size:12px;font-weight:700;animation:fade 3s forwards}
+  .toast.warn{border-color:#5a2a2a;color:#ffb4b4}
+  .toast.good{border-color:#2a5a3a;color:#b4ffcf}
+  @keyframes fade{0%{opacity:0;transform:translateY(8px)}12%{opacity:1;transform:none}
+    80%{opacity:1}100%{opacity:0;transform:translateY(-8px)}}
+
+  /* tooltip */
+  #tip{position:absolute;z-index:40;pointer-events:none;background:#0d141cf2;border:1px solid var(--line);
+    padding:7px 10px;border-radius:9px;font-size:12px;max-width:240px;display:none;box-shadow:0 8px 24px #000a;line-height:1.4}
+  #tip b{color:var(--accent)}
+
+  /* Start / gameover screens */
+  #start,#over{position:absolute;inset:0;z-index:60;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;text-align:center;gap:16px;
+    background:radial-gradient(1200px 700px at 50% 30%,#152233,#05070b 70%)}
+  #over{display:none;background:radial-gradient(1200px 700px at 50% 30%,#331515,#05070b 70%)}
+  .title{font-size:min(9vw,64px);font-weight:900;letter-spacing:2px;margin:0;
+    background:linear-gradient(180deg,#ffd27a,#ff8a2b);-webkit-background-clip:text;background-clip:text;color:transparent;
+    text-shadow:0 6px 30px #ff8a2b33}
+  .sub{color:var(--dim);max-width:620px;font-size:15px;line-height:1.7;margin:0 14px}
+  .play{margin-top:6px;padding:14px 40px;border-radius:12px;border:1px solid #ff8a4d;cursor:pointer;
+    background:linear-gradient(180deg,#ff7a35,#d63a12);color:#fff;font-size:20px;font-weight:900;letter-spacing:1px;
+    box-shadow:0 10px 40px #ff5a2b55}
+  .play:hover{filter:brightness(1.1)}
+  .hint{color:#5f7183;font-size:12px;max-width:640px;line-height:1.8}
+  kbd{background:#141c26;border:1px solid #2a3745;border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:11px;color:#cfe;font-family:inherit}
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:#26333f;border-radius:6px}
+  ::-webkit-scrollbar-track{background:transparent}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<canvas id="light"></canvas>
+
+<!-- ===== HUD ===== -->
+<div id="topbar" class="hud panel"></div>
+
+<div id="energywrap" class="hud panel">
+  <div class="lbl"><span>الطاقة</span><b id="enTxt">0 / 0</b></div>
+  <div class="bar"><i id="enBar" style="background:linear-gradient(90deg,#ffd15c,#ff9a2b)"></i></div>
+  <div class="lbl" style="margin:5px 0 0"><span id="enFlow" style="color:#8aa">إنتاج 0 / استهلاك 0</span></div>
+</div>
+
+<div id="minimap" class="hud panel">
+  <canvas id="miniCv" width="168" height="168"></canvas>
+  <div id="miniLabel">الخريطة المصغرة</div>
+</div>
+
+<div id="tools" class="hud">
+  <div class="tool" id="tUpg" title="التطويرات (U)">⚙️</div>
+  <div class="tool" id="tRobot" title="الروبوتات (B)">🤖</div>
+  <div class="tool" id="tDelete" title="هدم (X)">⛏️</div>
+  <div class="tool" id="tPause" title="إيقاف (P)">⏸️</div>
+  <div class="tool" id="tHelp" title="مساعدة">❔</div>
+</div>
+
+<div id="buildbar" class="hud panel"></div>
+
+<div id="log" class="hud"></div>
+<div id="tip"></div>
+
+<!-- ===== Upgrades overlay ===== -->
+<div id="upgOverlay" class="overlay">
+  <div class="modal">
+    <div class="mhead"><h2>⚙️ مركز التطوير</h2>
+      <span style="color:var(--dim);font-size:12px">اختر فئة لتطوير مصنعك — أكثر من 200 تطوير</span>
+      <div class="x" data-close>×</div></div>
+    <div class="tabs" id="upgTabs"></div>
+    <div class="mbody"><div class="ugrid" id="upgGrid"></div></div>
+  </div>
+</div>
+
+<!-- ===== Robots overlay ===== -->
+<div id="robOverlay" class="overlay">
+  <div class="modal">
+    <div class="mhead"><h2>🤖 مصنع الروبوتات</h2>
+      <span id="robCap" style="color:var(--dim);font-size:12px"></span>
+      <div class="x" data-close>×</div></div>
+    <div class="mbody"><div class="robrow" id="robGrid"></div></div>
+  </div>
+</div>
+
+<!-- ===== Help overlay ===== -->
+<div id="helpOverlay" class="overlay">
+  <div class="modal">
+    <div class="mhead"><h2>❔ كيفية اللعب</h2><div class="x" data-close>×</div></div>
+    <div class="mbody" style="font-size:14px;line-height:1.9">
+      <p><b style="color:var(--accent)">الهدف:</b> حوّل مصنعك الصغير إلى إمبراطورية حربية وادافع عن المركز الرئيسي ضد موجات الأعداء المتزايدة.</p>
+      <p><b style="color:var(--accent)">سلسلة الإنتاج:</b> ضع <b>مثقابًا (⛏)</b> فوق منجم خام → مرّر الخام عبر <b>سيور ناقلة (▸)</b> → مرّره عبر <b>فرن (🔥)</b> لمضاعفة المعادن → أوصله إلى <b>المركز (🏭)</b> ليُضاف للمخزون.</p>
+      <p><b style="color:var(--accent)">الطاقة:</b> ابنِ <b>مولّدات</b> تحرق الفحم/النفط. كل المباني تحتاج طاقة لتعمل.</p>
+      <p><b style="color:var(--accent)">التصنيع:</b> <b>المصانع</b> تحوّل المعادن إلى <b>ذخيرة</b> و<b>قطع غيار</b> لازمة للدفاعات المتقدمة والروبوتات.</p>
+      <p><b style="color:var(--accent)">الدفاع:</b> ابنِ الأبراج والمدافع ومنصات الصواريخ والجدران قبل بدء الموجة. اضغط <b>بدء الموجة</b> عندما تكون جاهزًا.</p>
+      <p style="border-top:1px solid var(--line);padding-top:10px">
+        <b>التحكم:</b><br>
+        <kbd>WASD</kbd>/<kbd>الأسهم</kbd> أو سحب بالفأرة = تحريك الكاميرا &nbsp;·&nbsp;
+        <kbd>عجلة الفأرة</kbd> = تكبير &nbsp;·&nbsp;
+        <kbd>R</kbd> = تدوير &nbsp;·&nbsp;
+        <kbd>1-9</kbd> = اختيار مبنى<br>
+        <kbd>X</kbd> = وضع الهدم &nbsp;·&nbsp;
+        <kbd>U</kbd> = التطويرات &nbsp;·&nbsp;
+        <kbd>B</kbd> = الروبوتات &nbsp;·&nbsp;
+        <kbd>P</kbd> = إيقاف مؤقت &nbsp;·&nbsp;
+        <kbd>Esc</kbd> = إلغاء
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Start screen ===== -->
+<div id="start">
+  <h1 class="title">STEEL ARENA</h1>
+  <div style="margin-top:-14px;letter-spacing:8px;color:#ff9a2b;font-weight:800;font-size:min(4vw,22px)">FACTORY&nbsp;WARS</div>
+  <p class="sub">ابنِ. اصهر. صنّع. دافع. من مثقاب واحد إلى مصنع حربي لا يُقهر — واصمد أمام موجات لا تنتهي من الأعداء والزعماء العمالقة.</p>
+  <button class="play" id="playBtn">▶ ابدأ اللعب</button>
+  <div class="hint">نصيحة: ابدأ بوضع المثاقب فوق مناجم الحديد والفحم، ثم اربطها بالسيور إلى المركز. لديك وقت للبناء قبل كل موجة.</div>
+</div>
+
+<!-- ===== Game over ===== -->
+<div id="over">
+  <h1 class="title" style="background:linear-gradient(180deg,#ff9a9a,#ff3b3b);-webkit-background-clip:text;background-clip:text">تم تدمير المركز</h1>
+  <p class="sub" id="overStats"></p>
+  <button class="play" id="againBtn" style="background:linear-gradient(180deg,#ff5a5a,#c11)">↻ العب مرة أخرى</button>
+</div>
+
+<script>
+"use strict";
+/* =========================================================================
+   STEEL ARENA: FACTORY WARS  —  single-file factory automation + tower defense
+   Canvas 2D, no external libraries.
+   ========================================================================= */
+
+/* ---------------------------------------------------------------------- */
+/* Core constants                                                          */
+/* ---------------------------------------------------------------------- */
+const TILE = 34;
+const GW = 70, GH = 70;                 // grid dimensions (tiles)
+const WORLD_W = GW * TILE, WORLD_H = GH * TILE;
+
+const cv = document.getElementById('game');
+const ctx = cv.getContext('2d');
+const lcv = document.getElementById('light');
+const lctx = lcv.getContext('2d');
+const mini = document.getElementById('miniCv');
+const mctx = mini.getContext('2d');
+
+let W = 0, H = 0, DPR = 1;
+function resize(){
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = window.innerWidth; H = window.innerHeight;
+  for(const c of [cv, lcv]){
+    c.width = W * DPR; c.height = H * DPR;
+    c.style.width = W+'px'; c.style.height = H+'px';
+  }
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  lctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ---------------------------------------------------------------------- */
+/* Utility                                                                 */
+/* ---------------------------------------------------------------------- */
+const rand = (a,b)=>a+Math.random()*(b-a);
+const randi = (a,b)=>Math.floor(rand(a,b+1));
+const clamp = (v,a,b)=>v<a?a:v>b?b:v;
+const dist2 = (ax,ay,bx,by)=>{const dx=ax-bx,dy=ay-by;return dx*dx+dy*dy;};
+const lerp = (a,b,t)=>a+(b-a)*t;
+const now = ()=>performance.now();
+const fmt = n=>{
+  n = Math.floor(n);
+  if(n>=1e9) return (n/1e9).toFixed(2)+'B';
+  if(n>=1e6) return (n/1e6).toFixed(2)+'M';
+  if(n>=1e4) return (n/1e3).toFixed(1)+'k';
+  return ''+n;
+};
+const DIRS = [[1,0],[0,1],[-1,0],[0,-1]]; // E S W N
+
+/* ---------------------------------------------------------------------- */
+/* Resource + item definitions                                             */
+/* ---------------------------------------------------------------------- */
+const RES = {
+  iron:   {name:'حديد',   col:'#c9d2da', short:'Fe'},
+  copper: {name:'نحاس',   col:'#e08a4a', short:'Cu'},
+  coal:   {name:'فحم',    col:'#3a3f47', short:'C'},
+  stone:  {name:'حجر',    col:'#9a8f7a', short:'St'},
+  oil:    {name:'نفط',    col:'#7a4fd1', short:'Oil'},
+  crystal:{name:'كريستال',col:'#4fd1ff', short:'Cr'},
+  energy: {name:'طاقة',   col:'#ffcf4f', short:'E'},
+  ammo:   {name:'ذخيرة',  col:'#ff6a4f', short:'Am'},
+  parts:  {name:'قطع',    col:'#8affc0', short:'Pt'},
+};
+const RES_ORDER = ['iron','copper','coal','stone','oil','crystal','energy','ammo','parts'];
+
+/* ---------------------------------------------------------------------- */
+/* Building definitions                                                    */
+/* ---------------------------------------------------------------------- */
+// key: {name, glyph, color, cost{}, hp, cat, needsOre, desc, ...}
+const B = {
+  miner:    {name:'مثقاب',        glyph:'⛏', color:'#5a6b7c', hp:120, cat:'prod',
+             cost:{iron:15,stone:10}, needsOre:true, key:'1',
+             desc:'يُوضع فوق منجم لاستخراج الخام تلقائيًا إلى السير أو المبنى أمامه.'},
+  belt:     {name:'سير ناقل',     glyph:'▸', color:'#3a4652', hp:40, cat:'logi',
+             cost:{iron:2}, key:'2',
+             desc:'ينقل الخام تلقائيًا في اتجاهه. اسحب لرسم خط كامل. اضغط R للتدوير.'},
+  arm:      {name:'ذراع روبوتية', glyph:'🦾', color:'#4a5a6a', hp:60, cat:'logi',
+             cost:{iron:8,copper:4}, key:'3',
+             desc:'تنقل عنصرًا من الخلفها إلى أمامها — مثالية لتغذية الأفران والمخازن.'},
+  furnace:  {name:'فرن',          glyph:'🔥', color:'#7a3a2a', hp:180, cat:'prod',
+             cost:{iron:20,stone:20}, key:'4',
+             desc:'يصهر خام الحديد/النحاس فيضاعف قيمته. يستهلك طاقة.'},
+  generator:{name:'مولّد كهرباء', glyph:'⚡', color:'#6a5a2a', hp:200, cat:'prod',
+             cost:{iron:30,copper:15}, key:'5',
+             desc:'يحرق الفحم أو النفط لإنتاج الطاقة التي تحتاجها كل المباني.'},
+  factory:  {name:'مصنع',         glyph:'🏭', color:'#3a5a6a', hp:220, cat:'prod',
+             cost:{iron:40,copper:30}, key:'6',
+             desc:'يحوّل المعادن إلى ذخيرة وقطع غيار للدفاعات المتقدمة والروبوتات.'},
+  storage:  {name:'مخزن',         glyph:'📦', color:'#5a4a3a', hp:260, cat:'prod',
+             cost:{iron:25,stone:35}, key:'7',
+             desc:'يرفع الحد الأقصى لتخزين الموارد. يجمع أي عنصر يصله.'},
+  turret:   {name:'برج رشاش',     glyph:'🔫', color:'#4a5560', hp:160, cat:'def',
+             cost:{iron:35,copper:10}, range:180, dmg:9, rate:0.14, key:'8',
+             desc:'برج سريع منخفض الضرر. يستهلك ذخيرة وطاقة.'},
+  cannon:   {name:'مدفع',         glyph:'💥', color:'#5a4550', hp:240, cat:'def',
+             cost:{iron:60,copper:25,parts:6}, range:230, dmg:46, rate:1.1, splash:60, key:'9',
+             desc:'مدفع بطيء ضخم الضرر مع انفجار محيطي. يحتاج قطع غيار.'},
+  missile:  {name:'منصة صواريخ',  glyph:'🚀', color:'#503a5a', hp:200, cat:'def',
+             cost:{iron:70,copper:40,parts:14}, range:320, dmg:70, rate:1.7, splash:70,
+             desc:'تطلق صواريخ موجّهة بعيدة المدى شديدة التدمير.'},
+  wall:     {name:'جدار',         glyph:'🧱', color:'#6a6258', hp:600, cat:'def',
+             cost:{stone:12},
+             desc:'حاجز صلب يمتص هجمات الأعداء ويحمي المباني خلفه.'},
+  repair:   {name:'محطة إصلاح',   glyph:'🔧', color:'#3a6a55', hp:180, cat:'def',
+             cost:{iron:40,parts:8}, range:150,
+             desc:'تُصلح المباني المتضررة القريبة تلقائيًا. تستهلك قطع غيار وطاقة.'},
+};
+const HUB = {name:'المركز الرئيسي', glyph:'🏰', color:'#c9962a', hp:3000};
+
+const BUILD_ORDER = ['miner','belt','arm','furnace','generator','factory','storage','turret','cannon','missile','wall','repair'];
+
+/* ---------------------------------------------------------------------- */
+/* Upgrade system (200+)                                                   */
+/* ---------------------------------------------------------------------- */
+// Each category => 10 levels. 22 categories => 220 upgrades.
+const UPCATS = [
+  {id:'mineSpd', tab:'الإنتاج', name:'سرعة التعدين', icon:'⛏', per:0.12, mul:'mineSpd',
+    desc:'يزيد سرعة استخراج المثاقب.', base:{iron:60,copper:20}},
+  {id:'mineYield', tab:'الإنتاج', name:'مردود التعدين', icon:'💠', per:0.10, mul:'mineYield',
+    desc:'يزيد كمية الخام المستخرجة لكل دورة.', base:{iron:80,stone:60}},
+  {id:'smeltSpd', tab:'الإنتاج', name:'سرعة الصهر', icon:'🔥', per:0.14, mul:'smeltSpd',
+    desc:'تصهر الأفران المعادن أسرع.', base:{iron:90,coal:40}},
+  {id:'smeltYield', tab:'الإنتاج', name:'مردود الصهر', icon:'🥇', per:0.15, mul:'smeltYield',
+    desc:'تنتج الأفران معادن أكثر لكل خام.', base:{iron:120,copper:60}},
+  {id:'beltSpd', tab:'الإنتاج', name:'سرعة السيور', icon:'▸', per:0.12, mul:'beltSpd',
+    desc:'تتحرك العناصر أسرع على السيور.', base:{iron:50,copper:30}},
+  {id:'facSpd', tab:'الإنتاج', name:'سرعة التصنيع', icon:'🏭', per:0.13, mul:'facSpd',
+    desc:'تنتج المصانع الذخيرة والقطع أسرع.', base:{copper:80,crystal:15}},
+  {id:'crystalYield', tab:'الإنتاج', name:'مردود الكريستال', icon:'🔷', per:0.12, mul:'crystalYield',
+    desc:'استخراج كريستال أكثر من المناجم النادرة.', base:{crystal:20,copper:100}},
+  {id:'armSpd', tab:'الإنتاج', name:'سرعة الأذرع', icon:'🦾', per:0.15, mul:'armSpd',
+    desc:'تنقل الأذرع الروبوتية العناصر أسرع.', base:{iron:70,copper:40}},
+
+  {id:'enProd', tab:'الطاقة', name:'إنتاج الطاقة', icon:'⚡', per:0.16, mul:'enProd',
+    desc:'تولّد المولّدات طاقة أكثر من نفس الوقود.', base:{copper:70,coal:60}},
+  {id:'enCap', tab:'الطاقة', name:'سعة الطاقة', icon:'🔋', per:0.20, mul:'enCap',
+    desc:'يرفع الحد الأقصى لتخزين الطاقة.', base:{iron:100,copper:60}},
+  {id:'enEff', tab:'الطاقة', name:'كفاءة الطاقة', icon:'🌿', per:0.06, mul:'enEff',
+    desc:'تستهلك المباني طاقة أقل.', base:{crystal:30,copper:120}},
+  {id:'fuelEff', tab:'الطاقة', name:'كفاءة الوقود', icon:'♻️', per:0.07, mul:'fuelEff',
+    desc:'يحرق المولّد وقودًا أقل لكل طاقة.', base:{coal:120,oil:20}},
+
+  {id:'turDmg', tab:'الدفاع', name:'ضرر الأبراج', icon:'🔫', per:0.14, mul:'turDmg',
+    desc:'تسبب كل الأبراج والمدافع ضررًا أكبر.', base:{iron:120,copper:50}},
+  {id:'turRate', tab:'الدفاع', name:'سرعة الإطلاق', icon:'⏱', per:0.10, mul:'turRate',
+    desc:'تطلق الدفاعات أسرع.', base:{copper:90,parts:8}},
+  {id:'turRange', tab:'الدفاع', name:'مدى الأبراج', icon:'🎯', per:0.08, mul:'turRange',
+    desc:'يزيد مدى كل الدفاعات.', base:{iron:130,crystal:20}},
+  {id:'splash', tab:'الدفاع', name:'نطاق الانفجار', icon:'💣', per:0.12, mul:'splash',
+    desc:'يوسّع نطاق انفجار المدافع والصواريخ.', base:{parts:20,crystal:25}},
+  {id:'ammoEff', tab:'الدفاع', name:'كفاءة الذخيرة', icon:'🧨', per:0.07, mul:'ammoEff',
+    desc:'تستهلك الأبراج ذخيرة أقل لكل طلقة.', base:{copper:100,parts:12}},
+
+  {id:'bHp', tab:'الهيكل', name:'متانة المباني', icon:'🛡', per:0.15, mul:'bHp',
+    desc:'ترفع نقاط صحة كل المباني.', base:{iron:150,stone:100}},
+  {id:'wallHp', tab:'الهيكل', name:'متانة الجدران', icon:'🧱', per:0.25, mul:'wallHp',
+    desc:'جدران أقوى بكثير.', base:{stone:200}},
+  {id:'repair', tab:'الهيكل', name:'سرعة الإصلاح', icon:'🔧', per:0.16, mul:'repair',
+    desc:'تُصلح محطات الإصلاح والروبوتات أسرع.', base:{parts:16,iron:120}},
+  {id:'resCap', tab:'الهيكل', name:'سعة التخزين', icon:'📦', per:0.30, mul:'resCap',
+    desc:'يرفع الحد الأقصى لكل الموارد.', base:{stone:120,iron:120}},
+
+  {id:'robDmg', tab:'الروبوتات', name:'قوة الروبوتات', icon:'🤖', per:0.16, mul:'robDmg',
+    desc:'روبوتات القتال تسبب ضررًا أكبر.', base:{parts:20,copper:100}},
+  {id:'robSpd', tab:'الروبوتات', name:'سرعة الروبوتات', icon:'💨', per:0.12, mul:'robSpd',
+    desc:'تتحرك كل الروبوتات أسرع.', base:{parts:16,crystal:20}},
+  {id:'robCap', tab:'الروبوتات', name:'سعة الروبوتات', icon:'➕', per:0, mul:'robCap', flat:2,
+    desc:'يرفع الحد الأقصى لعدد الروبوتات (+2).', base:{parts:30,iron:150}},
+];
+// build upgrade level list
+const UP_LEVELS = 10;
+const UPS = {}; // id -> {def, level, }
+for(const c of UPCATS){ UPS[c.id] = {def:c, level:0}; }
+
+function upgCost(cat, level){
+  const g = Math.pow(1.55, level);
+  const o = {};
+  for(const k in cat.base) o[k] = Math.ceil(cat.base[k]*g);
+  return o;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Global game state                                                       */
+/* ---------------------------------------------------------------------- */
+const G = {
+  running:false, paused:false, over:false,
+  time:0, wave:0, waveActive:false, waveTimer:0, prepTime:45,
+  enemiesToSpawn:0, spawnAcc:0, killCount:0, builtCount:0,
+  res:{iron:120, copper:40, coal:60, stone:100, oil:0, crystal:0, energy:0, ammo:0, parts:0},
+  cap:{iron:400, copper:400, coal:400, stone:400, oil:200, crystal:200, energy:200, ammo:300, parts:200},
+  energyProd:0, energyUse:0,
+  robotCap:4,
+};
+
+let grid;        // [y][x] building object or null
+let terrain;     // [y][x] {type, ore, amount}
+let buildings;   // flat list of building objs (excluding null)
+let items;       // items are stored inside belt cells; also flying visuals
+let enemies, projectiles, robots, particles, lights, floats;
+let hub;         // reference to hub building
+
+/* Multiplier accessor */
+function M(id){
+  const u = UPS[id]; if(!u) return 1;
+  const c = u.def;
+  if(c.flat) return u.level*c.flat;   // for robCap: return added amount
+  return 1 + u.level*c.per;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Camera                                                                  */
+/* ---------------------------------------------------------------------- */
+const cam = {x:0, y:0, zoom:1, tzoom:1};
+function centerCam(x,y){ cam.x = x - W/2/cam.zoom; cam.y = y - H/2/cam.zoom; }
+function clampCam(){
+  const vw = W/cam.zoom, vh = H/cam.zoom;
+  cam.x = clamp(cam.x, -200, WORLD_W - vw + 200);
+  cam.y = clamp(cam.y, -200, WORLD_H - vh + 200);
+}
+function screenToWorld(sx,sy){ return {x: cam.x + sx/cam.zoom, y: cam.y + sy/cam.zoom}; }
+function worldToScreen(wx,wy){ return {x:(wx-cam.x)*cam.zoom, y:(wy-cam.y)*cam.zoom}; }
+
+/* ---------------------------------------------------------------------- */
+/* Terrain / map generation                                                */
+/* ---------------------------------------------------------------------- */
+// terrain types: grass, forest, mountain, water, ore(with ore key), oil, crystal, cave, enemybase
+function genWorld(){
+  terrain = [];
+  grid = [];
+  for(let y=0;y<GH;y++){
+    terrain[y]=[]; grid[y]=[];
+    for(let x=0;x<GW;x++){ terrain[y][x]={type:'grass',ore:null,amount:0,deco:Math.random()}; grid[y][x]=null; }
+  }
+  // value-noise-ish blobs for forests / mountains / water
+  function blob(type, count, rmin, rmax){
+    for(let i=0;i<count;i++){
+      const cx=randi(3,GW-4), cy=randi(3,GH-4), r=rand(rmin,rmax);
+      for(let y=Math.floor(cy-r);y<=cy+r;y++) for(let x=Math.floor(cx-r);x<=cx+r;x++){
+        if(x<0||y<0||x>=GW||y>=GH) continue;
+        const d=Math.hypot(x-cx,y-cy);
+        if(d<r*(0.6+Math.random()*0.4)) terrain[y][x].type=type;
+      }
+    }
+  }
+  blob('forest',14,2,4);
+  blob('mountain',9,2,3.5);
+  blob('water',7,2,3.4);
+
+  // Keep the center clear for the base (spawn area)
+  const bcx=Math.floor(GW/2), bcy=Math.floor(GH/2);
+  for(let y=bcy-6;y<=bcy+6;y++) for(let x=bcx-6;x<=bcx+6;x++){
+    if(x>=0&&y>=0&&x<GW&&y<GH){ if(Math.hypot(x-bcx,y-bcy)<7) terrain[y][x]={type:'grass',ore:null,amount:0,deco:Math.random()}; }
+  }
+
+  // Ore patches — cluster of tiles
+  function orePatch(ore, count, rmin, rmax, minDist){
+    let placed=0, guard=0;
+    while(placed<count && guard++<400){
+      const cx=randi(4,GW-5), cy=randi(4,GH-5);
+      if(Math.hypot(cx-bcx,cy-bcy)<minDist) continue;
+      const r=rand(rmin,rmax);
+      let any=false;
+      for(let y=Math.floor(cy-r);y<=cy+r;y++) for(let x=Math.floor(cx-r);x<=cx+r;x++){
+        if(x<0||y<0||x>=GW||y>=GH) continue;
+        if(Math.hypot(x-cx,y-cy)<r && (terrain[y][x].type==='grass'||terrain[y][x].type==='mountain')){
+          terrain[y][x]={type:'ore',ore:ore,amount:99999,deco:Math.random()}; any=true;
+        }
+      }
+      if(any) placed++;
+    }
+  }
+  orePatch('iron',7,1.6,2.6,5);
+  orePatch('copper',6,1.4,2.3,6);
+  orePatch('coal',6,1.5,2.4,5);
+  orePatch('stone',6,1.6,2.6,7);
+  orePatch('oil',4,1.1,1.7,9);
+  orePatch('crystal',3,1.0,1.5,12);
+
+  // Enemy bases + caves near edges (spawn points)
+  spawnPoints = [];
+  const edges = [];
+  for(let x=2;x<GW-2;x+=1){ edges.push([x,2]); edges.push([x,GH-3]); }
+  for(let y=2;y<GH-2;y+=1){ edges.push([2,y]); edges.push([GW-3,y]); }
+  // pick a handful of base points
+  for(let i=0;i<6;i++){
+    const e = edges[randi(0,edges.length-1)];
+    terrain[e[1]][e[0]] = {type:'enemybase',ore:null,amount:0,deco:Math.random()};
+    spawnPoints.push({x:e[0]*TILE+TILE/2, y:e[1]*TILE+TILE/2});
+  }
+  for(let i=0;i<8;i++){
+    const e = edges[randi(0,edges.length-1)];
+    if(terrain[e[1]][e[0]].type==='grass') terrain[e[1]][e[0]].type='cave';
+    spawnPoints.push({x:e[0]*TILE+TILE/2, y:e[1]*TILE+TILE/2});
+  }
+}
+let spawnPoints = [];
+
+function tileBuildable(tx,ty, type){
+  if(tx<0||ty<0||tx>=GW||ty>=GH) return false;
+  if(grid[ty][tx]) return false;
+  const t = terrain[ty][tx];
+  if(t.type==='water') return false;
+  if(t.type==='mountain' && type!=='wall') return false; // only walls on mountains
+  if(type==='miner') return t.type==='ore' || t.type==='oil';
+  return true;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Building factory                                                        */
+/* ---------------------------------------------------------------------- */
+function makeBuilding(type, tx, ty, dir){
+  const def = B[type];
+  const maxhp = Math.ceil(def.hp * M('bHp') * (type==='wall'?M('wallHp'):1));
+  const b = {
+    type, tx, ty, dir:dir||0,
+    x: tx*TILE+TILE/2, y: ty*TILE+TILE/2,
+    hp: maxhp, maxhp,
+    cool:0, anim:0,
+    inBuf:{}, outItem:null, beltItems:[], progress:0,
+    ore: type==='miner' ? terrain[ty][tx].ore : null,
+    flash:0,
+  };
+  return b;
+}
+
+function placeBuilding(type, tx, ty, dir, free){
+  const def = B[type];
+  if(!tileBuildable(tx,ty,type)) return false;
+  if(!free){
+    // check cost
+    for(const k in def.cost){ if(G.res[k] < def.cost[k]) return false; }
+    for(const k in def.cost){ G.res[k] -= def.cost[k]; }
+  }
+  const b = makeBuilding(type, tx, ty, dir);
+  grid[ty][tx] = b; buildings.push(b);
+  G.builtCount++;
+  spawnParticles(b.x,b.y,8,'#8fd', 1);
+  return true;
+}
+
+function removeBuilding(b, refund){
+  if(!b || b===hub) return;
+  const i = buildings.indexOf(b); if(i>=0) buildings.splice(i,1);
+  grid[b.ty][b.tx] = null;
+  if(refund){
+    const def = B[b.type];
+    for(const k in def.cost){ addRes(k, Math.floor(def.cost[k]*0.5)); }
+  }
+  spawnParticles(b.x,b.y,10,'#f96',1.4);
+}
+
+function addRes(k, n){ G.res[k] = clamp(G.res[k]+n, 0, capOf(k)); }
+function capOf(k){
+  if(k==='energy') return Math.floor(baseCap('energy'));
+  return Math.floor(baseCap(k));
+}
+function baseCap(k){
+  const storageBonus = storageCount*180;
+  const base = G.cap[k];
+  if(k==='energy') return base * M('enCap');
+  return (base + storageBonus) * M('resCap');
+}
+let storageCount = 0;
+
+/* ---------------------------------------------------------------------- */
+/* Item transport helpers                                                  */
+/* ---------------------------------------------------------------------- */
+// try to output an item {type,value} into the cell in facing direction
+function tryOutput(b, item){
+  const d = DIRS[b.dir];
+  const nx = b.tx + d[0], ny = b.ty + d[1];
+  if(nx<0||ny<0||nx>=GW||ny>=GH) return false;
+  const t = grid[ny][nx];
+  return depositTo(t, item, b.dir, nx, ny);
+}
+// deposit into target cell; dir = incoming direction
+function depositTo(t, item, fromDir, nx, ny){
+  if(!t){ return false; }
+  if(t.type==='belt'){
+    if(t.beltItems.length < 3){
+      // don't allow reverse feeding if belt points back into us (still allow – simpler)
+      t.beltItems.push({type:item.type, value:item.value, p:0});
+      return true;
+    }
+    return false;
+  }
+  if(t.type==='furnace'){
+    if(item.type==='iron'||item.type==='copper'){
+      t.inBuf[item.type] = (t.inBuf[item.type]||0) + item.value;
+      return true;
+    }
+    // furnace passes non-metals through if it has an out slot? just accept & count later:
+    if((t.inBuf._pass||0) < 6){ t.inBuf._pass=(t.inBuf._pass||0)+1; t._passItem=item; return true; }
+    return false;
+  }
+  if(t.type==='factory'){
+    t.inBuf[item.type] = (t.inBuf[item.type]||0) + item.value;
+    return true;
+  }
+  if(t.type==='hub' || t.type==='storage'){
+    collectItem(item);
+    return true;
+  }
+  return false;
+}
+function collectItem(item){
+  addRes(item.type, item.value);
+  floats.push({x:0,y:0,txt:'+'+item.value, col:RES[item.type].col, life:0}); // placeholder cleared
+  floats.pop();
+}
+
+/* ---------------------------------------------------------------------- */
+/* Machine updates                                                         */
+/* ---------------------------------------------------------------------- */
+function updateBuildings(dt){
+  G.energyProd = 0; G.energyUse = 0;
+  storageCount = 0;
+  const eff = M('enEff');
+
+  // First pass: generators produce energy
+  for(const b of buildings){
+    if(b.type==='generator'){
+      // consume fuel to make energy
+      const rate = 24 * M('enProd'); // energy per second at full
+      const fuelPerSec = (1.2 / M('fuelEff'));
+      if(G.res.energy < baseCap('energy')){
+        let fuel = 'coal';
+        if(G.res.coal < fuelPerSec*dt && G.res.oil>0) fuel='oil';
+        if(G.res[fuel] > 0){
+          const burn = Math.min(G.res[fuel], fuelPerSec*dt*(fuel==='oil'?0.6:1));
+          G.res[fuel]-=burn;
+          const made = rate*dt*(fuel==='oil'?1.6:1);
+          addRes('energy', made);
+          G.energyProd += rate*(fuel==='oil'?1.6:1);
+          b.anim += dt*6; b.active=true;
+        } else b.active=false;
+      } else { G.energyProd += rate; b.active=true; }
+    }
+    if(b.type==='storage') storageCount++;
+  }
+
+  function useEnergy(amount){
+    amount *= eff===0?1:1/eff; // efficiency reduces use
+    if(G.res.energy >= amount){ G.res.energy -= amount; return true; }
+    return false;
+  }
+
+  // Second pass: machines
+  for(const b of buildings){
+    b.anim += dt;
+    if(b.flash>0) b.flash-=dt;
+
+    if(b.type==='miner'){
+      b.cool -= dt;
+      const interval = 0.9 / M('mineSpd');
+      const useE = 3*dt;
+      if(b.cool<=0){
+        if(useEnergy(3)){
+          G.energyUse += 3;
+          let yld = Math.round(1*M('mineYield'));
+          if(b.ore==='crystal') yld = Math.max(1, Math.round(yld*M('crystalYield')*0.6));
+          const item = {type:b.ore==='oil'?'oil':b.ore, value: yld};
+          // oil miner produces oil, feeds generators via hub
+          if(tryOutput(b, item)){ b.cool = interval; b.blocked=false; spawnSpark(b); }
+          else { b.blocked=true; b.cool=0.2; }
+        } else { b.cool=0.15; b.starved=true; }
+      }
+    }
+
+    else if(b.type==='belt'){
+      const spd = 0.9 * M('beltSpd'); // progress per second
+      const d = DIRS[b.dir];
+      const nx=b.tx+d[0], ny=b.ty+d[1];
+      const target = (nx>=0&&ny>=0&&nx<GW&&ny<GH)?grid[ny][nx]:null;
+      // advance items
+      for(let i=b.beltItems.length-1;i>=0;i--){
+        const it=b.beltItems[i];
+        const ahead = i<b.beltItems.length-1 ? b.beltItems[i+1] : null;
+        const maxP = ahead ? ahead.p-0.34 : 1;
+        it.p = Math.min(maxP, it.p + spd*dt);
+        if(it.p>=1){
+          // try to move to next
+          if(depositTo(target, it, b.dir, nx, ny)){ b.beltItems.splice(i,1); }
+          else it.p = 1;
+        }
+      }
+    }
+
+    else if(b.type==='arm'){
+      b.cool -= dt;
+      const interval = 0.5 / M('armSpd');
+      if(b.cool<=0){
+        const back = DIRS[(b.dir+2)%4];
+        const bx=b.tx+back[0], by=b.ty+back[1];
+        const src = (bx>=0&&by>=0&&bx<GW&&by<GH)?grid[by][bx]:null;
+        if(src){
+          let item=null;
+          if(src.type==='belt' && src.beltItems.length){ item=src.beltItems[0]; }
+          else if(src.type==='miner' && src.outItem){ item=src.outItem; }
+          if(item && useEnergy(1)){
+            G.energyUse+=1;
+            if(tryOutput(b, {type:item.type,value:item.value})){
+              if(src.type==='belt') src.beltItems.shift();
+              b.cool=interval; b.anim2=1;
+            }
+          }
+        }
+      }
+      if(b.anim2>0) b.anim2-=dt*4;
+    }
+
+    else if(b.type==='furnace'){
+      b.cool -= dt;
+      const interval = 1.0 / M('smeltSpd');
+      // pass-through non metals
+      if(b._passItem){ if(tryOutput(b, b._passItem)){ b._passItem=null; b.inBuf._pass=0; } }
+      if(b.cool<=0){
+        let ore = null;
+        if((b.inBuf.iron||0)>=1) ore='iron';
+        else if((b.inBuf.copper||0)>=1) ore='copper';
+        if(ore && useEnergy(4)){
+          G.energyUse += 4;
+          b.inBuf[ore]-=1;
+          const out = {type:ore, value: Math.max(2, Math.round(2*M('smeltYield')))};
+          if(tryOutput(b, out)){ b.cool=interval; b.active=true; spawnFire(b); }
+          else { b.inBuf[ore]+=1; b.cool=0.2; }
+        } else b.active=false;
+      }
+    }
+
+    else if(b.type==='factory'){
+      b.cool -= dt;
+      const interval = 1.4 / M('facSpd');
+      if(b.cool<=0 && useEnergy(6)){
+        G.energyUse+=6;
+        // recipe: uses stockpile metals to make ammo & parts
+        if(G.res.iron>=2 && G.res.copper>=1){
+          G.res.iron-=2; G.res.copper-=1;
+          addRes('ammo', 4);
+          // parts need crystal occasionally
+          if(G.res.crystal>=1 && Math.random()<0.6){ G.res.crystal-=1; addRes('parts',2); }
+          else addRes('parts',1);
+          b.cool=interval; b.active=true; b.flash=0.2;
+        } else b.cool=0.3;
+      }
+      // also consume any belt-fed metals into stockpile
+      for(const k in b.inBuf){ if(b.inBuf[k]>0){ addRes(k,b.inBuf[k]); b.inBuf[k]=0; } }
+    }
+
+    else if(b.type==='storage'){
+      for(const k in b.inBuf){ if(b.inBuf[k]>0){ addRes(k,b.inBuf[k]); b.inBuf[k]=0; } }
+    }
+
+    else if(b.type==='repair'){
+      b.cool -= dt;
+      if(b.cool<=0){
+        b.cool = 0.5;
+        if(useEnergy(4) && G.res.parts>=1){
+          // heal nearby damaged buildings
+          const R2 = (b.type==='repair'? (B.repair.range):150)**2;
+          let did=false;
+          for(const o of buildings){
+            if(o.hp<o.maxhp && dist2(o.x,o.y,b.x,b.y)<R2){
+              o.hp = Math.min(o.maxhp, o.hp + 22*M('repair'));
+              did=true; spawnParticles(o.x,o.y,2,'#7fffcf',0.6);
+            }
+          }
+          if(did){ G.res.parts-=1; G.energyUse+=4; b.flash=0.3; }
+        }
+      }
+    }
+
+    else if(b.type==='turret'||b.type==='cannon'||b.type==='missile'){
+      updateTurret(b, dt, useEnergy);
+    }
+
+    else if(b.type==='hub'){
+      // slowly regen a tiny bit if calm
+      if(!G.waveActive && b.hp<b.maxhp) b.hp=Math.min(b.maxhp,b.hp+6*dt);
+    }
+  }
+
+  // clamp energy cap
+  if(G.res.energy>baseCap('energy')) G.res.energy=baseCap('energy');
+}
+
+function spawnSpark(b){ if(Math.random()<0.5) spawnParticles(b.x,b.y-6,1,'#ffd27a',0.5); }
+function spawnFire(b){ for(let i=0;i<2;i++) particles.push({x:b.x+rand(-6,6),y:b.y+rand(-4,4),vx:rand(-8,8),vy:rand(-40,-16),life:0,max:rand(0.4,0.8),col:'#ff9a3a',size:rand(2,4),g:-10,type:'fire'}); addLight(b.x,b.y,40,'#ff7a2a',0.5); }
+
+/* ---------------------------------------------------------------------- */
+/* Turrets & projectiles                                                   */
+/* ---------------------------------------------------------------------- */
+function updateTurret(b, dt, useEnergy){
+  const def = B[b.type];
+  const range = def.range * M('turRange');
+  b.cool -= dt;
+  // acquire target: nearest enemy in range
+  let best=null, bd=range*range;
+  for(const e of enemies){
+    const d=dist2(e.x,e.y,b.x,b.y);
+    if(d<bd){ bd=d; best=e; }
+  }
+  if(best){
+    b.aim = Math.atan2(best.y-b.y, best.x-b.x);
+    if(b.cool<=0){
+      const rate = def.rate / M('turRate');
+      const ammoCost = (b.type==='turret'?1:b.type==='cannon'?3:5) / M('ammoEff');
+      const eCost = b.type==='turret'?2:b.type==='cannon'?5:7;
+      if(G.res.ammo>=ammoCost && useEnergy(eCost)){
+        G.res.ammo-=ammoCost; G.energyUse+=eCost;
+        fireProjectile(b, best, def);
+        b.cool = rate; b.flash=0.08;
+        b.recoil = 1;
+      } else {
+        b.cool = 0.3; b.starved=true;
+      }
+    }
+  }
+  if(b.recoil>0) b.recoil-=dt*6;
+}
+
+function fireProjectile(b, target, def){
+  const dmg = def.dmg * M('turDmg');
+  const ang = Math.atan2(target.y-b.y, target.x-b.x);
+  const muzX = b.x+Math.cos(ang)*16, muzY=b.y+Math.sin(ang)*16;
+  if(b.type==='turret'){
+    projectiles.push({x:muzX,y:muzY,vx:Math.cos(ang)*760,vy:Math.sin(ang)*760,dmg,life:0,max:0.6,type:'bullet',col:'#ffe08a',size:2.4});
+    spawnParticles(muzX,muzY,2,'#ffd27a',0.4);
+  } else if(b.type==='cannon'){
+    projectiles.push({x:muzX,y:muzY,vx:Math.cos(ang)*520,vy:Math.sin(ang)*520,dmg,life:0,max:1.0,type:'shell',col:'#ffb04f',size:4,splash:def.splash*M('splash')});
+    spawnParticles(muzX,muzY,5,'#ff9a4f',0.8);
+    addLight(muzX,muzY,60,'#ffaa4f',0.7);
+  } else { // missile
+    projectiles.push({x:muzX,y:muzY,vx:Math.cos(ang)*240,vy:Math.sin(ang)*240,dmg,life:0,max:2.4,type:'missile',col:'#ff6a4f',size:3.6,splash:def.splash*M('splash'),target,turn:6});
+    spawnParticles(muzX,muzY,4,'#ffce7a',0.6);
+  }
+  addLight(muzX,muzY,44,'#ffd27a',0.6);
+}
+
+function updateProjectiles(dt){
+  for(let i=projectiles.length-1;i>=0;i--){
+    const p=projectiles[i];
+    p.life+=dt;
+    if(p.type==='missile' && p.target && p.target.hp>0){
+      const desired=Math.atan2(p.target.y-p.y,p.target.x-p.x);
+      const cur=Math.atan2(p.vy,p.vx);
+      let da=desired-cur; while(da>Math.PI)da-=2*Math.PI; while(da<-Math.PI)da+=2*Math.PI;
+      const na=cur+clamp(da,-p.turn*dt,p.turn*dt);
+      const sp=Math.hypot(p.vx,p.vy)+280*dt;
+      p.vx=Math.cos(na)*Math.min(sp,520); p.vy=Math.sin(na)*Math.min(sp,520);
+      if(Math.random()<0.6) particles.push({x:p.x,y:p.y,vx:rand(-10,10),vy:rand(-10,10),life:0,max:0.4,col:'#aaa',size:2.5,type:'smoke'});
+    }
+    p.x+=p.vx*dt; p.y+=p.vy*dt;
+    let hit=null;
+    for(const e of enemies){
+      const rr=(e.r+p.size+2); if(dist2(e.x,e.y,p.x,p.y)<rr*rr){ hit=e; break; }
+    }
+    if(hit){
+      applyDamage(hit, p.dmg);
+      if(p.splash){
+        explode(p.x,p.y,p.splash,p.dmg*0.6);
+      } else {
+        spawnParticles(p.x,p.y,4,p.col,0.6);
+      }
+      projectiles.splice(i,1); continue;
+    }
+    if(p.life>p.max){
+      if(p.splash) explode(p.x,p.y,p.splash*0.7,p.dmg*0.4);
+      projectiles.splice(i,1);
+    }
+  }
+}
+
+function explode(x,y,r,dmg){
+  for(const e of enemies){
+    const d=Math.hypot(e.x-x,e.y-y);
+    if(d<r){ applyDamage(e, dmg*(1-d/r)); }
+  }
+  spawnParticles(x,y,18,'#ff8a3a',1.6);
+  for(let i=0;i<10;i++) particles.push({x,y,vx:rand(-90,90),vy:rand(-90,90),life:0,max:rand(0.4,0.9),col:i%2?'#ffce6a':'#ff6a2a',size:rand(2,5),type:'fire',g:40});
+  for(let i=0;i<6;i++) particles.push({x,y,vx:rand(-30,30),vy:rand(-60,-20),life:0,max:rand(0.7,1.4),col:'#666',size:rand(4,9),type:'smoke',g:-8});
+  addLight(x,y,r*2.2,'#ff7a2a',1);
+  camShake(Math.min(8, r*0.06));
+}
+
+/* ---------------------------------------------------------------------- */
+/* Enemies & waves                                                         */
+/* ---------------------------------------------------------------------- */
+const ETYPES = {
+  scout:  {r:9,  hp:26,  spd:70, dmg:5,  col:'#ff7a7a', reward:{iron:2,copper:1}},
+  soldier:{r:11, hp:60,  spd:52, dmg:9,  col:'#ff5a5a', reward:{iron:3,copper:2}},
+  tank:   {r:16, hp:210, spd:30, dmg:20, col:'#c0463c', reward:{iron:6,copper:4,parts:1}},
+  flyer:  {r:10, hp:44,  spd:82, dmg:8,  col:'#ff9a5a', reward:{copper:3,crystal:1}, fly:true},
+  boss:   {r:34, hp:2600,spd:22, dmg:60, col:'#ff2a2a', reward:{iron:60,copper:40,crystal:20,parts:20}, boss:true},
+};
+
+function startWave(){
+  if(G.waveActive) return;
+  G.wave++;
+  G.waveActive=true;
+  const isBoss = G.wave%10===0;
+  const base = 5 + G.wave*2;
+  G.enemiesToSpawn = isBoss ? Math.floor(base*0.6)+1 : base;
+  G.spawnAcc = 0;
+  toast('⚔️ الموجة '+G.wave+' بدأت!'+(isBoss?' — زعيم قادم!':''), isBoss?'warn':'');
+  updateHUD();
+}
+
+function spawnEnemy(){
+  const w = G.wave;
+  const isBossWave = w%10===0;
+  let type;
+  const r=Math.random();
+  if(isBossWave && G.enemiesToSpawn===1 && !G.bossSpawned){ type='boss'; G.bossSpawned=true; }
+  else {
+    if(w>=6 && r<0.18) type='tank';
+    else if(w>=3 && r<0.42) type='flyer';
+    else if(r<0.66) type='soldier';
+    else type='scout';
+  }
+  const def=ETYPES[type];
+  const sp = spawnPoints[randi(0,spawnPoints.length-1)];
+  const hpScale = 1 + (w-1)*0.28;
+  const e = {
+    type, x:sp.x+rand(-20,20), y:sp.y+rand(-20,20),
+    r:def.r, hp:def.hp*hpScale, maxhp:def.hp*hpScale, spd:def.spd*(1+(w-1)*0.02),
+    dmg:def.dmg*(1+(w-1)*0.12), col:def.col, fly:def.fly, boss:def.boss,
+    reward:def.reward, target:null, retarget:0, atkCool:0, wob:rand(0,6.28), hitFlash:0,
+  };
+  enemies.push(e);
+  if(def.boss){ toast('👹 الزعيم دخل الساحة!','warn'); camShake(10); }
+}
+
+function updateEnemies(dt){
+  if(G.waveActive){
+    // spawn over time
+    if(G.enemiesToSpawn>0){
+      G.spawnAcc += dt;
+      const interval = G.wave%10===0 ? 1.2 : Math.max(0.35, 1.1 - G.wave*0.02);
+      if(G.spawnAcc>=interval){ G.spawnAcc=0; spawnEnemy(); G.enemiesToSpawn--; }
+    } else if(enemies.length===0){
+      // wave cleared
+      endWave();
+    }
+  }
+
+  for(let i=enemies.length-1;i>=0;i--){
+    const e=enemies[i];
+    if(e.hitFlash>0) e.hitFlash-=dt;
+    // target: nearest building (walls/turrets attract) else hub
+    if(!e.target || e.target.hp<=0 || (e.retarget-=dt)<=0){
+      e.target = acquireTarget(e); e.retarget=0.7;
+    }
+    const tgt = e.target || hub;
+    const dx=tgt.x-e.x, dy=tgt.y-e.y;
+    const d=Math.hypot(dx,dy)||1;
+    const reach = e.r + 18;
+    if(d>reach){
+      const spd=e.spd;
+      // slight wobble for flyers
+      e.wob+=dt*4;
+      let mx=dx/d, my=dy/d;
+      if(e.fly){ mx+=Math.cos(e.wob)*0.15; my+=Math.sin(e.wob)*0.15; }
+      e.x+=mx*spd*dt; e.y+=my*spd*dt;
+    } else {
+      // attack
+      e.atkCool-=dt;
+      if(e.atkCool<=0){
+        e.atkCool = 0.6;
+        applyBuildingDamage(tgt, e.dmg);
+        spawnParticles((e.x+tgt.x)/2,(e.y+tgt.y)/2,4,'#ffaa5a',0.7);
+      }
+    }
+    // boss spawns adds
+    if(e.boss){
+      e.addCool=(e.addCool||0)-dt;
+      if(e.addCool<=0){ e.addCool=3; for(let k=0;k<2;k++){ const s=makeAdd(e); enemies.push(s);} }
+    }
+  }
+}
+
+function makeAdd(boss){
+  const def=ETYPES.scout;
+  return {type:'scout',x:boss.x+rand(-30,30),y:boss.y+rand(-30,30),r:def.r,hp:def.hp*2,maxhp:def.hp*2,
+    spd:def.spd,dmg:def.dmg,col:'#ff9a9a',reward:def.reward,retarget:0,atkCool:0,wob:0,hitFlash:0};
+}
+
+function acquireTarget(e){
+  // prefer nearest building within a moderate radius, else hub
+  let best=hub, bd=Infinity;
+  const R2 = 320*320;
+  for(const b of buildings){
+    if(b===hub) continue;
+    const d=dist2(b.x,b.y,e.x,e.y);
+    if(d<bd && d<R2){ bd=d; best=b; }
+  }
+  // if hub is closer than found building, target hub
+  const dh=dist2(hub.x,hub.y,e.x,e.y);
+  if(dh<bd) best=hub;
+  return best;
+}
+
+function applyDamage(e, dmg){
+  e.hp-=dmg; e.hitFlash=0.12;
+  if(e.hp<=0){
+    killEnemy(e);
+  }
+}
+function killEnemy(e){
+  const i=enemies.indexOf(e); if(i>=0) enemies.splice(i,1);
+  G.killCount++;
+  for(const k in e.reward){ addRes(k, e.reward[k]); }
+  spawnParticles(e.x,e.y,e.boss?30:10, e.col, e.boss?2.5:1.1);
+  if(e.boss){ explode(e.x,e.y,90,0); toast('🏆 تم القضاء على الزعيم! +مكافأة ضخمة','good'); camShake(14); }
+  addLight(e.x,e.y,e.boss?160:40,'#ff9a5a',0.8);
+}
+
+function applyBuildingDamage(b, dmg){
+  b.hp-=dmg; b.flash=0.12;
+  if(b.hp<=0){
+    if(b===hub){ gameOver(); return; }
+    spawnParticles(b.x,b.y,14,'#ff7a3a',1.5);
+    explode(b.x,b.y,20,0);
+    removeBuilding(b,false);
+  }
+}
+function applyBuildingDamageEnemyRef(){}
+
+function endWave(){
+  G.waveActive=false;
+  G.bossSpawned=false;
+  G.waveTimer = G.prepTime;
+  // bonus resources
+  addRes('iron', 20+G.wave*4); addRes('copper',10+G.wave*2);
+  toast('✅ صمدت أمام الموجة '+G.wave+'! استعد للتالية.','good');
+  updateHUD();
+}
+
+/* ---------------------------------------------------------------------- */
+/* Robots + simple AI                                                      */
+/* ---------------------------------------------------------------------- */
+const ROBOTS = {
+  miner:  {name:'روبوت تعدين', glyph:'⛏', col:'#7fbfff', hp:60, cost:{iron:60,parts:6},
+           desc:'يبحث عن الخام، يعدّن، ويعيد الموارد إلى المركز.'},
+  builder:{name:'روبوت بناء',  glyph:'🔨', col:'#ffd27a', hp:70, cost:{iron:70,parts:8},
+           desc:'يجوب المصنع ويُصلح المباني المتضررة بسرعة.'},
+  repair: {name:'روبوت إصلاح', glyph:'🔧', col:'#7fffcf', hp:60, cost:{parts:12,iron:50},
+           desc:'يركّز على إصلاح المباني ذات الصحة المنخفضة.'},
+  combat: {name:'روبوت قتال',  glyph:'🤖', col:'#ff8a7a', hp:120, cost:{iron:90,parts:14},
+           desc:'يطارد الأعداء ويطلق النار عليهم تلقائيًا.'},
+  transport:{name:'روبوت نقل', glyph:'🚚', col:'#c0a0ff', hp:70, cost:{iron:55,parts:6},
+           desc:'ينقل موارد إضافية من الأطراف ويعزز الدخل السلبي.'},
+};
+
+function robotCount(){ return robots.length; }
+function maxRobots(){ return G.robotCap + M('robCap'); }
+
+function buildRobot(type){
+  if(robots.length>=maxRobots()){ toast('وصلت للحد الأقصى من الروبوتات','warn'); return; }
+  const def=ROBOTS[type];
+  for(const k in def.cost){ if(G.res[k]<def.cost[k]){ toast('موارد غير كافية للروبوت','warn'); return; } }
+  for(const k in def.cost){ G.res[k]-=def.cost[k]; }
+  const r={type,x:hub.x+rand(-30,30),y:hub.y+rand(-30,30),hp:def.hp,maxhp:def.hp,
+    col:def.col,glyph:def.glyph,state:'idle',target:null,cool:0,carry:0,ang:0,anim:rand(0,6)};
+  robots.push(r);
+  toast('🤖 تم تصنيع '+def.name,'good');
+  renderRobots();
+}
+
+function updateRobots(dt){
+  const spd = 60 * M('robSpd');
+  for(let i=robots.length-1;i>=0;i--){
+    const r=robots[i]; r.anim+=dt;
+    if(r.hp<=0){ robots.splice(i,1); spawnParticles(r.x,r.y,10,r.col,1.2); continue; }
+    r.cool-=dt;
+
+    if(r.type==='combat'){
+      // find nearest enemy
+      let best=null,bd=260*260;
+      for(const e of enemies){ const d=dist2(e.x,e.y,r.x,r.y); if(d<bd){bd=d;best=e;} }
+      if(best){
+        const d=Math.sqrt(bd);
+        r.ang=Math.atan2(best.y-r.y,best.x-r.x);
+        if(d>120){ r.x+=Math.cos(r.ang)*spd*dt; r.y+=Math.sin(r.ang)*spd*dt; }
+        if(r.cool<=0){
+          r.cool=0.25;
+          projectiles.push({x:r.x,y:r.y,vx:Math.cos(r.ang)*640,vy:Math.sin(r.ang)*640,dmg:11*M('robDmg'),life:0,max:0.5,type:'bullet',col:'#8affc0',size:2.2});
+          spawnParticles(r.x+Math.cos(r.ang)*10,r.y+Math.sin(r.ang)*10,1,'#8affc0',0.3);
+        }
+      } else { returnHome(r,dt,spd); }
+    }
+
+    else if(r.type==='repair'||r.type==='builder'){
+      if(!r.target || r.target.hp>=r.target.maxhp){
+        r.target=null; let bd=Infinity;
+        for(const b of buildings){ if(b.hp<b.maxhp){ const d=dist2(b.x,b.y,r.x,r.y); if(d<bd){bd=d;r.target=b;} } }
+      }
+      if(r.target){
+        const d=Math.hypot(r.target.x-r.x,r.target.y-r.y);
+        if(d>26){ r.ang=Math.atan2(r.target.y-r.y,r.target.x-r.x); r.x+=Math.cos(r.ang)*spd*dt; r.y+=Math.sin(r.ang)*spd*dt; }
+        else { r.target.hp=Math.min(r.target.maxhp, r.target.hp+ (r.type==='builder'?40:30)*M('repair')*dt);
+          if(Math.random()<0.3) spawnParticles(r.target.x,r.target.y,1,'#7fffcf',0.5); }
+      } else { patrol(r,dt,spd); }
+    }
+
+    else if(r.type==='miner'){
+      if(r.state==='idle'||!r.oreTile){
+        // find nearest ore tile
+        let bd=Infinity,bt=null;
+        for(let s=0;s<24;s++){
+          const tx=randi(0,GW-1),ty=randi(0,GH-1);
+          if(terrain[ty][tx].type==='ore'){ const wx=tx*TILE+TILE/2,wy=ty*TILE+TILE/2; const d=dist2(wx,wy,r.x,r.y); if(d<bd){bd=d;bt={tx,ty,x:wx,y:wy,ore:terrain[ty][tx].ore};} }
+        }
+        if(bt){ r.oreTile=bt; r.state='togather'; } else patrol(r,dt,spd);
+      }
+      if(r.state==='togather' && r.oreTile){
+        const d=Math.hypot(r.oreTile.x-r.x,r.oreTile.y-r.y);
+        if(d>10){ r.ang=Math.atan2(r.oreTile.y-r.y,r.oreTile.x-r.x); r.x+=Math.cos(r.ang)*spd*dt; r.y+=Math.sin(r.ang)*spd*dt; }
+        else { r.cool-=0; r.mineT=(r.mineT||0)+dt; if(r.mineT>1.4){ r.mineT=0; r.carry=6; r.carryType=r.oreTile.ore; r.state='return'; } if(Math.random()<0.2) spawnParticles(r.x,r.y,1,'#ffd27a',0.4); }
+      }
+      if(r.state==='return'){
+        const d=Math.hypot(hub.x-r.x,hub.y-r.y);
+        if(d>26){ r.ang=Math.atan2(hub.y-r.y,hub.x-r.x); r.x+=Math.cos(r.ang)*spd*dt; r.y+=Math.sin(r.ang)*spd*dt; }
+        else { addRes(r.carryType||'iron', r.carry||4); r.carry=0; r.state='idle'; r.oreTile=null; }
+      }
+    }
+
+    else if(r.type==='transport'){
+      // passive income + patrol
+      r.tick=(r.tick||0)+dt;
+      if(r.tick>2){ r.tick=0; addRes('iron',3); addRes('copper',1); if(Math.random()<0.4) addRes('stone',2); }
+      patrol(r,dt,spd*0.8);
+    }
+  }
+}
+function returnHome(r,dt,spd){ const d=Math.hypot(hub.x-r.x,hub.y-r.y); if(d>60){ r.ang=Math.atan2(hub.y-r.y,hub.x-r.x); r.x+=Math.cos(r.ang)*spd*dt; r.y+=Math.sin(r.ang)*spd*dt; } }
+function patrol(r,dt,spd){
+  if(!r.pt || Math.hypot(r.pt.x-r.x,r.pt.y-r.y)<20){ r.pt={x:hub.x+rand(-160,160),y:hub.y+rand(-160,160)}; }
+  r.ang=Math.atan2(r.pt.y-r.y,r.pt.x-r.x); r.x+=Math.cos(r.ang)*spd*dt; r.y+=Math.sin(r.ang)*spd*dt;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Particles & lighting                                                    */
+/* ---------------------------------------------------------------------- */
+function spawnParticles(x,y,n,col,scale){
+  scale=scale||1;
+  for(let i=0;i<n;i++){
+    particles.push({x,y,vx:rand(-60,60)*scale,vy:rand(-60,60)*scale,
+      life:0,max:rand(0.3,0.8)*scale,col,size:rand(1.5,3.5)*scale,type:'spark',g:30});
+  }
+}
+function addLight(x,y,r,col,a){ lights.push({x,y,r,col,a,life:0,max:0.35}); }
+function updateParticles(dt){
+  for(let i=particles.length-1;i>=0;i--){
+    const p=particles[i]; p.life+=dt;
+    if(p.life>=p.max){ particles.splice(i,1); continue; }
+    p.x+=p.vx*dt; p.y+=p.vy*dt;
+    if(p.g) p.vy+=p.g*dt;
+    p.vx*=0.98; p.vy*=0.98;
+  }
+  for(let i=lights.length-1;i>=0;i--){ const l=lights[i]; l.life+=dt; if(l.life>=l.max) lights.splice(i,1); }
+  // cap particle count for performance
+  if(particles.length>620) particles.splice(0, particles.length-620);
+}
+
+/* camera shake */
+let shake=0;
+function camShake(a){ shake=Math.max(shake,a); }
+
+/* ---------------------------------------------------------------------- */
+/* Rendering                                                               */
+/* ---------------------------------------------------------------------- */
+const TERR_COL = {
+  grass:'#141c16', forest:'#122016', mountain:'#2a2c30', water:'#0e2436',
+  ore:'#1a2028', oil:'#181322', crystal:'#10222c', cave:'#0c0f14', enemybase:'#26141a',
+};
+
+function draw(){
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.clearRect(0,0,W,H);
+  // background
+  ctx.fillStyle='#070a0e'; ctx.fillRect(0,0,W,H);
+
+  let sx=0, sy=0;
+  if(shake>0){ sx=rand(-shake,shake); sy=rand(-shake,shake); shake*=0.86; if(shake<0.4)shake=0; }
+
+  ctx.save();
+  ctx.translate(sx,sy);
+  ctx.scale(cam.zoom,cam.zoom);
+  ctx.translate(-cam.x,-cam.y);
+
+  // visible tile range
+  const x0=Math.max(0,Math.floor(cam.x/TILE)-1), y0=Math.max(0,Math.floor(cam.y/TILE)-1);
+  const x1=Math.min(GW-1,Math.ceil((cam.x+W/cam.zoom)/TILE)+1);
+  const y1=Math.min(GH-1,Math.ceil((cam.y+H/cam.zoom)/TILE)+1);
+
+  drawTerrain(x0,y0,x1,y1);
+  drawGridHint(x0,y0,x1,y1);
+
+  // shadows pass (units)
+  drawShadows();
+
+  // belt items
+  drawBeltItems(x0,y0,x1,y1);
+
+  // buildings
+  for(const b of buildings) drawBuilding(b);
+
+  // robots
+  for(const r of robots) drawRobot(r);
+
+  // enemies
+  for(const e of enemies) drawEnemy(e);
+
+  // projectiles
+  drawProjectiles();
+
+  // particles
+  drawParticles();
+
+  // placement ghost
+  drawGhost();
+
+  ctx.restore();
+
+  // lighting overlay
+  drawLighting(sx,sy);
+
+  // world-space UI (health bars already drawn). Minimap etc handled elsewhere.
+}
+
+function drawTerrain(x0,y0,x1,y1){
+  for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){
+    const t=terrain[y][x];
+    ctx.fillStyle = TERR_COL[t.type]||'#141c16';
+    ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
+    // decorations
+    const px=x*TILE, py=y*TILE;
+    if(t.type==='forest'){
+      ctx.fillStyle='#1c3a24';
+      const n=2;
+      for(let k=0;k<n;k++){ const dx=(t.deco*37+k*13)%1*TILE, dy=(t.deco*61+k*29)%1*TILE;
+        ctx.beginPath(); ctx.arc(px+dx*0.8+6,py+dy*0.8+6,4+((t.deco*7+k)%2),0,7); ctx.fill(); }
+      ctx.fillStyle='#2a5a34';
+      ctx.beginPath(); ctx.arc(px+TILE*0.5,py+TILE*0.55,5,0,7); ctx.fill();
+    } else if(t.type==='mountain'){
+      ctx.fillStyle='#3a3e44';
+      ctx.beginPath(); ctx.moveTo(px+6,py+TILE-5); ctx.lineTo(px+TILE*0.5,py+6); ctx.lineTo(px+TILE-6,py+TILE-5); ctx.fill();
+      ctx.fillStyle='#565b62'; ctx.beginPath(); ctx.moveTo(px+TILE*0.5,py+6); ctx.lineTo(px+TILE*0.5+5,py+13); ctx.lineTo(px+TILE*0.5-5,py+13); ctx.fill();
+    } else if(t.type==='water'){
+      ctx.fillStyle='rgba(90,160,220,'+(0.06+0.05*Math.sin(G.time*1.5+x+y))+')';
+      ctx.fillRect(px,py,TILE,TILE);
+    } else if(t.type==='ore'){
+      const c=RES[t.ore].col;
+      ctx.fillStyle=c;
+      for(let k=0;k<4;k++){ const dx=((t.deco*31+k*17)%1)*TILE, dy=((t.deco*53+k*23)%1)*TILE;
+        ctx.globalAlpha=0.75; ctx.beginPath(); ctx.arc(px+dx*0.85+4,py+dy*0.85+4,2.6,0,7); ctx.fill(); }
+      ctx.globalAlpha=1;
+      // shimmer for crystal
+      if(t.ore==='crystal'){ ctx.fillStyle='rgba(120,230,255,'+(0.3+0.25*Math.sin(G.time*2+x))+')'; ctx.beginPath(); ctx.arc(px+TILE/2,py+TILE/2,4,0,7); ctx.fill(); }
+    } else if(t.type==='oil'){
+      ctx.fillStyle='#2a1c3a'; ctx.beginPath(); ctx.arc(px+TILE/2,py+TILE/2,7,0,7); ctx.fill();
+      ctx.fillStyle='#5a3a8a'; ctx.beginPath(); ctx.arc(px+TILE/2,py+TILE/2,4,0,7); ctx.fill();
+    } else if(t.type==='enemybase'){
+      ctx.fillStyle='#4a1a24'; ctx.beginPath(); ctx.arc(px+TILE/2,py+TILE/2,9,0,7); ctx.fill();
+      ctx.strokeStyle='#ff4a4a'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(px+TILE/2,py+TILE/2,7,0,7); ctx.stroke();
+      ctx.fillStyle='#ff6a6a'; ctx.font='10px sans-serif'; ctx.textAlign='center'; ctx.fillText('☠',px+TILE/2,py+TILE/2+4);
+    } else if(t.type==='cave'){
+      ctx.fillStyle='#05070a'; ctx.beginPath(); ctx.arc(px+TILE/2,py+TILE/2,8,0,7); ctx.fill();
+    }
+  }
+}
+
+function drawGridHint(x0,y0,x1,y1){
+  if(cam.zoom<0.6) return;
+  ctx.strokeStyle='rgba(80,120,160,0.05)'; ctx.lineWidth=1;
+  ctx.beginPath();
+  for(let x=x0;x<=x1+1;x++){ ctx.moveTo(x*TILE,y0*TILE); ctx.lineTo(x*TILE,(y1+1)*TILE); }
+  for(let y=y0;y<=y1+1;y++){ ctx.moveTo(x0*TILE,y*TILE); ctx.lineTo((x1+1)*TILE,y*TILE); }
+  ctx.stroke();
+}
+
+function drawShadows(){
+  ctx.fillStyle='rgba(0,0,0,0.28)';
+  for(const b of buildings){ ctx.beginPath(); ctx.ellipse(b.x+3,b.y+TILE*0.34,TILE*0.4,TILE*0.2,0,0,7); ctx.fill(); }
+  for(const e of enemies){ ctx.beginPath(); ctx.ellipse(e.x+2,e.y+e.r*0.7,e.r*0.9,e.r*0.4,0,0,7); ctx.fill(); }
+  for(const r of robots){ ctx.beginPath(); ctx.ellipse(r.x+2,r.y+8,9,4,0,0,7); ctx.fill(); }
+}
+
+function drawBeltItems(x0,y0,x1,y1){
+  for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){
+    const b=grid[y][x];
+    if(b && b.type==='belt' && b.beltItems.length){
+      const d=DIRS[b.dir];
+      const sx=b.x - d[0]*TILE/2, sy=b.y - d[1]*TILE/2;
+      for(const it of b.beltItems){
+        const ix=sx + d[0]*TILE*it.p, iy=sy + d[1]*TILE*it.p;
+        ctx.fillStyle=RES[it.type]?RES[it.type].col:'#ccc';
+        ctx.beginPath(); ctx.arc(ix,iy,4.5,0,7); ctx.fill();
+        ctx.strokeStyle='#0006'; ctx.lineWidth=1; ctx.stroke();
+      }
+    }
+  }
+}
+
+function rot(ctx,x,y,a){ ctx.translate(x,y); ctx.rotate(a); }
+
+function drawBuilding(b){
+  const def = b.type==='hub'?HUB:B[b.type];
+  const s=TILE;
+  ctx.save();
+  ctx.translate(b.x,b.y);
+
+  // base plate
+  ctx.fillStyle = def.color;
+  roundRect(ctx,-s/2+2,-s/2+2,s-4,s-4,5); ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.4)'; ctx.lineWidth=2; ctx.stroke();
+  // inner highlight
+  ctx.fillStyle='rgba(255,255,255,0.06)'; roundRect(ctx,-s/2+4,-s/2+4,s-8,(s-8)/2,4); ctx.fill();
+
+  // type-specific
+  if(b.type==='belt'){
+    ctx.restore(); drawBelt(b); return;
+  }
+  if(b.type==='miner'){
+    const bob=Math.sin(b.anim*8)*2;
+    ctx.fillStyle='#2a3542'; ctx.fillRect(-4,-10+bob,8,14);
+    ctx.fillStyle=b.starved?'#ff6a4f':'#ffce6a'; ctx.beginPath(); ctx.arc(0,-2,3,0,7); ctx.fill();
+    // direction arrow
+    drawDirArrow(b);
+  } else if(b.type==='furnace'){
+    const glow=b.active?(0.4+0.3*Math.sin(b.anim*10)):0.12;
+    ctx.fillStyle='rgba(255,120,40,'+glow+')'; ctx.beginPath(); ctx.arc(0,2,8,0,7); ctx.fill();
+    ctx.fillStyle='#1a1210'; ctx.fillRect(-7,-9,14,7);
+    drawDirArrow(b);
+  } else if(b.type==='generator'){
+    ctx.fillStyle=b.active?'#ffe27a':'#5a5030';
+    ctx.beginPath(); ctx.moveTo(-4,4); ctx.lineTo(1,-6); ctx.lineTo(-1,-1); ctx.lineTo(4,-1); ctx.lineTo(-2,7); ctx.lineTo(0,0); ctx.closePath(); ctx.fill();
+    if(b.active && Math.random()<0.3) spawnParticles(b.x,b.y-8,1,'#ffd27a',0.4);
+  } else if(b.type==='factory'){
+    ctx.fillStyle='#1a2830'; ctx.fillRect(-8,-2,16,8);
+    ctx.fillStyle='#3a5a6a'; ctx.fillRect(-7,-10,4,8); ctx.fillRect(-1,-12,4,10); ctx.fillRect(5,-9,3,7);
+    if(b.flash>0){ ctx.fillStyle='#7fffcf'; ctx.beginPath(); ctx.arc(0,0,4,0,7); ctx.fill(); }
+    if(b.active && Math.random()<0.25) spawnParticles(b.x-4,b.y-12,1,'#889',0.6);
+  } else if(b.type==='storage'){
+    ctx.fillStyle='#3a2e22'; ctx.fillRect(-8,-6,16,12);
+    ctx.strokeStyle='#6a5a44'; ctx.lineWidth=1.5; ctx.strokeRect(-8,-6,16,12);
+    ctx.fillStyle='#8a7a5a'; ctx.fillRect(-2,-6,4,12);
+  } else if(b.type==='arm'){
+    ctx.save(); ctx.rotate(DIRS[b.dir]?Math.atan2(DIRS[b.dir][1],DIRS[b.dir][0]):0);
+    const ext = b.anim2>0? 10*b.anim2 : 0;
+    ctx.strokeStyle='#8a9aa8'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(-8,0); ctx.lineTo(6+ext,0); ctx.stroke();
+    ctx.fillStyle='#ffce6a'; ctx.beginPath(); ctx.arc(6+ext,0,3,0,7); ctx.fill();
+    ctx.restore();
+  } else if(b.type==='wall'){
+    ctx.fillStyle='#4a453c'; for(let r=0;r<2;r++)for(let c=0;c<3;c++){ ctx.fillRect(-11+c*8+ (r%2?4:0),-8+r*8,6,6); }
+  } else if(b.type==='turret'||b.type==='cannon'||b.type==='missile'){
+    drawTurret(b);
+  } else if(b.type==='repair'){
+    ctx.fillStyle='#7fffcf'; ctx.font='14px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('✚',0, (b.flash>0?-1:0));
+    if(b.flash>0){ ctx.strokeStyle='rgba(120,255,200,0.5)'; ctx.beginPath(); ctx.arc(0,0,14,0,7); ctx.stroke(); }
+  } else if(b.type==='hub'){
+    drawHub(b);
+  }
+
+  // flash on damage
+  if(b.flash>0){ ctx.fillStyle='rgba(255,80,60,'+(b.flash*3)+')'; roundRect(ctx,-s/2+2,-s/2+2,s-4,s-4,5); ctx.fill(); }
+
+  ctx.restore();
+
+  // HP bar
+  if(b.hp<b.maxhp) drawHpBar(b.x, b.y-s/2-6, s-6, b.hp/b.maxhp);
+}
+
+function drawDirArrow(b){
+  ctx.save(); ctx.rotate(Math.atan2(DIRS[b.dir][1],DIRS[b.dir][0]));
+  ctx.fillStyle='rgba(255,255,255,0.25)';
+  ctx.beginPath(); ctx.moveTo(8,0); ctx.lineTo(3,-3); ctx.lineTo(3,3); ctx.fill();
+  ctx.restore();
+}
+
+function drawBelt(b){
+  const s=TILE;
+  ctx.save(); ctx.translate(b.x,b.y); ctx.rotate(Math.atan2(DIRS[b.dir][1],DIRS[b.dir][0]));
+  ctx.fillStyle='#2a333d'; roundRect(ctx,-s/2+2,-s/2+5,s-4,s-10,3); ctx.fill();
+  ctx.strokeStyle='#1a222a'; ctx.lineWidth=1; ctx.stroke();
+  // moving chevrons
+  const off = (G.time* (1.6*M('beltSpd')))%1;
+  ctx.strokeStyle='#4a5a68'; ctx.lineWidth=2;
+  for(let k=-1;k<=1;k++){
+    const cx=(-off + k+1)*(s/2) - s/2 + 4;
+    if(cx<-s/2||cx>s/2) continue;
+    ctx.beginPath(); ctx.moveTo(cx-3,-4); ctx.lineTo(cx+2,0); ctx.lineTo(cx-3,4); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawTurret(b){
+  const def=B[b.type];
+  ctx.save();
+  // base
+  ctx.fillStyle='#2a333d'; ctx.beginPath(); ctx.arc(0,0,9,0,7); ctx.fill();
+  ctx.rotate(b.aim||0);
+  const rec = b.recoil>0? b.recoil*4:0;
+  if(b.type==='turret'){
+    ctx.fillStyle='#8a97a4'; ctx.fillRect(-3-rec,-3,16-rec,6);
+    ctx.fillStyle='#525c66'; ctx.fillRect(-3-rec,-3,5,6);
+  } else if(b.type==='cannon'){
+    ctx.fillStyle='#9a8797'; ctx.fillRect(-4-rec,-4,18-rec,8);
+    ctx.fillStyle='#3a2f36'; ctx.fillRect(12-rec,-4,3,8);
+  } else {
+    ctx.fillStyle='#9a7aaa'; ctx.fillRect(-4-rec,-5,10,10);
+    ctx.fillStyle='#ff8a6a'; ctx.fillRect(6-rec,-4,3,3); ctx.fillRect(6-rec,1,3,3);
+  }
+  if(b.flash>0){ ctx.fillStyle='rgba(255,220,120,'+(b.flash*8)+')'; ctx.beginPath(); ctx.arc(16,0,5,0,7); ctx.fill(); }
+  ctx.restore();
+  // range ring when selected type matches
+  if(selBuild===b.type){ ctx.strokeStyle='rgba(255,176,32,0.12)'; ctx.beginPath(); ctx.arc(0,0,def.range*M('turRange'),0,7); ctx.stroke(); }
+}
+
+function drawHub(b){
+  const s=TILE;
+  const pulse=0.5+0.5*Math.sin(G.time*2);
+  ctx.fillStyle='#3a2e14'; roundRect(ctx,-s/2+1,-s/2+1,s-2,s-2,6); ctx.fill();
+  ctx.strokeStyle='#ffb020'; ctx.lineWidth=2; ctx.stroke();
+  // rotating core
+  ctx.save(); ctx.rotate(G.time*0.6);
+  ctx.fillStyle='#ffb020';
+  for(let k=0;k<4;k++){ ctx.rotate(Math.PI/2); ctx.fillRect(-2,-11,4,7); }
+  ctx.restore();
+  ctx.fillStyle='rgba(255,200,80,'+(0.5+0.4*pulse)+')'; ctx.beginPath(); ctx.arc(0,0,6,0,7); ctx.fill();
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(0,0,2.5,0,7); ctx.fill();
+  addLight(b.x,b.y,70,'#ffb84a',0.4);
+  // HP bar drawn by outer drawBuilding in world coords
+}
+
+function drawHpBar(x,y,w,f){
+  ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(x-w/2,y,w,4);
+  ctx.fillStyle=f>0.5?'#4ade80':f>0.25?'#ffb020':'#ff4d4d';
+  ctx.fillRect(x-w/2,y,w*f,4);
+}
+
+function drawRobot(r){
+  ctx.save(); ctx.translate(r.x,r.y);
+  const bob=Math.sin(r.anim*8)*1.5;
+  // body
+  ctx.fillStyle=r.col; roundRect(ctx,-7,-7+bob,14,14,4); ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.4)'; ctx.lineWidth=1.5; ctx.stroke();
+  // eye
+  ctx.fillStyle='#0a0f14'; ctx.fillRect(-4,-3+bob,8,4);
+  ctx.fillStyle='#fff'; const ex=Math.cos(r.ang)*1.5, ey=Math.sin(r.ang)*1;
+  ctx.fillRect(-1+ex,-2+bob+ey,2,2);
+  ctx.restore();
+  if(r.hp<r.maxhp) drawHpBar(r.x,r.y-12,14,r.hp/r.maxhp);
+}
+
+function drawEnemy(e){
+  ctx.save(); ctx.translate(e.x,e.y);
+  const wob=e.fly?Math.sin(G.time*8+e.wob)*3:0;
+  ctx.translate(0,wob);
+  // body
+  const c = e.hitFlash>0? '#ffffff' : e.col;
+  ctx.fillStyle=c;
+  if(e.boss){
+    ctx.beginPath();
+    for(let k=0;k<8;k++){ const a=k/8*Math.PI*2 + G.time; const rr=e.r*(k%2?0.72:1); ctx[k?'lineTo':'moveTo'](Math.cos(a)*rr,Math.sin(a)*rr); }
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#3a0a0a'; ctx.beginPath(); ctx.arc(0,0,e.r*0.4,0,7); ctx.fill();
+    ctx.fillStyle='#ff4a4a'; ctx.beginPath(); ctx.arc(0,0,e.r*0.2,0,7); ctx.fill();
+  } else {
+    ctx.beginPath(); ctx.arc(0,0,e.r,0,7); ctx.fill();
+    ctx.fillStyle='#0008'; ctx.beginPath(); ctx.arc(0,0,e.r*0.5,0,7); ctx.fill();
+    ctx.fillStyle=e.fly?'#ffd27a':'#ffcaca';
+    ctx.beginPath(); ctx.arc(2,-2,e.r*0.24,0,7); ctx.fill();
+    if(e.fly){ ctx.strokeStyle='rgba(255,220,150,0.5)'; ctx.lineWidth=1.5; const ws=Math.sin(G.time*20)*e.r;
+      ctx.beginPath(); ctx.moveTo(-e.r,0); ctx.lineTo(-e.r-6,-ws*0.4); ctx.moveTo(e.r,0); ctx.lineTo(e.r+6,-ws*0.4); ctx.stroke(); }
+  }
+  ctx.restore();
+  drawHpBar(e.x,e.y-e.r-6, e.r*2, e.hp/e.maxhp);
+}
+
+function drawProjectiles(){
+  for(const p of projectiles){
+    if(p.type==='bullet'){
+      ctx.strokeStyle=p.col; ctx.lineWidth=2; ctx.beginPath();
+      ctx.moveTo(p.x,p.y); ctx.lineTo(p.x-p.vx*0.012,p.y-p.vy*0.012); ctx.stroke();
+    } else {
+      ctx.fillStyle=p.col; ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,7); ctx.fill();
+      ctx.fillStyle='rgba(255,255,255,0.5)'; ctx.beginPath(); ctx.arc(p.x,p.y,p.size*0.4,0,7); ctx.fill();
+    }
+  }
+}
+
+function drawParticles(){
+  for(const p of particles){
+    const a=1-p.life/p.max;
+    if(p.type==='smoke'){
+      ctx.fillStyle='rgba(120,120,130,'+(a*0.4)+')';
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.size*(1+ (1-a)),0,7); ctx.fill();
+    } else {
+      ctx.globalAlpha=a;
+      ctx.fillStyle=p.col;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,7); ctx.fill();
+      ctx.globalAlpha=1;
+    }
+  }
+}
+
+function drawLighting(sx,sy){
+  lctx.setTransform(DPR,0,0,DPR,0,0);
+  lctx.clearRect(0,0,W,H);
+  // ambient darkness
+  lctx.fillStyle='rgba(4,7,12,0.42)';
+  lctx.fillRect(0,0,W,H);
+  lctx.save();
+  lctx.globalCompositeOperation='destination-out';
+  // cut light holes for dynamic lights
+  for(const l of lights){
+    const s=worldToScreen(l.x,l.y);
+    const r=l.r*cam.zoom;
+    const g=lctx.createRadialGradient(s.x+sx,s.y+sy,0,s.x+sx,s.y+sy,r);
+    const a=l.a*(1-l.life/l.max);
+    g.addColorStop(0,'rgba(0,0,0,'+a+')'); g.addColorStop(1,'rgba(0,0,0,0)');
+    lctx.fillStyle=g; lctx.beginPath(); lctx.arc(s.x+sx,s.y+sy,r,0,7); lctx.fill();
+  }
+  // buildings emit soft ambient light
+  for(const b of buildings){
+    if(b.type==='wall'||b.type==='belt') continue;
+    const s=worldToScreen(b.x,b.y); const r=46*cam.zoom;
+    const g=lctx.createRadialGradient(s.x+sx,s.y+sy,0,s.x+sx,s.y+sy,r);
+    g.addColorStop(0,'rgba(0,0,0,0.5)'); g.addColorStop(1,'rgba(0,0,0,0)');
+    lctx.fillStyle=g; lctx.beginPath(); lctx.arc(s.x+sx,s.y+sy,r,0,7); lctx.fill();
+  }
+  lctx.restore();
+  // colored glows (additive)
+  lctx.globalCompositeOperation='lighter';
+  for(const l of lights){
+    const s=worldToScreen(l.x,l.y); const r=l.r*cam.zoom;
+    const g=lctx.createRadialGradient(s.x+sx,s.y+sy,0,s.x+sx,s.y+sy,r);
+    const a=0.5*l.a*(1-l.life/l.max);
+    g.addColorStop(0,hexA(l.col,a)); g.addColorStop(1,hexA(l.col,0));
+    lctx.fillStyle=g; lctx.beginPath(); lctx.arc(s.x+sx,s.y+sy,r,0,7); lctx.fill();
+  }
+  lctx.globalCompositeOperation='source-over';
+}
+function hexA(hex,a){
+  hex=hex.replace('#',''); const r=parseInt(hex.substr(0,2),16),g=parseInt(hex.substr(2,2),16),b=parseInt(hex.substr(4,2),16);
+  return 'rgba('+r+','+g+','+b+','+a+')';
+}
+
+function roundRect(c,x,y,w,h,r){ c.beginPath(); c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+h,r); c.arcTo(x+w,y+h,x,y+h,r); c.arcTo(x,y+h,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath(); }
+
+/* ghost preview during placement */
+function drawGhost(){
+  if(!selBuild || deleteMode) {
+    if(deleteMode && hoverTile){
+      const b=grid[hoverTile.ty] && grid[hoverTile.ty][hoverTile.tx];
+      if(b && b!==hub){ ctx.strokeStyle='#ff4d4d'; ctx.lineWidth=2; ctx.strokeRect(hoverTile.tx*TILE+2,hoverTile.ty*TILE+2,TILE-4,TILE-4); }
+    }
+    return;
+  }
+  if(!hoverTile) return;
+  const {tx,ty}=hoverTile;
+  const ok=tileBuildable(tx,ty,selBuild) && canAfford(selBuild);
+  ctx.globalAlpha=0.55;
+  ctx.fillStyle=ok?'#4ade80':'#ff4d4d';
+  roundRect(ctx,tx*TILE+3,ty*TILE+3,TILE-6,TILE-6,5); ctx.fill();
+  ctx.globalAlpha=1;
+  const def=B[selBuild];
+  ctx.fillStyle='#fff'; ctx.font='16px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(def.glyph, tx*TILE+TILE/2, ty*TILE+TILE/2);
+  // direction arrow for directional
+  if(['belt','miner','furnace','arm','factory'].includes(selBuild)){
+    const d=DIRS[curDir];
+    ctx.strokeStyle='#fff'; ctx.lineWidth=2;
+    const cx=tx*TILE+TILE/2, cy=ty*TILE+TILE/2;
+    ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+d[0]*12,cy+d[1]*12); ctx.stroke();
+  }
+  // range preview for defense
+  if(['turret','cannon','missile','repair'].includes(selBuild)){
+    const range=(def.range||150)* (selBuild==='repair'?1:M('turRange'));
+    ctx.strokeStyle='rgba(255,176,32,0.25)'; ctx.beginPath(); ctx.arc(tx*TILE+TILE/2,ty*TILE+TILE/2,range,0,7); ctx.stroke();
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Minimap                                                                 */
+/* ---------------------------------------------------------------------- */
+function drawMini(){
+  const w=mini.width, h=mini.height;
+  const sx=w/WORLD_W, sy=h/WORLD_H;
+  mctx.fillStyle='#070b10'; mctx.fillRect(0,0,w,h);
+  // terrain coarse
+  const step=2;
+  for(let y=0;y<GH;y+=step) for(let x=0;x<GW;x+=step){
+    const t=terrain[y][x];
+    let c=null;
+    if(t.type==='water') c='#12384f';
+    else if(t.type==='forest') c='#122a18';
+    else if(t.type==='mountain') c='#33363c';
+    else if(t.type==='ore') c=RES[t.ore].col;
+    else if(t.type==='enemybase') c='#5a1520';
+    if(c){ mctx.fillStyle=c; mctx.fillRect(x*TILE*sx,y*TILE*sy,TILE*sx*step,TILE*sy*step); }
+  }
+  // buildings
+  for(const b of buildings){
+    mctx.fillStyle = b===hub?'#ffb020':(B[b.type]&&B[b.type].cat==='def'?'#4fd1ff':'#7d8fa3');
+    mctx.fillRect(b.x*sx-1,b.y*sy-1,2,2);
+  }
+  // robots
+  mctx.fillStyle='#8affc0';
+  for(const r of robots) mctx.fillRect(r.x*sx-1,r.y*sy-1,2,2);
+  // enemies
+  for(const e of enemies){ mctx.fillStyle=e.boss?'#ff2020':'#ff5a5a'; const s=e.boss?4:2; mctx.fillRect(e.x*sx-s/2,e.y*sy-s/2,s,s); }
+  // camera rect
+  mctx.strokeStyle='#dbe6f2'; mctx.lineWidth=1;
+  mctx.strokeRect(cam.x*sx, cam.y*sy, (W/cam.zoom)*sx, (H/cam.zoom)*sy);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Input                                                                   */
+/* ---------------------------------------------------------------------- */
+let selBuild=null, curDir=0, deleteMode=false, hoverTile=null;
+let dragging=false, dragBtn=0, lastMx=0, lastMy=0, movedDist=0, mouseX=0, mouseY=0;
+let placing=false;
+
+function canAfford(type){ const def=B[type]; for(const k in def.cost){ if(G.res[k]<def.cost[k]) return false; } return true; }
+
+cv.addEventListener('mousedown', e=>{
+  if(G.over) return;
+  lastMx=e.clientX; lastMy=e.clientY; movedDist=0;
+  dragBtn=e.button;
+  if(e.button===0){
+    if(selBuild || deleteMode){ placing=true; doPlaceAt(e.clientX,e.clientY); }
+    else dragging=true;
+  } else { dragging=true; }
+});
+window.addEventListener('mousemove', e=>{
+  mouseX=e.clientX; mouseY=e.clientY;
+  const w=screenToWorld(e.clientX,e.clientY);
+  const tx=Math.floor(w.x/TILE), ty=Math.floor(w.y/TILE);
+  hoverTile={tx,ty};
+  if(dragging){
+    const dx=e.clientX-lastMx, dy=e.clientY-lastMy;
+    cam.x-=dx/cam.zoom; cam.y-=dy/cam.zoom; clampCam();
+    lastMx=e.clientX; lastMy=e.clientY;
+  } else if(placing){
+    // auto-orient belt along drag & place continuously
+    if(selBuild==='belt' && lastTile && (lastTile.tx!==tx||lastTile.ty!==ty)){
+      const ddx=tx-lastTile.tx, ddy=ty-lastTile.ty;
+      if(Math.abs(ddx)>Math.abs(ddy)) curDir=ddx>0?0:2; else if(ddy!==0) curDir=ddy>0?1:3;
+    }
+    doPlaceAt(e.clientX,e.clientY);
+  }
+});
+window.addEventListener('mouseup', e=>{ dragging=false; placing=false; lastTile=null; });
+let lastTile=null;
+
+cv.addEventListener('contextmenu', e=>{ e.preventDefault(); selBuild=null; deleteMode=false; updateToolUI(); renderBuild(); });
+
+cv.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const before=screenToWorld(e.clientX,e.clientY);
+  cam.zoom = clamp(cam.zoom * (e.deltaY<0?1.12:0.89), 0.4, 2.4);
+  const after=screenToWorld(e.clientX,e.clientY);
+  cam.x += before.x-after.x; cam.y += before.y-after.y; clampCam();
+}, {passive:false});
+
+function doPlaceAt(sx,sy){
+  const w=screenToWorld(sx,sy);
+  const tx=Math.floor(w.x/TILE), ty=Math.floor(w.y/TILE);
+  if(tx<0||ty<0||tx>=GW||ty>=GH) return;
+  if(deleteMode){
+    const b=grid[ty][tx];
+    if(b && b!==hub) removeBuilding(b,true);
+    return;
+  }
+  if(!selBuild) return;
+  if(lastTile && lastTile.tx===tx && lastTile.ty===ty && selBuild!=='belt') return;
+  if(placeBuilding(selBuild,tx,ty,curDir)){
+    lastTile={tx,ty};
+    updateHUD();
+  } else {
+    if(!canAfford(selBuild) && !(lastTile&&lastTile.tx===tx&&lastTile.ty===ty)){ /* silent */ }
+    lastTile={tx,ty};
+  }
+}
+
+/* touch support (basic) */
+let touchLast=null, pinchDist=0;
+cv.addEventListener('touchstart', e=>{
+  if(e.touches.length===1){ const t=e.touches[0]; touchLast={x:t.clientX,y:t.clientY};
+    if(selBuild||deleteMode){ placing=true; doPlaceAt(t.clientX,t.clientY);} }
+  else if(e.touches.length===2){ pinchDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); placing=false; }
+},{passive:true});
+cv.addEventListener('touchmove', e=>{
+  e.preventDefault();
+  if(e.touches.length===1 && touchLast){
+    const t=e.touches[0];
+    if(placing){ const w=screenToWorld(t.clientX,t.clientY); const tx=Math.floor(w.x/TILE),ty=Math.floor(w.y/TILE);
+      if(selBuild==='belt'&&lastTile&&(lastTile.tx!==tx||lastTile.ty!==ty)){const ddx=tx-lastTile.tx,ddy=ty-lastTile.ty; if(Math.abs(ddx)>Math.abs(ddy))curDir=ddx>0?0:2;else if(ddy)curDir=ddy>0?1:3;}
+      doPlaceAt(t.clientX,t.clientY); }
+    else { cam.x-=(t.clientX-touchLast.x)/cam.zoom; cam.y-=(t.clientY-touchLast.y)/cam.zoom; clampCam(); }
+    touchLast={x:t.clientX,y:t.clientY};
+  } else if(e.touches.length===2){
+    const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+    if(pinchDist){ cam.zoom=clamp(cam.zoom*(d/pinchDist),0.4,2.4); clampCam(); } pinchDist=d;
+  }
+},{passive:false});
+cv.addEventListener('touchend', e=>{ if(e.touches.length===0){touchLast=null;placing=false;lastTile=null;pinchDist=0;} },{passive:true});
+
+// minimap click to jump
+mini.addEventListener('mousedown', e=>{
+  const rect=mini.getBoundingClientRect();
+  const mx=(e.clientX-rect.left)/rect.width*WORLD_W, my=(e.clientY-rect.top)/rect.height*WORLD_H;
+  centerCam(mx,my); clampCam();
+});
+
+/* keyboard */
+const keys={};
+window.addEventListener('keydown', e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(G.over) return;
+  const k=e.key.toLowerCase();
+  if(k==='r'){ curDir=(curDir+1)%4; }
+  else if(k==='x'){ toggleDelete(); }
+  else if(k==='u'){ toggleOverlay('upg'); }
+  else if(k==='b'){ toggleOverlay('rob'); }
+  else if(k==='p'){ G.paused=!G.paused; updateToolUI(); }
+  else if(k==='escape'){ selBuild=null; deleteMode=false; closeAllOverlays(); updateToolUI(); renderBuild(); }
+  else if(k>='1'&&k<='9'){
+    const idx=parseInt(k)-1; const t=BUILD_ORDER[idx];
+    if(t){ selBuild=selBuild===t?null:t; deleteMode=false; updateToolUI(); renderBuild(); }
+  }
+});
+window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()]=false; });
+
+function keyboardCam(dt){
+  const sp=520*dt/cam.zoom;
+  if(keys['w']||keys['arrowup']) cam.y-=sp;
+  if(keys['s']||keys['arrowdown']) cam.y+=sp;
+  if(keys['a']||keys['arrowleft']) cam.x-=sp;
+  if(keys['d']||keys['arrowright']) cam.x+=sp;
+  if(keys['w']||keys['a']||keys['s']||keys['d']||keys['arrowup']||keys['arrowdown']||keys['arrowleft']||keys['arrowright']) clampCam();
+}
+
+/* ---------------------------------------------------------------------- */
+/* UI building                                                             */
+/* ---------------------------------------------------------------------- */
+const topbar=document.getElementById('topbar');
+function buildTopbar(){
+  let html='';
+  for(const k of RES_ORDER){
+    html+=`<div class="res" data-tip="${RES[k].name}"><span class="ic" style="background:${RES[k].col}"></span>
+      <span>${RES[k].name}</span><span class="v" id="res_${k}">0</span><small id="cap_${k}"></small></div>`;
+  }
+  html+=`<div class="spacer"></div>
+    <div id="wavebox">
+      <div class="badge">🤖 <span id="robCount">0</span>/<span id="robMax">0</span></div>
+      <div class="badge">⚔️ الموجة <b id="waveNum">0</b></div>
+      <div class="badge" id="waveState"></div>
+      <button id="nextWaveBtn">▶ بدء الموجة</button>
+    </div>`;
+  topbar.innerHTML=html;
+  document.getElementById('nextWaveBtn').onclick=()=>{ if(!G.waveActive) startWave(); };
+}
+
+function updateHUD(){
+  for(const k of RES_ORDER){
+    const el=document.getElementById('res_'+k); if(el) el.textContent=fmt(G.res[k]);
+    const cel=document.getElementById('cap_'+k); if(cel) cel.textContent = k==='ammo'||k==='parts'?'':'/'+fmt(capOf(k));
+  }
+  document.getElementById('waveNum').textContent=G.wave;
+  document.getElementById('robCount').textContent=robots.length;
+  document.getElementById('robMax').textContent=maxRobots();
+  const ws=document.getElementById('waveState');
+  const btn=document.getElementById('nextWaveBtn');
+  if(G.waveActive){ ws.textContent='الأعداء: '+enemies.length; ws.style.color='#ff8a8a'; btn.disabled=true; btn.textContent='الموجة نشطة'; }
+  else { ws.textContent='تحضير: '+Math.ceil(G.waveTimer)+'ث'; ws.style.color='#8affc0'; btn.disabled=false; btn.textContent='▶ بدء الموجة'; }
+  // energy
+  const eb=document.getElementById('enBar');
+  const ec=baseCap('energy');
+  eb.style.transform='scaleX('+clamp(G.res.energy/ec,0,1)+')';
+  document.getElementById('enTxt').textContent=fmt(G.res.energy)+' / '+fmt(ec);
+  document.getElementById('enFlow').textContent='إنتاج '+Math.round(G.energyProd)+' / استهلاك '+Math.round(G.energyUse);
+}
+
+const buildbar=document.getElementById('buildbar');
+function renderBuild(){
+  const cats={prod:'الإنتاج',logi:'النقل',def:'الدفاع'};
+  let html='';
+  let lastCat=null;
+  for(const t of BUILD_ORDER){
+    const def=B[t];
+    if(def.cat!==lastCat){ if(lastCat!==null) html+='</div>'; html+='<div class="cat">'; lastCat=def.cat; }
+    const aff=canAfford(t);
+    let costStr='';
+    for(const k in def.cost) costStr+=`<span style="color:${RES[k].col}">${def.cost[k]}</span> `;
+    html+=`<div class="btn ${selBuild===t?'sel':''} ${aff?'':'dis'}" data-build="${t}" data-tip="${def.name}||${def.desc}">
+      ${def.key?`<span class="key">${def.key}</span>`:''}
+      <div class="g" style="background:${def.color}44">${def.glyph}</div>
+      <div>${def.name}</div><div class="c">${costStr}</div></div>`;
+  }
+  html+='</div>';
+  buildbar.innerHTML=html;
+  buildbar.querySelectorAll('[data-build]').forEach(el=>{
+    el.onclick=()=>{ const t=el.dataset.build; selBuild=selBuild===t?null:t; deleteMode=false; updateToolUI(); renderBuild(); };
+  });
+}
+
+/* tooltip handling */
+const tip=document.getElementById('tip');
+document.addEventListener('mousemove', e=>{
+  const el=e.target.closest('[data-tip]');
+  if(el){ const parts=el.dataset.tip.split('||');
+    tip.innerHTML='<b>'+parts[0]+'</b>'+(parts[1]?'<br>'+parts[1]:'');
+    tip.style.display='block';
+    let x=e.clientX+14, y=e.clientY+14;
+    if(x+250>W) x=e.clientX-250; if(y+80>H) y=e.clientY-80;
+    tip.style.left=x+'px'; tip.style.top=y+'px';
+  } else tip.style.display='none';
+});
+
+/* tools */
+function updateToolUI(){
+  document.getElementById('tDelete').classList.toggle('on',deleteMode);
+  document.getElementById('tPause').classList.toggle('on',G.paused);
+  document.getElementById('tPause').textContent=G.paused?'▶️':'⏸️';
+}
+function toggleDelete(){ deleteMode=!deleteMode; if(deleteMode) selBuild=null; updateToolUI(); renderBuild(); }
+document.getElementById('tDelete').onclick=toggleDelete;
+document.getElementById('tPause').onclick=()=>{ G.paused=!G.paused; updateToolUI(); };
+document.getElementById('tUpg').onclick=()=>toggleOverlay('upg');
+document.getElementById('tRobot').onclick=()=>toggleOverlay('rob');
+document.getElementById('tHelp').onclick=()=>toggleOverlay('help');
+
+/* ---------------------------------------------------------------------- */
+/* Overlays: upgrades, robots, help                                        */
+/* ---------------------------------------------------------------------- */
+const overlays={upg:document.getElementById('upgOverlay'),rob:document.getElementById('robOverlay'),help:document.getElementById('helpOverlay')};
+function closeAllOverlays(){ for(const k in overlays) overlays[k].classList.remove('open'); }
+function toggleOverlay(which){
+  const wasOpen=overlays[which].classList.contains('open');
+  closeAllOverlays();
+  if(!wasOpen){ overlays[which].classList.add('open'); if(which==='upg') renderUpgrades(); if(which==='rob') renderRobots(); }
+}
+document.querySelectorAll('[data-close]').forEach(x=>x.onclick=closeAllOverlays);
+for(const k in overlays){ overlays[k].addEventListener('mousedown',e=>{ if(e.target===overlays[k]) closeAllOverlays(); }); }
+
+let curUpgTab=null;
+function renderUpgrades(){
+  const tabs=[...new Set(UPCATS.map(c=>c.tab))];
+  if(!curUpgTab) curUpgTab=tabs[0];
+  const tabsEl=document.getElementById('upgTabs');
+  tabsEl.innerHTML=tabs.map(t=>`<div class="tab ${t===curUpgTab?'on':''}" data-tab="${t}">${t}</div>`).join('');
+  tabsEl.querySelectorAll('[data-tab]').forEach(el=>el.onclick=()=>{ curUpgTab=el.dataset.tab; renderUpgrades(); });
+  const grid=document.getElementById('upgGrid');
+  let html='';
+  for(const c of UPCATS){
+    if(c.tab!==curUpgTab) continue;
+    const u=UPS[c.id];
+    const maxed=u.level>=UP_LEVELS;
+    const cost=upgCost(c,u.level);
+    let can=!maxed; for(const k in cost){ if(G.res[k]<cost[k]) can=false; }
+    let costHtml='';
+    for(const k in cost) costHtml+=`<span><span style="color:${RES[k].col}">●</span> ${fmt(cost[k])} ${RES[k].name}</span>`;
+    const effTxt = c.flat? ('+'+((u.level)*c.flat)+' حالي') : ('+'+Math.round(u.level*c.per*100)+'٪ حالي');
+    html+=`<div class="ucard">
+      <h4>${c.icon} ${c.name}<span class="lv">${u.level}/${UP_LEVELS}</span></h4>
+      <p>${c.desc}<br><span style="color:#8affc0">${effTxt}</span></p>
+      <div class="cost">${maxed?'<span style="color:#ffb020">أقصى مستوى</span>':costHtml}</div>
+      <button class="ubtn ${maxed?'max':(can?'':'dis')}" data-up="${c.id}" ${(maxed||!can)?'disabled':''}>
+        ${maxed?'مكتمل':'ترقية'}</button></div>`;
+  }
+  grid.innerHTML=html;
+  grid.querySelectorAll('[data-up]').forEach(el=>el.onclick=()=>buyUpgrade(el.dataset.up));
+}
+function buyUpgrade(id){
+  const c=UPCATS.find(x=>x.id===id); const u=UPS[id];
+  if(u.level>=UP_LEVELS) return;
+  const cost=upgCost(c,u.level);
+  for(const k in cost){ if(G.res[k]<cost[k]){ toast('موارد غير كافية','warn'); return; } }
+  for(const k in cost){ G.res[k]-=cost[k]; }
+  u.level++;
+  // side effects: HP upgrades apply to existing buildings
+  if(id==='bHp'||id==='wallHp'){ for(const b of buildings){ const base=(b===hub?HUB.hp:B[b.type].hp); const nm=Math.ceil(base*M('bHp')*(b.type==='wall'?M('wallHp'):1)); const ratio=b.hp/b.maxhp; b.maxhp=nm; b.hp=nm*ratio; } }
+  toast('⚙️ '+c.name+' → مستوى '+u.level,'good');
+  renderUpgrades(); updateHUD(); renderBuild();
+}
+
+function renderRobots(){
+  document.getElementById('robCap').textContent='السعة: '+robots.length+' / '+maxRobots();
+  const grid=document.getElementById('robGrid');
+  let html='';
+  for(const key in ROBOTS){
+    const d=ROBOTS[key];
+    let costHtml=''; let can=robots.length<maxRobots();
+    for(const k in d.cost){ costHtml+=`<span style="color:${RES[k].col}">${d.cost[k]} ${RES[k].name}</span> `; if(G.res[k]<d.cost[k]) can=false; }
+    html+=`<div class="robcard">
+      <h4>${d.glyph} ${d.name}</h4>
+      <div class="desc">${d.desc}</div>
+      <div class="cost" style="font-size:11px;margin-bottom:8px">${costHtml}</div>
+      <button class="ubtn ${can?'':'dis'}" data-rob="${key}" ${can?'':'disabled'}>تصنيع</button></div>`;
+  }
+  grid.innerHTML=html;
+  grid.querySelectorAll('[data-rob]').forEach(el=>el.onclick=()=>{ buildRobot(el.dataset.rob); updateHUD(); });
+}
+
+/* ---------------------------------------------------------------------- */
+/* Toast log                                                               */
+/* ---------------------------------------------------------------------- */
+const logEl=document.getElementById('log');
+function toast(msg,cls){
+  const d=document.createElement('div'); d.className='toast '+(cls||''); d.textContent=msg;
+  logEl.appendChild(d);
+  setTimeout(()=>d.remove(),3000);
+  while(logEl.children.length>4) logEl.removeChild(logEl.firstChild);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Game loop                                                               */
+/* ---------------------------------------------------------------------- */
+let last=now(), hudAcc=0;
+function loop(){
+  requestAnimationFrame(loop);
+  const t=now(); let dt=(t-last)/1000; last=t;
+  if(dt>0.05) dt=0.05; // clamp
+  cam.zoom += (cam.tzoom-cam.zoom)*0; // reserved
+
+  if(G.running && !G.paused && !G.over){
+    G.time+=dt;
+    keyboardCam(dt);
+    updateBuildings(dt);
+    updateEnemies(dt);
+    updateProjectiles(dt);
+    updateRobots(dt);
+    updateParticles(dt);
+    if(!G.waveActive){ G.waveTimer-=dt; if(G.waveTimer<=0){ startWave(); } }
+    hudAcc+=dt;
+    if(hudAcc>0.15){ hudAcc=0; updateHUD(); if(overlays.upg.classList.contains('open')) {} }
+  } else {
+    keyboardCam(dt);
+    if(!G.running){ /* idle animation on start screen */ }
+  }
+
+  draw();
+  drawMini();
+}
+
+/* ---------------------------------------------------------------------- */
+/* Init / start / game over                                                */
+/* ---------------------------------------------------------------------- */
+function initGame(){
+  buildings=[]; items=[]; enemies=[]; projectiles=[]; robots=[]; particles=[]; lights=[]; floats=[];
+  genWorld();
+  // reset state
+  G.time=0; G.wave=0; G.waveActive=false; G.waveTimer=G.prepTime; G.over=false; G.paused=false;
+  G.killCount=0; G.builtCount=0; G.bossSpawned=false;
+  G.res={iron:180, copper:60, coal:80, stone:140, oil:0, crystal:0, energy:100, ammo:80, parts:20};
+  G.robotCap=4;
+  for(const id in UPS) UPS[id].level=0;
+  storageCount=0;
+
+  // place hub at center
+  const bcx=Math.floor(GW/2), bcy=Math.floor(GH/2);
+  hub=makeBuilding('miner',bcx,bcy,0); // temp; overwrite
+  hub={type:'hub',tx:bcx,ty:bcy,x:bcx*TILE+TILE/2,y:bcy*TILE+TILE/2,hp:HUB.hp,maxhp:HUB.hp,anim:0,flash:0,beltItems:[],inBuf:{}};
+  grid[bcy][bcx]=hub; buildings.push(hub);
+
+  // give a few starter generators/turrets? No—let player build. But add a starter turret near hub for safety.
+  // starter: one generator + one turret placed adjacent, free
+  placeBuilding('generator',bcx-1,bcy,0,true);
+  placeBuilding('turret',bcx+1,bcy-1,0,true);
+  G.res.energy=100;
+
+  centerCam(hub.x,hub.y); cam.zoom=1.1; clampCam();
+  buildTopbar(); renderBuild(); updateHUD(); updateToolUI();
+}
+
+function startGame(){
+  document.getElementById('start').style.display='none';
+  document.getElementById('over').style.display='none';
+  initGame();
+  G.running=true;
+  toast('🏗️ ابنِ مصنعك! لديك '+G.prepTime+' ثانية قبل الموجة الأولى.','good');
+}
+
+function gameOver(){
+  G.over=true; G.running=false;
+  explode(hub.x,hub.y,120,0); camShake(20);
+  const stats=`صمدت حتى الموجة <b style="color:#ffb020">${G.wave}</b> · قتلت <b style="color:#ffb020">${G.killCount}</b> عدوًا · بنيت <b style="color:#ffb020">${G.builtCount}</b> مبنى`;
+  document.getElementById('overStats').innerHTML=stats;
+  setTimeout(()=>{ document.getElementById('over').style.display='flex'; },900);
+}
+
+document.getElementById('playBtn').onclick=startGame;
+document.getElementById('againBtn').onclick=startGame;
+
+/* start the render loop immediately (menu shows) */
+initGame(); G.running=false;
+loop();
+
+/* Prevent accidental scroll/zoom */
+document.addEventListener('gesturestart', e=>e.preventDefault());
+window.addEventListener('wheel', e=>{ if(e.ctrlKey) e.preventDefault(); }, {passive:false});
+</script>
+</body>
+</html>
