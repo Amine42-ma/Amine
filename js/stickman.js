@@ -30,9 +30,16 @@ class Stickman {
     this.blocking = false;
     this.wantAttack = false;
     this.hitFlash = 0;
-    this.control = { move: 0, jump: false, attack: false, block: false, down: false };
+    this.control = { move: 0, jump: false, attack: false, block: false, dash: false };
     this._lastGrounded = false;
     this._jumpLock = 0;
+    this._jumpHeld = false;
+    this.maxJumps = 2;         // ground jump + one air (double) jump
+    this.jumpsLeft = 2;
+    this.dashCooldown = 0;
+    this.special = 0;          // rage meter 0..1
+    this.rageActive = false;
+    this.rageTimer = 0;
     this._hitParticles = new Map(); // opponent particle -> cooldown frames
     this.deathTimer = 0;
 
@@ -132,7 +139,8 @@ class Stickman {
     }
     this.health = Utils.clamp(this.health - dealt, 0, this.maxHealth);
     this.hitFlash = 8;
-    if (dealt > 6) this.stun = Math.min(30, Math.round(dealt * 1.6));
+    this.special = Utils.clamp(this.special + dealt * 0.008, 0, 1); // build meter when hurt
+    if (dealt > 6 && !this.rageActive) this.stun = Math.min(30, Math.round(dealt * 1.6));
     // knockback
     const kb = power * (this.blocking ? 3 : 9) + dealt * 0.4;
     const impulse = (p, s) => p.applyImpulse(-dirX * kb * s, -dirY * kb * s - kb * 0.15 * s);
@@ -211,12 +219,16 @@ class Stickman {
           ? 0.6 + w.speed * 0.05
           : Utils.clamp(w.speed / 9, 0.5, 2.2);
         let dmg = this.weapon.damage * (cont ? (this.weapon.dps || 0.9) : (0.7 + power * 0.6));
+        if (this.rageActive) dmg *= 1.6;               // rage boosts damage
         const dirX = w.dx, dirY = w.dy;
-        const dealt = opponent.takeHit(dmg, dirX, dirY, power, this);
-        if (dealt > 0 && this.fx) {
-          this.fx.damageText(seg.qx, seg.qy - 10, dealt,
-            opponent.blocking ? '#8ce0ff' : '#ffe36e');
-          if (!cont) this.fx.sparks(seg.qx, seg.qy, 6);
+        const dealt = opponent.takeHit(dmg, dirX, dirY, power * (this.rageActive ? 1.3 : 1), this);
+        if (dealt > 0) {
+          this.special = Utils.clamp(this.special + dealt * 0.011, 0, 1); // build meter on hits dealt
+          if (this.fx) {
+            this.fx.damageText(seg.qx, seg.qy - 10, dealt,
+              opponent.blocking ? '#8ce0ff' : (this.rageActive ? '#ff5a6e' : '#ffe36e'));
+            if (!cont) this.fx.sparks(seg.qx, seg.qy, this.rageActive ? 12 : 6);
+          }
         }
         this._hitParticles.set(key, cont ? 8 : 999); // one hit per swing (or ticking for chainsaw)
         if (!cont) break; // one target per swing for non-continuous
@@ -231,8 +243,21 @@ class Stickman {
     if (this.stun > 0) this.stun--;
     if (this.hitFlash > 0) this.hitFlash--;
     if (this._jumpLock > 0) this._jumpLock--;
+    if (this.dashCooldown > 0) this.dashCooldown--;
     for (const [k, v] of this._hitParticles) {
       if (v < 999) { const nv = v - 1; if (nv <= 0) this._hitParticles.delete(k); else this._hitParticles.set(k, nv); }
+    }
+
+    // Rage / special meter
+    if (this.rageActive) {
+      this.rageTimer--;
+      if (this.rageTimer <= 0) { this.rageActive = false; this.special = 0; }
+    } else if (this.special >= 1) {
+      // auto-activate rage mode when the meter fills — a comeback boost
+      this.rageActive = true;
+      this.rageTimer = 300; // ~5s
+      if (this.audio) this.audio.win();
+      if (this.fx) { this.fx.shock(this.centerX, this.centerY, this.color); this.fx.sparks(this.centerX, this.centerY, 16); }
     }
 
     if (!this.alive) { this.updateDead(); return; }
@@ -248,8 +273,9 @@ class Stickman {
 
     // Movement
     const grounded = this.isGrounded();
+    const rageMul = this.rageActive ? 1.35 : 1;
     const moveInput = canAct && !this.blocking ? this.control.move : 0;
-    const speed = grounded ? 0.9 : 0.42;
+    const speed = (grounded ? 0.9 : 0.42) * rageMul;
     if (moveInput !== 0) {
       const push = moveInput * speed;
       this.pelvis.applyForce(push * 6, 0);
@@ -259,16 +285,44 @@ class Stickman {
       this.footB.applyForce(push * 3, 0);
     }
 
-    // Jump
-    if (canAct && this.control.jump && grounded && this._jumpLock <= 0) {
-      const j = -12.5;
+    // Reset jumps once actually settled on the ground
+    if (grounded && this._jumpLock <= 0) this.jumpsLeft = this.maxJumps;
+
+    // Jump — rising edge, with double jump in the air
+    const jumpPressed = canAct && this.control.jump && !this._jumpHeld;
+    if (jumpPressed && this.jumpsLeft > 0 && this._jumpLock <= 0) {
+      const airJump = !grounded && this.jumpsLeft < this.maxJumps;
+      const j = airJump ? -12 : -12.8;
       this.pelvis.applyImpulse(0, j);
       this.chest.applyImpulse(0, j * 0.7);
       this.footA.applyImpulse(0, j * 0.3);
       this.footB.applyImpulse(0, j * 0.3);
-      this._jumpLock = 18;
+      this.jumpsLeft--;
+      this._jumpLock = 10;
       if (this.audio) this.audio.jump();
-      if (this.fx) this.fx.dust(this.pelvis.x, this.footA.y + 6, 0, 6);
+      if (this.fx) {
+        this.fx.dust(this.pelvis.x, this.footA.y + 6, 0, 6);
+        if (airJump) this.fx.shock(this.pelvis.x, this.footA.y + 10, '#ffffff');
+      }
+    }
+    this._jumpHeld = this.control.jump;
+
+    // Dash — quick horizontal burst
+    if (canAct && this.control.dash && this.dashCooldown <= 0) {
+      const dir = moveInput !== 0 ? Math.sign(moveInput) : this.facing;
+      const power = 20 * (this.rageActive ? 1.2 : 1);
+      this.pelvis.applyImpulse(dir * power, -2);
+      this.chest.applyImpulse(dir * power * 0.8, -1);
+      this.footA.applyImpulse(dir * power * 0.6, 0);
+      this.footB.applyImpulse(dir * power * 0.6, 0);
+      this.dashCooldown = 42;
+      this.facing = dir;
+      if (this.audio) this.audio.swing();
+      if (this.fx) {
+        this.fx.dust(this.pelvis.x - dir * 12, this.pelvis.y + 20, dir > 0 ? Math.PI : 0, 8);
+        this.fx.shock(this.centerX, this.centerY, this.color);
+      }
+      this.control.dash = false;
     }
 
     // Landing dust / sfx
@@ -433,6 +487,20 @@ class Stickman {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
+    // rage aura when the special meter is charged/active
+    if (this.rageActive || (this.special >= 1 && this.alive)) {
+      const t = this.rageActive ? 1 : 0.6;
+      ctx.save();
+      ctx.shadowBlur = 26; ctx.shadowColor = this.color;
+      ctx.globalAlpha = 0.35 + Math.sin(time * 0.3) * 0.1;
+      ctx.strokeStyle = this.color; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(this.centerX, this.centerY, 44 * t, 0, Utils.TAU); ctx.stroke();
+      ctx.restore();
+    }
+
+    // hit-flash glow
+    if (flash) { ctx.shadowBlur = 16; ctx.shadowColor = '#ffffff'; }
+
     // back arm (drawn first, behind body)
     this.limb(ctx, this.chest, this.backElbow, this.backHand, bodyColor, limbW - 2);
 
@@ -441,44 +509,40 @@ class Stickman {
     this.limb(ctx, this.pelvis, this.kneeA, this.footA, bodyColor, limbW);
 
     // torso
-    ctx.strokeStyle = bodyColor;
-    ctx.lineWidth = limbW + 3;
-    ctx.beginPath();
-    ctx.moveTo(this.chest.x, this.chest.y);
-    ctx.lineTo(this.pelvis.x, this.pelvis.y);
-    ctx.stroke();
-
+    this.bone(ctx, this.chest, this.pelvis, bodyColor, limbW + 3);
     // neck
-    ctx.lineWidth = limbW - 1;
-    ctx.beginPath();
-    ctx.moveTo(this.head.x, this.head.y);
-    ctx.lineTo(this.chest.x, this.chest.y);
-    ctx.stroke();
+    this.bone(ctx, this.head, this.chest, bodyColor, limbW - 1);
 
     // head
     this.drawHead(ctx, bodyColor);
 
     // front (weapon) arm + weapon
     this.limb(ctx, this.chest, this.frontElbow, this.frontHand, bodyColor, limbW);
+    ctx.shadowBlur = 0;
     this.drawWeapon(ctx, time);
 
     ctx.restore();
   }
 
+  /** Two-point limb (torso / neck) with outline, fill and centre sheen */
+  bone(ctx, a, b, color, width) {
+    ctx.strokeStyle = this.outline; ctx.lineWidth = width + 4;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.strokeStyle = color; ctx.lineWidth = width;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = width * 0.34;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+
+  /** Three-point limb (arm / leg) with outline, fill, sheen and a cap */
   limb(ctx, a, b, c, color, width) {
-    // outline
-    ctx.strokeStyle = this.outline;
-    ctx.lineWidth = width + 4;
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c.x, c.y);
-    ctx.stroke();
-    // fill
-    ctx.strokeStyle = color;
-    ctx.lineWidth = width;
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c.x, c.y);
-    ctx.stroke();
-    // hand/foot cap
+    const path = () => { ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c.x, c.y); ctx.stroke(); };
+    ctx.strokeStyle = this.outline; ctx.lineWidth = width + 4; path();
+    ctx.strokeStyle = color; ctx.lineWidth = width; path();
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = width * 0.32; path();
+    // hand/foot cap with outline
+    ctx.fillStyle = this.outline;
+    ctx.beginPath(); ctx.arc(c.x, c.y, width * 0.5 + 1.5, 0, Utils.TAU); ctx.fill();
     ctx.fillStyle = color;
     ctx.beginPath(); ctx.arc(c.x, c.y, width * 0.5, 0, Utils.TAU); ctx.fill();
   }
@@ -489,20 +553,30 @@ class Stickman {
     ctx.save();
     ctx.translate(h.x, h.y);
     ctx.rotate(ang);
-    // head outline + fill
+    // head outline + fill + top sheen
     ctx.fillStyle = this.outline;
     ctx.beginPath(); ctx.arc(0, 0, h.radius + 2, 0, Utils.TAU); ctx.fill();
-    ctx.fillStyle = color;
+    const hg = ctx.createRadialGradient(-4, -5, 2, 0, 0, h.radius);
+    hg.addColorStop(0, this._lighten(color)); hg.addColorStop(1, color);
+    ctx.fillStyle = hg;
     ctx.beginPath(); ctx.arc(0, 0, h.radius, 0, Utils.TAU); ctx.fill();
-    // eyes (looking toward facing)
+
+    const attacking = this.attackTimer > 0;
     if (this.alive) {
       const ex = this.facing * 4;
+      // angry brows while attacking / raging
+      if (attacking || this.rageActive) {
+        ctx.strokeStyle = '#111'; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(ex - 5, -7); ctx.lineTo(ex + 5, -4);
+        ctx.stroke();
+      }
+      // eyes
       ctx.fillStyle = '#fff';
-      ctx.beginPath(); ctx.arc(ex, -2, 3.4, 0, Utils.TAU); ctx.fill();
-      ctx.fillStyle = '#111';
-      ctx.beginPath(); ctx.arc(ex + this.facing * 1.2, -2, 1.7, 0, Utils.TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(ex, -1, 3.4, 0, Utils.TAU); ctx.fill();
+      ctx.fillStyle = this.rageActive ? '#e11d48' : '#111';
+      ctx.beginPath(); ctx.arc(ex + this.facing * 1.2, -1, 1.8, 0, Utils.TAU); ctx.fill();
     } else {
-      // X eyes when dead
       ctx.strokeStyle = '#111'; ctx.lineWidth = 2;
       for (const sx of [-4, 4]) {
         ctx.beginPath();
@@ -514,23 +588,42 @@ class Stickman {
     ctx.restore();
   }
 
+  _lighten(hex) {
+    if (hex[0] !== '#') return hex;
+    let h = hex.replace('#', '');
+    if (h.length === 3) h = h.split('').map((x) => x + x).join('');
+    const n = parseInt(h, 16);
+    const r = Math.min(255, ((n >> 16) & 255) + 60);
+    const g = Math.min(255, ((n >> 8) & 255) + 60);
+    const b = Math.min(255, (n & 255) + 60);
+    return `rgb(${r},${g},${b})`;
+  }
+
   drawWeapon(ctx, time) {
     if (!this.alive && this.deathTimer > 40) return; // dropped after a moment
     const hand = this.frontHand, elbow = this.frontElbow;
     const ang = Math.atan2(hand.y - elbow.y, hand.x - elbow.x);
+
+    // coloured swing trail
+    if (this.attackTimer > 0 && !this.weapon.continuous) {
+      ctx.save();
+      ctx.translate(hand.x, hand.y); ctx.rotate(ang);
+      const r = this.weapon.reach;
+      const grad = ctx.createLinearGradient(0, 0, r, 0);
+      grad.addColorStop(0, 'rgba(255,255,255,0)');
+      grad.addColorStop(1, this.weapon.trail || 'rgba(255,255,255,0.4)');
+      ctx.strokeStyle = grad; ctx.lineWidth = r * 0.55; ctx.lineCap = 'round';
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.72, -0.75, 0.5); ctx.stroke();
+      ctx.restore();
+    }
+
     ctx.save();
     ctx.translate(hand.x, hand.y);
     ctx.rotate(ang);
-    // swing trail
-    if (this.attackTimer > 0 && !this.weapon.continuous) {
-      ctx.save();
-      ctx.globalAlpha = 0.25;
-      ctx.strokeStyle = this.weapon.color || '#fff';
-      ctx.lineWidth = 6;
-      ctx.beginPath();
-      ctx.arc(0, 0, this.weapon.reach * 0.8, -0.6, 0.6);
-      ctx.stroke();
-      ctx.restore();
+    if (this.weapon.glow && (this.weapon.energy || this.attackTimer > 0)) {
+      ctx.shadowBlur = this.weapon.energy ? 16 : 9;
+      ctx.shadowColor = this.weapon.glow;
     }
     this.weapon.draw(ctx, this.weapon.reach, 8, this.attackTimer > 0, time * 0.06);
     ctx.restore();

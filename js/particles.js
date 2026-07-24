@@ -92,6 +92,11 @@ class ParticleSystem {
     });
   }
 
+  /** Floating arbitrary text (pickups, callouts) */
+  floatText(x, y, text, color = '#fff', size = 26) {
+    this.texts.push({ x, y, vy: -1.2, life: 52, maxLife: 52, text, color, size });
+  }
+
   update() {
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];

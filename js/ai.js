@@ -32,7 +32,7 @@ class AIController {
 
   update() {
     const self = this.self, target = this.target;
-    const control = { move: 0, jump: false, attack: false, block: false };
+    const control = { move: 0, jump: false, attack: false, block: false, dash: false };
     if (!self.alive) { self.setControl(control); return; }
 
     if (!target.alive) {
@@ -70,6 +70,8 @@ class AIController {
     switch (this.state) {
       case 'approach':
         control.move = dir;
+        // dash to close a big gap quickly
+        if (dist > reach + 220 && self.dashCooldown <= 0 && Math.random() < this.cfg.aggression * 0.1) control.dash = true;
         break;
       case 'retreat':
         control.move = -dir;

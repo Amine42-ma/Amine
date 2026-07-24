@@ -1,0 +1,4133 @@
+<!DOCTYPE html>
+<!-- Stickman Duel — single-file build (2026-07-24). Self-contained; online play loads a P2P library from a CDN at runtime. -->
+
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#12081f" />
+  <title>ستيكمان ديويل • Stickman Duel</title>
+  <style>
+/* =========================================================================
+ * style.css — UI, HUD, menus, touch controls
+ * Dark neon fighting-game aesthetic, fully responsive, RTL-aware.
+ * ========================================================================= */
+
+:root {
+  --bg: #12081f;
+  --panel: rgba(24, 14, 40, 0.86);
+  --panel-2: rgba(38, 22, 62, 0.9);
+  --accent: #ffb703;
+  --accent-2: #ff4d6d;
+  --p1: #2b6bff;
+  --p2: #ff3b57;
+  --text: #f3ecff;
+  --muted: #b6a8d0;
+  --radius: 16px;
+  --shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0; padding: 0; height: 100%; overflow: hidden;
+  background: var(--bg); color: var(--text);
+  font-family: "Segoe UI", Tahoma, "Noto Sans Arabic", system-ui, Arial, sans-serif;
+  user-select: none; -webkit-user-select: none;
+  overscroll-behavior: none; touch-action: none;
+}
+
+#app { position: fixed; inset: 0; }
+
+#stage {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  display: block; background: #0d0620;
+}
+
+.hidden { display: none !important; }
+
+/* ============================= Buttons ============================= */
+.btn {
+  appearance: none; border: none; cursor: pointer;
+  font-family: inherit; font-size: 1.05rem; font-weight: 700;
+  color: var(--text);
+  background: linear-gradient(145deg, var(--panel-2), var(--panel));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0.85em 1.4em; border-radius: 14px;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  transition: transform 0.12s ease, box-shadow 0.2s ease, background 0.2s ease;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.btn small { font-weight: 500; font-size: 0.72rem; color: var(--muted); }
+.btn:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45); }
+.btn:active { transform: translateY(1px) scale(0.98); }
+
+.btn-primary {
+  background: linear-gradient(145deg, #ff8a00, var(--accent-2));
+  border-color: rgba(255, 255, 255, 0.2);
+  box-shadow: 0 8px 24px rgba(255, 77, 109, 0.4);
+}
+.btn-ghost { background: rgba(255, 255, 255, 0.04); }
+.btn.big { font-size: 1.3rem; padding: 1em 2em; }
+
+/* ============================= Overlay / Screens ============================= */
+#overlay {
+  position: absolute; inset: 0; z-index: 20;
+  display: none; align-items: center; justify-content: center;
+  padding: max(16px, env(safe-area-inset-top)) 16px;
+}
+#overlay.active { display: flex; }
+
+.screen {
+  width: min(960px, 96vw); max-height: 94vh; overflow-y: auto;
+  background: var(--panel);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: clamp(18px, 4vw, 40px);
+  animation: pop 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes pop { from { opacity: 0; transform: scale(0.92) translateY(14px); } }
+
+.screen-title {
+  text-align: center; font-size: clamp(1.4rem, 4vw, 2rem);
+  margin: 0 0 1rem; letter-spacing: 0.5px;
+}
+
+/* Main menu hero */
+.menu-hero { text-align: center; margin-bottom: 1.6rem; }
+.game-title {
+  font-size: clamp(2.4rem, 9vw, 4.6rem); margin: 0; line-height: 1;
+  font-weight: 900; letter-spacing: 1px;
+  text-shadow: 0 4px 0 rgba(0, 0, 0, 0.3), 0 10px 30px rgba(255, 77, 109, 0.35);
+}
+.game-title .accent {
+  background: linear-gradient(120deg, #ffb703, #ff4d6d);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.game-sub { color: var(--muted); margin: 0.4rem 0 0; font-size: clamp(0.85rem, 2.5vw, 1.05rem); }
+
+.menu-buttons { display: flex; flex-direction: column; gap: 12px; max-width: 380px; margin: 0 auto; }
+.menu-footer { display: flex; justify-content: center; gap: 22px; margin-top: 1.6rem; }
+
+/* toggle switch */
+.switch { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; color: var(--muted); cursor: pointer; }
+.switch input { display: none; }
+.switch span {
+  width: 42px; height: 24px; border-radius: 20px; background: rgba(255, 255, 255, 0.15);
+  position: relative; transition: background 0.2s;
+}
+.switch span::after {
+  content: ""; position: absolute; top: 3px; inset-inline-start: 3px;
+  width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform 0.2s;
+}
+.switch input:checked + span { background: var(--accent-2); }
+.switch input:checked + span::after { transform: translateX(-18px); }
+[dir="ltr"] .switch input:checked + span::after { transform: translateX(18px); }
+
+/* ============================= How-to ============================= */
+.howto-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 1.4rem; }
+.howto-card { background: var(--panel-2); border-radius: 12px; padding: 16px; border: 1px solid rgba(255, 255, 255, 0.06); }
+.howto-card h3 { margin: 0 0 0.5rem; font-size: 1.05rem; }
+.howto-card p { margin: 0; color: var(--muted); line-height: 1.6; font-size: 0.9rem; }
+.howto-card b { color: var(--text); }
+
+/* ============================= Setup ============================= */
+.setup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.setup-col { background: var(--panel-2); border-radius: 12px; padding: 14px; }
+.col-title { margin: 0 0 0.8rem; font-size: 1.05rem; text-align: center; padding-bottom: 6px; border-bottom: 2px solid rgba(255, 255, 255, 0.08); }
+.col-title.p1c { color: #7aa2ff; }
+.col-title.p2c { color: #ff8095; }
+
+.field { margin-bottom: 14px; }
+.field > label { display: block; font-size: 0.82rem; color: var(--muted); margin-bottom: 6px; font-weight: 600; }
+
+.colors { display: flex; gap: 8px; flex-wrap: wrap; }
+.colors button {
+  width: 34px; height: 34px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.2);
+  cursor: pointer; transition: transform 0.12s;
+}
+.colors button.active { border-color: #fff; transform: scale(1.15); box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.25); }
+
+.pick-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.pick-list.maps { justify-content: center; }
+.pick {
+  background: rgba(255, 255, 255, 0.05); border: 2px solid transparent; border-radius: 10px;
+  padding: 6px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  color: var(--muted); font-size: 0.66rem; transition: border-color 0.15s, background 0.15s, transform 0.12s;
+}
+.pick canvas { display: block; }
+.pick:hover { background: rgba(255, 255, 255, 0.1); }
+.pick.active { border-color: var(--accent); background: rgba(255, 183, 3, 0.14); color: var(--text); transform: translateY(-2px); }
+.map-pick canvas { border-radius: 6px; }
+
+.setup-options { margin-top: 8px; }
+.options-row { display: flex; gap: 16px; flex-wrap: wrap; }
+.options-row .field { flex: 1; min-width: 200px; }
+
+.segment { display: inline-flex; background: rgba(0, 0, 0, 0.3); border-radius: 10px; padding: 4px; gap: 4px; }
+.segment button {
+  border: none; background: transparent; color: var(--muted); cursor: pointer;
+  padding: 8px 14px; border-radius: 8px; font-family: inherit; font-weight: 700; font-size: 0.85rem;
+  transition: background 0.15s, color 0.15s;
+}
+.segment button.active { background: linear-gradient(145deg, #ff8a00, var(--accent-2)); color: #fff; }
+
+.setup-actions { display: flex; justify-content: space-between; gap: 12px; margin-top: 18px; }
+.setup-actions .btn { flex: 1; }
+
+/* ============================= Online ============================= */
+.online-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 16px; margin-bottom: 14px; }
+.online-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.online-card {
+  background: var(--panel-2); border-radius: 12px; padding: 16px; text-align: center;
+  display: flex; flex-direction: column; gap: 8px; border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.online-card h3 { margin: 0; font-size: 1rem; }
+.online-card p { margin: 0; color: var(--muted); font-size: 0.78rem; line-height: 1.5; min-height: 2.4em; }
+.online-card .btn { padding: 0.6em 1em; font-size: 0.95rem; }
+.net-code {
+  font-size: 2rem; font-weight: 900; letter-spacing: 8px; color: var(--accent);
+  background: rgba(0, 0, 0, 0.3); border-radius: 10px; padding: 8px; margin: 2px 0;
+  font-family: "Courier New", monospace;
+}
+.net-input {
+  width: 100%; padding: 12px; border-radius: 10px; text-align: center;
+  font-size: 1.4rem; font-weight: 800; letter-spacing: 6px; font-family: "Courier New", monospace;
+  background: rgba(0, 0, 0, 0.3); color: var(--text); border: 1px solid rgba(255, 255, 255, 0.15);
+}
+.net-input::placeholder { color: rgba(255, 255, 255, 0.25); }
+.net-status {
+  text-align: center; margin: 14px 0; padding: 10px 14px; border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25); color: var(--text); font-size: 0.9rem; font-weight: 600; min-height: 1.2em;
+}
+@media (max-width: 720px) {
+  .online-grid { grid-template-columns: 1fr; }
+  .online-actions { grid-template-columns: 1fr; }
+  .online-card p { min-height: 0; }
+}
+
+/* ============================= Modals (pause / result) ============================= */
+.modal { background: rgba(10, 4, 22, 0.7); display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; max-height: none; border: none; box-shadow: none; padding: 0; }
+.modal-box {
+  background: var(--panel); border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius); padding: 30px; width: min(360px, 90vw);
+  display: flex; flex-direction: column; gap: 12px; box-shadow: var(--shadow);
+  animation: pop 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.result-title { text-align: center; font-size: clamp(1.8rem, 6vw, 2.6rem); margin: 0 0 0.2rem; }
+.result-title.win { color: #6bff8e; text-shadow: 0 0 24px rgba(107, 255, 142, 0.5); }
+.result-title.lose { color: #ff5a6e; }
+.result-title.lose2 { color: #ff8095; }
+.result-sub { text-align: center; color: var(--muted); font-size: 1.3rem; margin: 0 0 0.8rem; font-weight: 800; letter-spacing: 3px; }
+
+/* ============================= HUD ============================= */
+#hud {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 10;
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding: max(12px, env(safe-area-inset-top)) 16px 0;
+  pointer-events: none; gap: 12px;
+}
+.hud-side { flex: 1; max-width: 42%; }
+.hud-side.right { text-align: left; }
+.hud-name { font-weight: 800; font-size: clamp(0.8rem, 2.5vw, 1.05rem); margin-bottom: 4px; text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6); }
+.health-bar {
+  height: 18px; background: rgba(0, 0, 0, 0.45); border-radius: 10px; overflow: hidden;
+  border: 2px solid rgba(255, 255, 255, 0.18); box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4);
+}
+.health-fill { height: 100%; border-radius: 8px; transition: width 0.18s ease; }
+.health-fill.p1 { background: linear-gradient(90deg, #1e5bff, #6ba0ff); }
+.health-fill.p2 { background: linear-gradient(270deg, #ff2b45, #ff7a8c); }
+.hud-side.right .health-bar { transform: scaleX(1); }
+
+.special-bar {
+  height: 7px; margin-top: 4px; background: rgba(0, 0, 0, 0.4); border-radius: 6px;
+  overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.14);
+}
+.special-fill {
+  height: 100%; width: 0%; border-radius: 6px;
+  background: linear-gradient(90deg, #7a5cff, #c77dff); transition: width 0.15s ease;
+}
+.special-bar.rage { animation: ragePulse 0.4s infinite alternate; border-color: #ff5a6e; }
+.special-bar.rage .special-fill { background: linear-gradient(90deg, #ff8a00, #ff2b45); }
+@keyframes ragePulse { from { box-shadow: 0 0 4px rgba(255,90,110,0.4); } to { box-shadow: 0 0 14px rgba(255,90,110,0.9); } }
+
+.hud-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.hud-side.right .hud-row { justify-content: flex-start; flex-direction: row; }
+.weapon-name { font-size: 0.72rem; color: var(--muted); font-weight: 600; }
+.pips { display: flex; gap: 5px; }
+.pip { width: 12px; height: 12px; border-radius: 50%; background: rgba(255, 255, 255, 0.18); border: 1px solid rgba(255, 255, 255, 0.25); transition: background 0.2s, transform 0.2s; }
+.pip.filled { background: var(--accent); box-shadow: 0 0 8px var(--accent); transform: scale(1.1); }
+
+.hud-center { text-align: center; flex: 0 0 auto; }
+.timer {
+  font-size: clamp(1.6rem, 5vw, 2.4rem); font-weight: 900; line-height: 1;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+  min-width: 60px;
+}
+.round-banner { font-size: 0.72rem; color: var(--muted); font-weight: 700; margin-top: 2px; }
+
+.pause-btn {
+  position: absolute; top: max(70px, calc(env(safe-area-inset-top) + 60px)); left: 12px;
+  z-index: 15;
+  width: 42px; height: 42px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.4); color: #fff; cursor: pointer; font-size: 0.8rem;
+  display: flex; align-items: center; justify-content: center;
+  letter-spacing: 2px;
+}
+.pause-btn:active { transform: scale(0.92); }
+
+/* ============================= Touch Controls ============================= */
+#touchControls {
+  position: absolute; inset: 0; z-index: 9; pointer-events: none;
+}
+.joy-base {
+  position: absolute; bottom: max(26px, env(safe-area-inset-bottom)); inset-inline-start: 28px;
+  width: 140px; height: 140px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.03));
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  pointer-events: auto; touch-action: none;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.3);
+}
+.joy-stick {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffe0a0, #ff8a00);
+  border: 3px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  pointer-events: none; transition: transform 0.04s;
+}
+.joy-hint {
+  position: absolute; bottom: -22px; left: 0; right: 0; text-align: center;
+  font-size: 0.66rem; color: rgba(255, 255, 255, 0.5); pointer-events: none; white-space: nowrap;
+}
+
+.action-buttons {
+  position: absolute; bottom: max(26px, env(safe-area-inset-bottom)); inset-inline-end: 22px;
+  display: flex; align-items: flex-end; gap: 14px; pointer-events: none;
+}
+.act-btn {
+  position: relative;
+  width: 72px; height: 72px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  font-size: 1.7rem; cursor: pointer; pointer-events: auto; touch-action: none;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; transition: transform 0.06s, filter 0.06s;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.5);
+  user-select: none;
+}
+.act-btn b {
+  position: absolute; bottom: -16px; left: 0; right: 0; text-align: center;
+  font-size: 0.6rem; font-weight: 700; color: rgba(255, 255, 255, 0.7);
+}
+.act-btn.attack { background: radial-gradient(circle at 35% 30%, #ff7a96, #d61f3f); width: 96px; height: 96px; font-size: 2.3rem; }
+.act-btn.jump { background: radial-gradient(circle at 35% 30%, #7cd8ff, #1c7fd6); }
+.act-btn.block { background: radial-gradient(circle at 35% 30%, #c3ccdb, #6b7488); }
+.act-btn.dash { background: radial-gradient(circle at 35% 30%, #b28cff, #6d3ad6); }
+.act-btn.pressed { transform: scale(0.88); filter: brightness(1.35); }
+
+/* On smaller phones shrink the controls a touch */
+@media (max-height: 420px) {
+  .joy-base { width: 116px; height: 116px; }
+  .joy-stick { width: 54px; height: 54px; }
+  .act-btn { width: 62px; height: 62px; font-size: 1.5rem; }
+  .act-btn.attack { width: 82px; height: 82px; }
+}
+
+/* ============================= Responsive ============================= */
+@media (max-width: 720px) {
+  .setup-grid { grid-template-columns: 1fr; }
+  .btn { font-size: 0.95rem; }
+  .health-bar { height: 15px; }
+}
+@media (max-height: 480px) and (orientation: landscape) {
+  .screen { padding: 14px 20px; }
+  .menu-hero { margin-bottom: 0.8rem; }
+  .menu-buttons { flex-direction: row; flex-wrap: wrap; justify-content: center; }
+  .menu-buttons .btn { flex: 1 1 140px; }
+}
+
+/* Landscape hint for portrait phones */
+.rotate-hint {
+  display: none;
+  position: fixed; inset: 0; z-index: 100;
+  background: var(--bg);
+  flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  text-align: center; padding: 24px;
+}
+.rotate-hint .rotate-icon { font-size: 4rem; animation: rotateHint 1.8s ease-in-out infinite; }
+.rotate-hint p { font-size: 1.3rem; font-weight: 800; margin: 0; }
+.rotate-hint span { color: var(--muted); }
+@keyframes rotateHint { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(90deg); } }
+@media (orientation: portrait) and (max-width: 820px) and (pointer: coarse) {
+  .rotate-hint { display: flex; }
+}
+
+</style>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%94%EF%B8%8F%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+  <div id="app">
+    <canvas id="stage"></canvas>
+
+    <!-- ===================== HUD ===================== -->
+    <div id="hud" class="hidden">
+      <div class="hud-side left">
+        <div class="hud-name" id="p1Name">لاعب 1</div>
+        <div class="health-bar"><div class="health-fill p1" id="p1HealthFill"></div></div>
+        <div class="special-bar" id="p1Special"><div class="special-fill" id="p1SpecialFill"></div></div>
+        <div class="hud-row">
+          <div class="pips" id="p1Pips"></div>
+          <div class="weapon-name" id="p1WeaponName">سيف</div>
+        </div>
+      </div>
+
+      <div class="hud-center">
+        <div class="timer" id="matchTimer">60</div>
+        <div class="round-banner" id="roundBanner">الجولة 1 • ROUND 1</div>
+      </div>
+
+      <div class="hud-side right">
+        <div class="hud-name" id="p2Name">كمبيوتر</div>
+        <div class="health-bar"><div class="health-fill p2" id="p2HealthFill"></div></div>
+        <div class="special-bar" id="p2Special"><div class="special-fill" id="p2SpecialFill"></div></div>
+        <div class="hud-row">
+          <div class="weapon-name" id="p2WeaponName">كاتانا</div>
+          <div class="pips" id="p2Pips"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- pause button (top corner) -->
+    <button id="btnPauseBtn" class="pause-btn hidden" aria-label="pause">❚❚</button>
+
+    <!-- ===================== TOUCH CONTROLS ===================== -->
+    <div id="touchControls" class="hidden">
+      <div id="joyBase" class="joy-base">
+        <div id="joyStick" class="joy-stick"></div>
+        <span class="joy-hint">حرّك • اقفز ↑</span>
+      </div>
+      <div class="action-buttons">
+        <button id="btnBlock" class="act-btn block" aria-label="block"><span>🛡️</span><b>صد</b></button>
+        <button id="btnDash" class="act-btn dash" aria-label="dash"><span>💨</span><b>اندفاع</b></button>
+        <button id="btnJump" class="act-btn jump" aria-label="jump"><span>⬆️</span><b>قفز</b></button>
+        <button id="btnAttack" class="act-btn attack" aria-label="attack"><span>⚔️</span></button>
+      </div>
+    </div>
+
+    <!-- ===================== OVERLAY / SCREENS ===================== -->
+    <div id="overlay" class="active">
+
+      <!-- Main Menu -->
+      <section id="screenMenu" class="screen">
+        <div class="menu-hero">
+          <h1 class="game-title"><span>ستيكمان</span> <span class="accent">ديويل</span></h1>
+          <p class="game-sub">Stickman Duel — قتال فيزيائي احترافي</p>
+        </div>
+        <div class="menu-buttons">
+          <button id="btnPlay1p" class="btn btn-primary">🎮 لاعب واحد <small>ضد الكمبيوتر</small></button>
+          <button id="btnPlay2p" class="btn">👥 لاعبان <small>على نفس الجهاز</small></button>
+          <button id="btnPlayOnline" class="btn">🌐 أونلاين <small>العب مع أصدقائك</small></button>
+          <button id="btnHowto" class="btn btn-ghost">📖 كيف تلعب</button>
+        </div>
+        <div class="menu-footer">
+          <label class="switch"><input type="checkbox" id="toggleSfx" checked><span></span> مؤثرات</label>
+          <label class="switch"><input type="checkbox" id="toggleMusic" checked><span></span> موسيقى</label>
+        </div>
+      </section>
+
+      <!-- How to play -->
+      <section id="screenHowto" class="screen hidden">
+        <h2 class="screen-title">كيف تلعب • How to play</h2>
+        <div class="howto-grid">
+          <div class="howto-card">
+            <h3>📱 اللمس</h3>
+            <p>عصا التحكم للحركة والقفز (حرّكها للأعلى). الأزرار: <b>⚔️ هجوم</b> · <b>⬆️ قفز</b> · <b>🛡️ صد</b>.</p>
+          </div>
+          <div class="howto-card">
+            <h3>⌨️ اللاعب 1</h3>
+            <p><b>A / D</b> الحركة · <b>W</b> قفز · <b>J أو مسافة</b> هجوم · <b>K</b> صد</p>
+          </div>
+          <div class="howto-card">
+            <h3>⌨️ اللاعب 2</h3>
+            <p><b>← →</b> الحركة · <b>↑</b> قفز · <b>Enter</b> هجوم · <b>↓</b> صد</p>
+          </div>
+          <div class="howto-card">
+            <h3>🎯 الهدف</h3>
+            <p>اضرب خصمك بسلاحك لتفريغ صحّته أو ادفعه خارج الحلبة. اربح عدد الجولات المطلوب للفوز بالمباراة.</p>
+          </div>
+        </div>
+        <button id="btnHowtoBack" class="btn btn-primary">رجوع</button>
+      </section>
+
+      <!-- Online -->
+      <section id="screenOnline" class="screen hidden">
+        <h2 class="screen-title">اللعب أونلاين • Online</h2>
+        <div class="online-grid">
+          <div class="field"><label>لونك • Your colour</label>
+            <div class="colors" id="netColors"></div>
+          </div>
+          <div class="field"><label>سلاحك • Your weapon</label>
+            <div class="pick-list weapons" id="netWeapons"></div>
+          </div>
+        </div>
+        <div class="online-actions">
+          <div class="online-card">
+            <h3>🎮 أنشئ غرفة</h3>
+            <p>سيظهر رقم — شاركه مع صديقك ليدخل.</p>
+            <div class="net-code" id="netCodeBox">----</div>
+            <button id="btnNetCreate" class="btn btn-primary">إنشاء غرفة</button>
+          </div>
+          <div class="online-card">
+            <h3>🔑 ادخل برقم</h3>
+            <p>اكتب رقم غرفة صديقك واضغط دخول.</p>
+            <input id="netCodeInput" class="net-input" inputmode="numeric" maxlength="6" placeholder="1234" />
+            <button id="btnNetJoin" class="btn">دخول</button>
+          </div>
+          <div class="online-card">
+            <h3>⚡ روم عشوائي</h3>
+            <p>العب مع أقرب لاعب متصل الآن.</p>
+            <button id="btnNetQuick" class="btn">بحث سريع</button>
+          </div>
+        </div>
+        <div class="net-status" id="netStatus">اختر لونك وسلاحك، ثم أنشئ غرفة أو ادخل برقم.</div>
+        <div class="setup-actions">
+          <button id="btnNetBack" class="btn btn-ghost">رجوع</button>
+          <button id="btnNetStart" class="btn btn-primary big" style="display:none">ابدأ المباراة ⚔️</button>
+        </div>
+      </section>
+
+      <!-- Setup / Character select -->
+      <section id="screenSetup" class="screen hidden">
+        <h2 class="screen-title">إعداد المباراة • Match Setup</h2>
+        <div class="setup-grid">
+          <!-- Player 1 -->
+          <div class="setup-col">
+            <h3 class="col-title p1c">اللاعب 1 • Player 1</h3>
+            <div class="field"><label>اللون</label>
+              <div class="colors" id="p1Colors">
+                <button data-color="#2b6bff"></button>
+                <button data-color="#22c55e"></button>
+                <button data-color="#f59e0b"></button>
+                <button data-color="#e11d48"></button>
+                <button data-color="#a855f7"></button>
+                <button data-color="#14b8a6"></button>
+              </div>
+            </div>
+            <div class="field"><label>السلاح</label>
+              <div class="pick-list weapons" id="p1WeaponList"></div>
+            </div>
+          </div>
+
+          <!-- Player 2 -->
+          <div class="setup-col">
+            <h3 class="col-title p2c" id="p2Title">الخصم (كمبيوتر) • CPU</h3>
+            <div class="field"><label>اللون</label>
+              <div class="colors" id="p2Colors">
+                <button data-color="#ff3b57"></button>
+                <button data-color="#3b82f6"></button>
+                <button data-color="#facc15"></button>
+                <button data-color="#10b981"></button>
+                <button data-color="#c084fc"></button>
+                <button data-color="#f97316"></button>
+              </div>
+            </div>
+            <div class="field"><label>السلاح</label>
+              <div class="pick-list weapons" id="p2WeaponList"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setup-options">
+          <div class="field"><label>الحلبة • Arena</label>
+            <div class="pick-list maps" id="mapList"></div>
+          </div>
+          <div class="options-row">
+            <div class="field" id="difficultyWrap"><label>الصعوبة</label>
+              <div class="segment" id="difficultyGroup">
+                <button data-value="easy">سهل</button>
+                <button data-value="normal" class="active">عادي</button>
+                <button data-value="hard">صعب</button>
+                <button data-value="insane">جنوني</button>
+              </div>
+            </div>
+            <div class="field"><label>عدد الجولات</label>
+              <div class="segment" id="roundsGroup">
+                <button data-value="1">1</button>
+                <button data-value="3" class="active">3</button>
+                <button data-value="5">5</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setup-actions">
+          <button id="btnSetupBack" class="btn btn-ghost">رجوع</button>
+          <button id="btnStart" class="btn btn-primary big">ابدأ القتال! ⚔️</button>
+        </div>
+      </section>
+
+      <!-- Pause -->
+      <section id="screenPause" class="screen hidden modal">
+        <div class="modal-box">
+          <h2 class="screen-title">إيقاف مؤقت</h2>
+          <button id="btnPauseResume" class="btn btn-primary">▶ استئناف</button>
+          <button id="btnPauseRestart" class="btn">🔄 إعادة</button>
+          <button id="btnPauseMenu" class="btn btn-ghost">🏠 القائمة</button>
+        </div>
+      </section>
+
+      <!-- Result -->
+      <section id="screenResult" class="screen hidden modal">
+        <div class="modal-box">
+          <h2 class="result-title win" id="resultTitle">انتصار!</h2>
+          <p class="result-sub" id="resultSub">0 - 0</p>
+          <button id="btnResultRematch" class="btn btn-primary">🔄 إعادة المباراة</button>
+          <button id="btnResultMenu" class="btn btn-ghost">🏠 القائمة الرئيسية</button>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- Rotate-to-landscape hint (portrait phones only) -->
+    <div class="rotate-hint">
+      <div class="rotate-icon">📱</div>
+      <p>أدِر جهازك أفقيًا للعب</p>
+      <span>Please rotate your device</span>
+    </div>
+  </div>
+
+  <!-- ===================== SCRIPTS ===================== -->
+  <script>
+/* =========================================================================
+ * utils.js — Math helpers, 2D vector, RNG and small utilities
+ * Stickman Duel — a professional 2D physics fighting game
+ * ========================================================================= */
+'use strict';
+
+const Utils = (() => {
+  const TAU = Math.PI * 2;
+
+  /** Clamp value between min and max */
+  const clamp = (v, min, max) => (v < min ? min : v > max ? max : v);
+
+  /** Linear interpolation */
+  const lerp = (a, b, t) => a + (b - a) * t;
+
+  /** Map a value from one range to another */
+  const map = (v, a, b, c, d) => c + ((v - a) / (b - a)) * (d - c);
+
+  /** Random float in [min, max) */
+  const rand = (min = 0, max = 1) => min + Math.random() * (max - min);
+
+  /** Random integer in [min, max] */
+  const randInt = (min, max) => Math.floor(min + Math.random() * (max - min + 1));
+
+  /** Pick a random element from an array */
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+  /** Random sign (-1 or 1) */
+  const randSign = () => (Math.random() < 0.5 ? -1 : 1);
+
+  /** Distance between two points */
+  const dist = (x1, y1, x2, y2) => Math.hypot(x2 - x1, y2 - y1);
+
+  /** Squared distance (cheap) */
+  const distSq = (x1, y1, x2, y2) => {
+    const dx = x2 - x1, dy = y2 - y1;
+    return dx * dx + dy * dy;
+  };
+
+  /** Shortest signed difference between two angles */
+  const angleDiff = (a, b) => {
+    let d = (b - a) % TAU;
+    if (d < -Math.PI) d += TAU;
+    if (d > Math.PI) d -= TAU;
+    return d;
+  };
+
+  /**
+   * Distance from a point to a line segment, plus the closest point.
+   * Used for weapon/limb collision detection.
+   */
+  const pointToSegment = (px, py, ax, ay, bx, by) => {
+    const abx = bx - ax, aby = by - ay;
+    const apx = px - ax, apy = py - ay;
+    const abLenSq = abx * abx + aby * aby || 1e-6;
+    let t = (apx * abx + apy * aby) / abLenSq;
+    t = clamp(t, 0, 1);
+    const cx = ax + abx * t, cy = ay + aby * t;
+    return { dist: Math.hypot(px - cx, py - cy), x: cx, y: cy, t };
+  };
+
+  /**
+   * Shortest distance between two line segments (weapon vs limb).
+   * Returns distance and the closest points on each segment.
+   */
+  const segmentToSegment = (a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y) => {
+    // Test all endpoint-to-segment combos (good enough for thin sticks)
+    const c1 = pointToSegment(a1x, a1y, b1x, b1y, b2x, b2y);
+    const c2 = pointToSegment(a2x, a2y, b1x, b1y, b2x, b2y);
+    const c3 = pointToSegment(b1x, b1y, a1x, a1y, a2x, a2y);
+    const c4 = pointToSegment(b2x, b2y, a1x, a1y, a2x, a2y);
+    let best = { dist: c1.dist, px: a1x, py: a1y, qx: c1.x, qy: c1.y };
+    if (c2.dist < best.dist) best = { dist: c2.dist, px: a2x, py: a2y, qx: c2.x, qy: c2.y };
+    if (c3.dist < best.dist) best = { dist: c3.dist, px: c3.x, py: c3.y, qx: b1x, qy: b1y };
+    if (c4.dist < best.dist) best = { dist: c4.dist, px: c4.x, py: c4.y, qx: b2x, qy: b2y };
+    return best;
+  };
+
+  /** Simple event emitter mixin */
+  class Emitter {
+    constructor() { this._handlers = {}; }
+    on(ev, fn) { (this._handlers[ev] ||= []).push(fn); return this; }
+    off(ev, fn) {
+      if (!this._handlers[ev]) return;
+      this._handlers[ev] = this._handlers[ev].filter((h) => h !== fn);
+    }
+    emit(ev, ...args) {
+      (this._handlers[ev] || []).forEach((h) => h(...args));
+    }
+  }
+
+  return {
+    TAU, clamp, lerp, map, rand, randInt, pick, randSign,
+    dist, distSq, angleDiff, pointToSegment, segmentToSegment, Emitter,
+  };
+})();
+
+</script>
+  <script>
+/* =========================================================================
+ * physics.js — Verlet integration physics engine
+ * Particles (point masses) connected by distance constraints, with world
+ * collision against static rectangular platforms. This is the backbone of
+ * the ragdoll stickman characters.
+ * ========================================================================= */
+'use strict';
+
+/**
+ * A single point mass integrated with Verlet integration.
+ * Velocity is implicit (current - previous position).
+ */
+class Particle {
+  constructor(x, y, radius = 6, mass = 1) {
+    this.x = x; this.y = y;
+    this.px = x; this.py = y;      // previous position
+    this.ax = 0; this.ay = 0;      // accumulated acceleration
+    this.radius = radius;
+    this.mass = mass;
+    this.invMass = mass > 0 ? 1 / mass : 0;
+    this.pinned = false;
+    this.onGround = false;
+    this.friction = 0.99;          // air/velocity damping
+    this.groundFriction = 0.72;    // horizontal damping while touching ground
+    this.bounce = 0.15;
+  }
+
+  /** Apply a force (scaled by inverse mass) */
+  applyForce(fx, fy) {
+    this.ax += fx * this.invMass;
+    this.ay += fy * this.invMass;
+  }
+
+  /** Instantly nudge velocity by adjusting previous position */
+  applyImpulse(ix, iy) {
+    this.px -= ix;
+    this.py -= iy;
+  }
+
+  get vx() { return this.x - this.px; }
+  get vy() { return this.y - this.py; }
+  get speed() { return Math.hypot(this.x - this.px, this.y - this.py); }
+
+  integrate(dt, gravity) {
+    if (this.pinned) { this.ax = 0; this.ay = 0; return; }
+    this.ay += gravity;
+    const damp = this.onGround ? this.groundFriction : this.friction;
+    let vx = (this.x - this.px) * (this.onGround ? damp : this.friction);
+    let vy = (this.y - this.py) * this.friction;
+    this.px = this.x;
+    this.py = this.y;
+    this.x += vx + this.ax * dt * dt;
+    this.y += vy + this.ay * dt * dt;
+    this.ax = 0; this.ay = 0;
+    this.onGround = false;
+  }
+}
+
+/**
+ * A distance constraint (stick) that keeps two particles a fixed length apart.
+ */
+class Constraint {
+  constructor(a, b, stiffness = 1, length = null) {
+    this.a = a;
+    this.b = b;
+    this.stiffness = stiffness;
+    this.length = length ?? Math.hypot(b.x - a.x, b.y - a.y);
+    this.tearFactor = Infinity; // constraints don't tear by default
+    this.broken = false;
+  }
+
+  solve() {
+    if (this.broken) return;
+    const a = this.a, b = this.b;
+    let dx = b.x - a.x, dy = b.y - a.y;
+    let d = Math.hypot(dx, dy) || 1e-6;
+    const diff = (d - this.length) / d;
+    if (Math.abs(diff) * this.length > this.length * this.tearFactor) {
+      this.broken = true;
+      return;
+    }
+    const sc = this.stiffness * 0.5;
+    const totalInv = a.invMass + b.invMass || 1;
+    const offx = dx * diff * sc;
+    const offy = dy * diff * sc;
+    const wa = a.invMass / totalInv;
+    const wb = b.invMass / totalInv;
+    if (!a.pinned) { a.x += offx * (wa * 2); a.y += offy * (wa * 2); }
+    if (!b.pinned) { b.x -= offx * (wb * 2); b.y -= offy * (wb * 2); }
+  }
+}
+
+/**
+ * An angular constraint that softly pulls a joint (a-b-c) toward a rest angle.
+ * Gives limbs "muscle" so the ragdoll can stand and pose instead of collapsing.
+ */
+class AngleConstraint {
+  constructor(a, b, c, restAngle, stiffness = 0.08) {
+    this.a = a; this.b = b; this.c = c; // b is the pivot
+    this.restAngle = restAngle;
+    this.stiffness = stiffness;
+    this.enabled = true;
+    this.target = restAngle;
+  }
+
+  solve() {
+    if (!this.enabled) return;
+    const { a, b, c } = this;
+    const a1 = Math.atan2(a.y - b.y, a.x - b.x);
+    const a2 = Math.atan2(c.y - b.y, c.x - b.x);
+    let diff = a2 - a1;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    let err = this.target - diff;
+    while (err < -Math.PI) err += Math.PI * 2;
+    while (err > Math.PI) err -= Math.PI * 2;
+    const rot = err * this.stiffness;
+    // Rotate c around b by +rot, and a around b by -rot (softly)
+    rotateAround(c, b, rot * 0.5);
+    rotateAround(a, b, -rot * 0.5);
+  }
+}
+
+function rotateAround(p, o, ang) {
+  if (p.pinned) return;
+  const s = Math.sin(ang), cs = Math.cos(ang);
+  const dx = p.x - o.x, dy = p.y - o.y;
+  p.x = o.x + dx * cs - dy * s;
+  p.y = o.y + dx * s + dy * cs;
+}
+
+/**
+ * The physics world: integrates all particles, solves constraints, and
+ * resolves collisions with static platforms and world bounds.
+ */
+class PhysicsWorld {
+  constructor(opts = {}) {
+    this.gravity = opts.gravity ?? 0.55;
+    this.iterations = opts.iterations ?? 6;
+    this.particles = [];
+    this.constraints = [];
+    this.angleConstraints = [];
+    this.platforms = [];        // {x,y,w,h}
+    this.bounds = opts.bounds ?? { x: 0, y: 0, w: 1600, h: 900 };
+    this.killY = opts.killY ?? 3000;
+  }
+
+  addParticle(p) { this.particles.push(p); return p; }
+  addConstraint(c) { this.constraints.push(c); return c; }
+  addAngle(c) { this.angleConstraints.push(c); return c; }
+
+  removeParticles(list) {
+    const set = new Set(list);
+    this.particles = this.particles.filter((p) => !set.has(p));
+    this.constraints = this.constraints.filter((c) => !set.has(c.a) && !set.has(c.b));
+    this.angleConstraints = this.angleConstraints.filter(
+      (c) => !set.has(c.a) && !set.has(c.b) && !set.has(c.c)
+    );
+  }
+
+  step(dt = 1) {
+    // Integrate
+    for (const p of this.particles) p.integrate(dt, this.gravity);
+
+    // Solve constraints iteratively for stability
+    for (let it = 0; it < this.iterations; it++) {
+      for (const c of this.constraints) c.solve();
+      for (const c of this.angleConstraints) c.solve();
+      for (const p of this.particles) this.collide(p);
+    }
+  }
+
+  /** Resolve a particle against platforms and world side walls.
+   *  Robust against deep penetration (zero-normal degeneracy) and against
+   *  tunnelling through the top surface at speed (swept landing check). */
+  collide(p) {
+    if (p.pinned) return;
+    const r = p.radius;
+
+    // World side walls
+    if (p.x - r < this.bounds.x) { p.x = this.bounds.x + r; p.px = p.x + p.vx * 0.3; }
+    if (p.x + r > this.bounds.x + this.bounds.w) {
+      p.x = this.bounds.x + this.bounds.w - r; p.px = p.x + p.vx * 0.3;
+    }
+
+    for (const plat of this.platforms) {
+      const top = plat.y, bottom = plat.y + plat.h;
+      const left = plat.x, right = plat.x + plat.w;
+      const withinX = p.x > left - 2 && p.x < right + 2;
+
+      // 1) Swept landing on the TOP surface — catches fast downward movement
+      //    that would otherwise tunnel straight through a thin platform.
+      if (withinX && p.py <= top + 1 && p.y + r >= top && p.vy >= -0.001) {
+        p.y = top - r;
+        if (p.vy > 0) p.py = p.y + p.vy * p.bounce;
+        p.onGround = true;
+        continue;
+      }
+
+      // 2) Deep penetration (particle centre inside the box) → push out the
+      //    nearest face. Handles the zero-normal degenerate case.
+      const insideX = p.x > left && p.x < right;
+      const insideY = p.y > top && p.y < bottom;
+      if (insideX && insideY) {
+        const toL = p.x - left, toR = right - p.x;
+        const toT = p.y - top, toB = bottom - p.y;
+        const m = Math.min(toL, toR, toT, toB);
+        if (m === toT) { p.y = top - r; p.onGround = true; if (p.vy > 0) p.py = p.y + p.vy * p.bounce; }
+        else if (m === toB) { p.y = bottom + r; if (p.vy < 0) p.py = p.y; }
+        else if (m === toL) { p.x = left - r; }
+        else { p.x = right + r; }
+        continue;
+      }
+
+      // 3) Circle vs nearest edge / corner
+      const nearestX = Utils.clamp(p.x, left, right);
+      const nearestY = Utils.clamp(p.y, top, bottom);
+      const dx = p.x - nearestX, dy = p.y - nearestY;
+      const dsq = dx * dx + dy * dy;
+      if (dsq < r * r) {
+        const d = Math.sqrt(dsq) || 1e-6;
+        const nx = dx / d, ny = dy / d;
+        const overlap = r - d;
+        p.x += nx * overlap;
+        p.y += ny * overlap;
+        if (ny < -0.5) {
+          p.onGround = true;
+          if (p.vy > 0) p.py = p.y + p.vy * p.bounce;
+        }
+      }
+    }
+  }
+}
+
+</script>
+  <script>
+/* =========================================================================
+ * audio.js — Procedural sound engine (Web Audio API)
+ * All sounds are synthesized at runtime — no external asset files needed.
+ * Includes SFX (hit, swing, jump, death, UI) and a looping music bed.
+ * ========================================================================= */
+'use strict';
+
+class AudioManager {
+  constructor() {
+    this.ctx = null;
+    this.master = null;
+    this.musicGain = null;
+    this.sfxGain = null;
+    this.enabled = true;
+    this.musicEnabled = true;
+    this._musicTimer = null;
+    this._musicStep = 0;
+  }
+
+  /** Lazily create the AudioContext (must follow a user gesture). */
+  init() {
+    if (this.ctx) return;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      this.ctx = new AC();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = 0.9;
+      this.master.connect(this.ctx.destination);
+
+      this.sfxGain = this.ctx.createGain();
+      this.sfxGain.gain.value = 0.8;
+      this.sfxGain.connect(this.master);
+
+      this.musicGain = this.ctx.createGain();
+      this.musicGain.gain.value = 0.25;
+      this.musicGain.connect(this.master);
+    } catch (e) {
+      this.enabled = false;
+      console.warn('Audio unavailable', e);
+    }
+  }
+
+  resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); }
+
+  _now() { return this.ctx.currentTime; }
+
+  /** Basic oscillator tone with ADSR-ish envelope */
+  tone(freq, dur, type = 'sine', vol = 0.5, dest = null, slideTo = null) {
+    if (!this.enabled || !this.ctx) return;
+    const t = this._now();
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t);
+    if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(1, slideTo), t + dur);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(g);
+    g.connect(dest || this.sfxGain);
+    osc.start(t);
+    osc.stop(t + dur + 0.02);
+  }
+
+  /** Noise burst (used for impacts / hits) */
+  noise(dur, vol = 0.5, filterFreq = 1200, dest = null) {
+    if (!this.enabled || !this.ctx) return;
+    const t = this._now();
+    const bufferSize = Math.floor(this.ctx.sampleRate * dur);
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = filterFreq;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(filter); filter.connect(g); g.connect(dest || this.sfxGain);
+    src.start(t);
+    src.stop(t + dur + 0.02);
+  }
+
+  /* ---- Named sound effects ---- */
+
+  swing() { this.noise(0.14, 0.25, 2600); this.tone(320, 0.12, 'triangle', 0.12, null, 620); }
+
+  hit(power = 1) {
+    const p = Utils.clamp(power, 0.4, 2.2);
+    this.noise(0.16, 0.5 * p, 900 + 300 * p);
+    this.tone(140 - 20 * p, 0.18, 'square', 0.28 * p, null, 60);
+  }
+
+  clang() { this.tone(880, 0.16, 'square', 0.2, null, 500); this.tone(1320, 0.12, 'triangle', 0.12); this.noise(0.06, 0.2, 4000); }
+
+  jump() { this.tone(300, 0.16, 'sine', 0.2, null, 620); }
+
+  land() { this.noise(0.1, 0.2, 500); }
+
+  death() {
+    this.tone(200, 0.5, 'sawtooth', 0.35, null, 40);
+    this.noise(0.5, 0.35, 700);
+  }
+
+  hurt() { this.tone(420, 0.12, 'square', 0.18, null, 200); }
+
+  pickup() { this.tone(660, 0.08, 'triangle', 0.25); this.tone(990, 0.1, 'triangle', 0.22); }
+
+  uiClick() { this.tone(520, 0.06, 'square', 0.18, null, 700); }
+  uiHover() { this.tone(700, 0.04, 'sine', 0.08); }
+
+  win() { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => this.tone(f, 0.3, 'triangle', 0.3), i * 130)); }
+  lose() { [392, 349, 294, 233].forEach((f, i) => setTimeout(() => this.tone(f, 0.35, 'sawtooth', 0.25), i * 150)); }
+  countdown(final = false) { this.tone(final ? 880 : 520, final ? 0.35 : 0.16, 'triangle', 0.3, null, final ? 1200 : 520); }
+
+  /* ---- Simple looping music bed (arpeggio + bass) ---- */
+  startMusic() {
+    if (!this.enabled || !this.ctx || this._musicTimer) return;
+    const scale = [220, 261.63, 293.66, 329.63, 392, 440, 523.25];
+    const bass = [55, 55, 82.4, 65.4];
+    this._musicStep = 0;
+    const stepTime = 0.22;
+    const loop = () => {
+      if (!this.musicEnabled) return;
+      const s = this._musicStep;
+      const note = scale[(s * 2) % scale.length];
+      this.tone(note, 0.2, 'triangle', 0.10, this.musicGain);
+      if (s % 2 === 0) this.tone(note * 2, 0.14, 'sine', 0.05, this.musicGain);
+      if (s % 4 === 0) this.tone(bass[(s / 4) % bass.length | 0], 0.4, 'sawtooth', 0.08, this.musicGain);
+      this._musicStep++;
+    };
+    this._musicTimer = setInterval(loop, stepTime * 1000);
+  }
+
+  stopMusic() {
+    if (this._musicTimer) { clearInterval(this._musicTimer); this._musicTimer = null; }
+  }
+
+  setMuted(muted) {
+    this.enabled = !muted;
+    if (this.master) this.master.gain.value = muted ? 0 : 0.9;
+  }
+
+  toggleMusic(on) {
+    this.musicEnabled = on;
+    if (on) this.startMusic(); else this.stopMusic();
+  }
+}
+
+</script>
+  <script>
+/* =========================================================================
+ * particles.js — Lightweight particle system for visual juice
+ * Blood splatter, weapon sparks, dust clouds, floating damage numbers,
+ * and celebratory confetti. Purely visual, no gameplay effect.
+ * ========================================================================= */
+'use strict';
+
+class ParticleSystem {
+  constructor() {
+    this.particles = [];
+    this.texts = [];
+  }
+
+  clear() { this.particles.length = 0; this.texts.length = 0; }
+
+  spawn(opts) {
+    this.particles.push(Object.assign({
+      x: 0, y: 0, vx: 0, vy: 0, life: 1, maxLife: 1,
+      size: 4, color: '#fff', gravity: 0.2, shrink: true, drag: 0.98,
+      shape: 'circle', rot: 0, spin: 0, glow: false,
+    }, opts));
+  }
+
+  /** Blood burst from an impact point */
+  blood(x, y, dir = 0, amount = 14, color = '#e02b3c') {
+    for (let i = 0; i < amount; i++) {
+      const a = dir + Utils.rand(-1, 1);
+      const sp = Utils.rand(2, 9);
+      this.spawn({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1,
+        life: Utils.rand(24, 46), maxLife: 46,
+        size: Utils.rand(2.5, 6), color, gravity: 0.35, drag: 0.97,
+      });
+    }
+  }
+
+  /** Metallic sparks when weapons clash */
+  sparks(x, y, amount = 10) {
+    for (let i = 0; i < amount; i++) {
+      const a = Utils.rand(0, Utils.TAU);
+      const sp = Utils.rand(3, 8);
+      this.spawn({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        life: Utils.rand(10, 22), maxLife: 22,
+        size: Utils.rand(1.5, 3.5), color: Utils.pick(['#fff6c0', '#ffd23f', '#ff8a00']),
+        gravity: 0.1, drag: 0.9, glow: true,
+      });
+    }
+  }
+
+  /** Dust puff (landing, running) */
+  dust(x, y, dir = 0, amount = 6) {
+    for (let i = 0; i < amount; i++) {
+      this.spawn({
+        x, y, vx: Math.cos(dir) * Utils.rand(0.5, 2) + Utils.rand(-1, 1),
+        vy: Utils.rand(-2, -0.3),
+        life: Utils.rand(16, 30), maxLife: 30,
+        size: Utils.rand(4, 9), color: 'rgba(210,210,225,0.55)',
+        gravity: -0.02, drag: 0.92,
+      });
+    }
+  }
+
+  /** Impact ring / shockwave */
+  shock(x, y, color = '#ffffff') {
+    this.spawn({
+      x, y, vx: 0, vy: 0, life: 16, maxLife: 16, size: 6,
+      color, gravity: 0, shape: 'ring', shrink: false, glow: true,
+    });
+  }
+
+  confetti(x, y) {
+    const colors = ['#ff4d6d', '#ffd23f', '#4dd4ff', '#6bff8e', '#c77dff', '#ff8a00'];
+    for (let i = 0; i < 26; i++) {
+      const a = Utils.rand(-Math.PI * 0.85, -Math.PI * 0.15);
+      const sp = Utils.rand(6, 15);
+      this.spawn({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        life: Utils.rand(50, 90), maxLife: 90,
+        size: Utils.rand(4, 8), color: Utils.pick(colors),
+        gravity: 0.28, drag: 0.99, shape: 'rect',
+        rot: Utils.rand(0, Utils.TAU), spin: Utils.rand(-0.3, 0.3),
+      });
+    }
+  }
+
+  /** Floating damage number */
+  damageText(x, y, value, color = '#fff') {
+    this.texts.push({
+      x, y, vy: -1.4, life: 44, maxLife: 44,
+      text: Math.round(value).toString(), color, size: 26 + Math.min(20, value),
+    });
+  }
+
+  /** Floating arbitrary text (pickups, callouts) */
+  floatText(x, y, text, color = '#fff', size = 26) {
+    this.texts.push({ x, y, vy: -1.2, life: 52, maxLife: 52, text, color, size });
+  }
+
+  update() {
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+      p.vx *= p.drag; p.vy *= p.drag;
+      p.vy += p.gravity;
+      p.x += p.vx; p.y += p.vy;
+      p.rot += p.spin;
+      if (p.shape === 'ring') p.size += 4;
+      p.life--;
+      if (p.life <= 0) this.particles.splice(i, 1);
+    }
+    for (let i = this.texts.length - 1; i >= 0; i--) {
+      const t = this.texts[i];
+      t.y += t.vy; t.vy *= 0.94; t.life--;
+      if (t.life <= 0) this.texts.splice(i, 1);
+    }
+  }
+
+  render(ctx) {
+    ctx.save();
+    for (const p of this.particles) {
+      const alpha = Utils.clamp(p.life / p.maxLife, 0, 1);
+      const size = p.shrink ? p.size * alpha : p.size;
+      ctx.globalAlpha = alpha;
+      if (p.glow) { ctx.shadowBlur = 12; ctx.shadowColor = p.color; }
+      else ctx.shadowBlur = 0;
+      ctx.fillStyle = p.color;
+      if (p.shape === 'ring') {
+        ctx.globalAlpha = alpha * 0.7;
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 3 * alpha + 1;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, size, 0, Utils.TAU);
+        ctx.stroke();
+      } else if (p.shape === 'rect') {
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot);
+        ctx.fillRect(-size / 2, -size / 2, size, size * 0.6);
+        ctx.restore();
+      } else {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, size, 0, Utils.TAU);
+        ctx.fill();
+      }
+    }
+    ctx.shadowBlur = 0;
+    ctx.textAlign = 'center';
+    for (const t of this.texts) {
+      const alpha = Utils.clamp(t.life / t.maxLife, 0, 1);
+      ctx.globalAlpha = alpha;
+      ctx.font = `900 ${t.size}px Arial, sans-serif`;
+      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.strokeText(t.text, t.x, t.y);
+      ctx.fillStyle = t.color;
+      ctx.fillText(t.text, t.x, t.y);
+    }
+    ctx.restore();
+  }
+}
+
+</script>
+  <script>
+/* =========================================================================
+ * weapons.js — Weapon catalogue and detailed rendering
+ * Each weapon defines reach, damage, weight, swing style, a glow/trail colour
+ * and a custom draw routine. Weapons are held in the stickman's hand and
+ * rotate with the forearm; the "blade" segment is used for hit detection.
+ * All art is procedural (gradients, glows, highlights) — no image assets.
+ * ========================================================================= */
+'use strict';
+
+/* Small drawing helpers shared by weapon renderers */
+const WGfx = {
+  roundedBlade(ctx, x0, len, halfW, tipLen, grad) {
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(x0, -halfW);
+    ctx.lineTo(len - tipLen, -halfW);
+    ctx.quadraticCurveTo(len, -halfW * 0.6, len, 0);
+    ctx.quadraticCurveTo(len, halfW * 0.6, len - tipLen, halfW);
+    ctx.lineTo(x0, halfW);
+    ctx.closePath();
+    ctx.fill();
+  },
+  edge(ctx, x0, len, y, color, w = 1.4) {
+    ctx.strokeStyle = color; ctx.lineWidth = w; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(len - 4, y); ctx.stroke();
+  },
+  wrap(ctx, x0, x1, base, wrapCol) {
+    ctx.strokeStyle = base; ctx.lineWidth = 9; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x0, 0); ctx.lineTo(x1, 0); ctx.stroke();
+    ctx.strokeStyle = wrapCol; ctx.lineWidth = 2;
+    for (let x = x0 + 3; x < x1; x += 5) {
+      ctx.beginPath(); ctx.moveTo(x, -4.5); ctx.lineTo(x + 2.5, 4.5); ctx.stroke();
+    }
+  },
+};
+
+const WEAPONS = [
+  {
+    id: 'sword', name: 'سيف • Sword', reach: 96, damage: 11, weight: 1.0, speed: 1.15,
+    bladeFrom: 0.16, color: '#e8f0ff', glow: '#bcd4ff', trail: 'rgba(190,215,255,0.5)',
+    draw(ctx, len) {
+      const gripLen = len * 0.15;
+      // pommel + handle wrap
+      ctx.fillStyle = '#d4af37';
+      ctx.beginPath(); ctx.arc(-gripLen - 4, 0, 5, 0, Utils.TAU); ctx.fill();
+      WGfx.wrap(ctx, -gripLen, -2, '#3a2416', '#5c3a20');
+      // cross guard
+      const gg = ctx.createLinearGradient(0, -12, 0, 12);
+      gg.addColorStop(0, '#f6d976'); gg.addColorStop(0.5, '#d4af37'); gg.addColorStop(1, '#8a6d1e');
+      ctx.fillStyle = gg;
+      ctx.beginPath(); ctx.roundRect(-4, -13, 9, 26, 4); ctx.fill();
+      // blade
+      const grad = ctx.createLinearGradient(0, -6, 0, 6);
+      grad.addColorStop(0, '#ffffff'); grad.addColorStop(0.5, '#cfd9ec'); grad.addColorStop(1, '#8fa1c0');
+      WGfx.roundedBlade(ctx, 4, len, 5.5, 16, grad);
+      WGfx.edge(ctx, 8, len, 0, 'rgba(255,255,255,0.85)', 1.6);
+      // fuller shadow line
+      WGfx.edge(ctx, 10, len - 6, -1.6, 'rgba(90,110,140,0.5)', 1);
+    },
+  },
+  {
+    id: 'greatsword', name: 'سيف عظيم • Greatsword', reach: 128, damage: 18, weight: 2.1, speed: 0.72,
+    bladeFrom: 0.14, color: '#eef2fa', glow: '#9fb6e0', trail: 'rgba(160,190,240,0.45)',
+    draw(ctx, len) {
+      WGfx.wrap(ctx, -22, -2, '#241a12', '#4a3320');
+      ctx.fillStyle = '#c0c6d1';
+      ctx.beginPath(); ctx.roundRect(-6, -16, 11, 32, 5); ctx.fill();
+      ctx.fillStyle = '#8a94a6';
+      ctx.beginPath(); ctx.arc(-24, 0, 6, 0, Utils.TAU); ctx.fill();
+      const grad = ctx.createLinearGradient(0, -9, 0, 9);
+      grad.addColorStop(0, '#ffffff'); grad.addColorStop(0.5, '#c4cede'); grad.addColorStop(1, '#7e8da6');
+      WGfx.roundedBlade(ctx, 5, len, 9, 26, grad);
+      WGfx.edge(ctx, 10, len, 0, 'rgba(255,255,255,0.8)', 2);
+    },
+  },
+  {
+    id: 'chainsaw', name: 'منشار • Chainsaw', reach: 104, damage: 8, weight: 1.4, speed: 0.95,
+    bladeFrom: 0.24, color: '#ff7a1f', glow: '#ff9a3a', trail: 'rgba(255,140,40,0.4)',
+    continuous: true, dps: 0.95,
+    draw(ctx, len, thick, hurt, time = 0) {
+      // engine body
+      const bg = ctx.createLinearGradient(0, -12, 0, 12);
+      bg.addColorStop(0, '#ff8a2a'); bg.addColorStop(1, '#c9500a');
+      ctx.fillStyle = bg;
+      ctx.beginPath(); ctx.roundRect(-16, -12, 34, 24, 7); ctx.fill();
+      ctx.fillStyle = '#2b2b30';
+      ctx.beginPath(); ctx.roundRect(-11, -8, 15, 16, 4); ctx.fill();
+      ctx.fillStyle = '#cfd2da';
+      ctx.beginPath(); ctx.arc(-4, 0, 4, 0, Utils.TAU); ctx.fill();
+      // guide bar
+      const bar = len - 10;
+      const barGrad = ctx.createLinearGradient(0, -6, 0, 6);
+      barGrad.addColorStop(0, '#e9ecf2'); barGrad.addColorStop(1, '#aab0bd');
+      ctx.fillStyle = barGrad;
+      ctx.beginPath();
+      ctx.moveTo(16, -7); ctx.lineTo(bar, -5); ctx.arc(bar, 0, 5, -Math.PI / 2, Math.PI / 2);
+      ctx.lineTo(16, 7); ctx.closePath(); ctx.fill();
+      // moving teeth (animated)
+      ctx.fillStyle = hurt ? '#fff2c0' : '#6a6d76';
+      const teeth = 14;
+      for (let i = 0; i < teeth; i++) {
+        const t = ((i / teeth) + (time * 0.5 % 1)) % 1;
+        const x = 16 + t * (bar - 16);
+        ctx.beginPath(); ctx.moveTo(x, -10); ctx.lineTo(x + 4, -13); ctx.lineTo(x + 6, -10); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(x, 10); ctx.lineTo(x + 4, 13); ctx.lineTo(x + 6, 10); ctx.closePath(); ctx.fill();
+      }
+    },
+  },
+  {
+    id: 'staff', name: 'عصا • Staff', reach: 120, damage: 9, weight: 1.1, speed: 1.05,
+    bladeFrom: 0.0, color: '#a4522a', glow: '#f2c14e', trail: 'rgba(242,193,78,0.4)',
+    draw(ctx, len) {
+      const grad = ctx.createLinearGradient(0, -4, 0, 4);
+      grad.addColorStop(0, '#c26a34'); grad.addColorStop(1, '#6b2c14');
+      ctx.strokeStyle = grad; ctx.lineWidth = 8; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-20, 0); ctx.lineTo(len - 8, 0); ctx.stroke();
+      // gold caps with gem
+      for (const cx of [-18, len - 4]) {
+        const cg = ctx.createRadialGradient(cx - 2, -2, 1, cx, 0, 9);
+        cg.addColorStop(0, '#ffe9a8'); cg.addColorStop(1, '#c9971f');
+        ctx.fillStyle = cg;
+        ctx.beginPath(); ctx.arc(cx, 0, 8, 0, Utils.TAU); ctx.fill();
+      }
+      ctx.fillStyle = '#6be0ff';
+      ctx.beginPath(); ctx.arc(len - 4, 0, 3, 0, Utils.TAU); ctx.fill();
+    },
+  },
+  {
+    id: 'hammer', name: 'مطرقة • Hammer', reach: 100, damage: 16, weight: 1.9, speed: 0.78,
+    bladeFrom: 0.72, color: '#9aa0ad', glow: '#c9cdd6', trail: 'rgba(180,185,195,0.4)',
+    draw(ctx, len) {
+      WGfx.wrap(ctx, -16, len - 20, '#3a2416', '#5c3a20');
+      const hg = ctx.createLinearGradient(len - 26, -22, len, 22);
+      hg.addColorStop(0, '#e2e6ee'); hg.addColorStop(0.5, '#aab0bd'); hg.addColorStop(1, '#6a707d');
+      ctx.fillStyle = hg;
+      ctx.beginPath(); ctx.roundRect(len - 26, -22, 30, 44, 6); ctx.fill();
+      // rivets + highlight
+      ctx.fillStyle = '#4a4f59';
+      for (const ry of [-14, 0, 14]) { ctx.beginPath(); ctx.arc(len - 20, ry, 2.2, 0, Utils.TAU); ctx.fill(); }
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.beginPath(); ctx.roundRect(len - 22, -18, 6, 36, 3); ctx.fill();
+    },
+  },
+  {
+    id: 'mace', name: 'كرة شوكية • Flail', reach: 96, damage: 15, weight: 1.8, speed: 0.82,
+    bladeFrom: 0.7, color: '#9aa0ad', glow: '#d0d5de', trail: 'rgba(180,185,195,0.4)',
+    draw(ctx, len) {
+      // chain
+      ctx.strokeStyle = '#6b7280'; ctx.lineWidth = 8; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-14, 0); ctx.lineTo(len - 20, 0); ctx.stroke();
+      ctx.strokeStyle = '#9aa0ad'; ctx.lineWidth = 3;
+      for (let x = len - 44; x < len - 20; x += 7) {
+        ctx.beginPath(); ctx.arc(x, 0, 3.5, 0, Utils.TAU); ctx.stroke();
+      }
+      // spiked ball
+      const bx = len - 8;
+      const bg = ctx.createRadialGradient(bx - 4, -4, 2, bx, 0, 16);
+      bg.addColorStop(0, '#c9cdd6'); bg.addColorStop(1, '#565b66');
+      ctx.fillStyle = '#8a909c';
+      for (let a = 0; a < Utils.TAU; a += Utils.TAU / 8) {
+        ctx.beginPath();
+        ctx.moveTo(bx + Math.cos(a - 0.2) * 9, Math.sin(a - 0.2) * 9);
+        ctx.lineTo(bx + Math.cos(a) * 18, Math.sin(a) * 18);
+        ctx.lineTo(bx + Math.cos(a + 0.2) * 9, Math.sin(a + 0.2) * 9);
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.fillStyle = bg;
+      ctx.beginPath(); ctx.arc(bx, 0, 11, 0, Utils.TAU); ctx.fill();
+    },
+  },
+  {
+    id: 'spear', name: 'رمح • Spear', reach: 148, damage: 12, weight: 1.2, speed: 1.0,
+    bladeFrom: 0.82, color: '#d9dee8', glow: '#e6ebf4', trail: 'rgba(210,220,235,0.4)',
+    draw(ctx, len) {
+      const sg = ctx.createLinearGradient(0, -3, 0, 3);
+      sg.addColorStop(0, '#9a5f30'); sg.addColorStop(1, '#5f3a1c');
+      ctx.strokeStyle = sg; ctx.lineWidth = 6; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-18, 0); ctx.lineTo(len - 22, 0); ctx.stroke();
+      ctx.fillStyle = '#c9971f';
+      ctx.beginPath(); ctx.roundRect(len - 26, -4, 8, 8, 2); ctx.fill();
+      const grad = ctx.createLinearGradient(0, -7, 0, 7);
+      grad.addColorStop(0, '#ffffff'); grad.addColorStop(0.5, '#c9d3e2'); grad.addColorStop(1, '#8894a8');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(len - 22, -8); ctx.lineTo(len, 0); ctx.lineTo(len - 22, 8);
+      ctx.lineTo(len - 15, 0); ctx.closePath(); ctx.fill();
+    },
+  },
+  {
+    id: 'trident', name: 'رمح ثلاثي • Trident', reach: 140, damage: 13, weight: 1.4, speed: 0.94,
+    bladeFrom: 0.8, color: '#8ce0ff', glow: '#8ce0ff', trail: 'rgba(140,224,255,0.4)',
+    draw(ctx, len) {
+      const sg = ctx.createLinearGradient(0, -3, 0, 3);
+      sg.addColorStop(0, '#2aa9c9'); sg.addColorStop(1, '#12657a');
+      ctx.strokeStyle = sg; ctx.lineWidth = 6; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-18, 0); ctx.lineTo(len - 18, 0); ctx.stroke();
+      ctx.strokeStyle = '#cfeeff'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+      // three prongs
+      const b = len - 18;
+      ctx.beginPath(); ctx.moveTo(b, 0); ctx.lineTo(len, 0); ctx.stroke();
+      for (const s of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(b, s * 8); ctx.lineTo(len - 4, s * 10); ctx.lineTo(len, s * 4);
+        ctx.stroke();
+      }
+    },
+  },
+  {
+    id: 'axe', name: 'فأس • Axe', reach: 98, damage: 15, weight: 1.7, speed: 0.85,
+    bladeFrom: 0.66, color: '#c0c6d1', glow: '#d6dbe4', trail: 'rgba(190,200,215,0.4)',
+    draw(ctx, len) {
+      WGfx.wrap(ctx, -14, len - 6, '#3a2416', '#5c3a20');
+      const grad = ctx.createLinearGradient(len - 28, 0, len + 4, 0);
+      grad.addColorStop(0, '#f2f5fa'); grad.addColorStop(1, '#7c8492');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(len - 28, -7);
+      ctx.quadraticCurveTo(len + 8, -26, len + 3, -2);
+      ctx.quadraticCurveTo(len + 8, 26, len - 28, 7);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(len - 4, -20); ctx.quadraticCurveTo(len + 6, 0, len - 4, 20); ctx.stroke();
+    },
+  },
+  {
+    id: 'scythe', name: 'منجل • Scythe', reach: 132, damage: 14, weight: 1.5, speed: 0.9,
+    bladeFrom: 0.6, color: '#dfe7f5', glow: '#b7f5c9', trail: 'rgba(150,240,180,0.4)',
+    draw(ctx, len) {
+      const sg = ctx.createLinearGradient(0, -3, 0, 3);
+      sg.addColorStop(0, '#2a2a33'); sg.addColorStop(1, '#111117');
+      ctx.strokeStyle = sg; ctx.lineWidth = 7; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-16, 0); ctx.lineTo(len - 6, 0); ctx.stroke();
+      // curved blade at the tip
+      ctx.strokeStyle = '#e9f5ee'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(len - 6, 0);
+      ctx.quadraticCurveTo(len + 6, -26, len - 30, -40);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(150,255,190,0.7)'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(len - 6, -2);
+      ctx.quadraticCurveTo(len + 4, -26, len - 30, -40);
+      ctx.stroke();
+    },
+  },
+  {
+    id: 'katana', name: 'كاتانا • Katana', reach: 112, damage: 12, weight: 0.9, speed: 1.3,
+    bladeFrom: 0.14, color: '#eef3fb', glow: '#9fe0ff', trail: 'rgba(140,200,255,0.5)',
+    draw(ctx, len) {
+      WGfx.wrap(ctx, -22, -2, '#1c1c22', '#c0392b');
+      ctx.fillStyle = '#2a2a33';
+      ctx.beginPath(); ctx.arc(2, 0, 7, 0, Utils.TAU); ctx.fill();
+      ctx.strokeStyle = '#d4af37'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(2, 0, 7, 0, Utils.TAU); ctx.stroke();
+      // curved blade
+      const bg = ctx.createLinearGradient(0, -6, 0, 4);
+      bg.addColorStop(0, '#ffffff'); bg.addColorStop(1, '#c6d6ee');
+      ctx.strokeStyle = bg; ctx.lineWidth = 6; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(6, 0); ctx.quadraticCurveTo(len * 0.6, -8, len, -16); ctx.stroke();
+      ctx.strokeStyle = 'rgba(150,210,255,0.75)'; ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(6, -1.5); ctx.quadraticCurveTo(len * 0.6, -9.5, len, -17); ctx.stroke();
+    },
+  },
+  {
+    id: 'lightsaber', name: 'سيف طاقة • Energy Blade', reach: 116, damage: 13, weight: 0.7, speed: 1.35,
+    bladeFrom: 0.14, color: '#61f0ff', glow: '#61f0ff', trail: 'rgba(97,240,255,0.6)', energy: true,
+    draw(ctx, len, thick, hurt, time = 0) {
+      // hilt
+      const hg = ctx.createLinearGradient(-16, 0, 4, 0);
+      hg.addColorStop(0, '#7a808c'); hg.addColorStop(1, '#c9cdd6');
+      ctx.fillStyle = hg;
+      ctx.beginPath(); ctx.roundRect(-16, -4.5, 22, 9, 3); ctx.fill();
+      ctx.fillStyle = '#e11d48';
+      ctx.beginPath(); ctx.arc(-8, 0, 2, 0, Utils.TAU); ctx.fill();
+      // energy blade with glow
+      const pulse = 1 + Math.sin(time * 0.6) * 0.06;
+      ctx.save();
+      ctx.shadowBlur = 18; ctx.shadowColor = '#61f0ff';
+      ctx.strokeStyle = 'rgba(97,240,255,0.55)'; ctx.lineWidth = 12 * pulse; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(6, 0); ctx.lineTo(len, 0); ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#eafcff'; ctx.lineWidth = 4.5 * pulse;
+      ctx.beginPath(); ctx.moveTo(6, 0); ctx.lineTo(len, 0); ctx.stroke();
+      ctx.restore();
+    },
+  },
+  {
+    id: 'daggers', name: 'خنجران • Daggers', reach: 66, damage: 7, weight: 0.6, speed: 1.65,
+    bladeFrom: 0.3, color: '#dfe7f5', glow: '#cfe0ff', trail: 'rgba(200,220,255,0.4)', fast: true,
+    draw(ctx, len) {
+      WGfx.wrap(ctx, -12, 0, '#2a1a10', '#4a3320');
+      ctx.fillStyle = '#8a6d1e';
+      ctx.beginPath(); ctx.roundRect(-2, -7, 5, 14, 2); ctx.fill();
+      const grad = ctx.createLinearGradient(0, -4, 0, 4);
+      grad.addColorStop(0, '#ffffff'); grad.addColorStop(1, '#9fb3d0');
+      WGfx.roundedBlade(ctx, 3, len, 4, 10, grad);
+      WGfx.edge(ctx, 6, len, 0, 'rgba(255,255,255,0.8)', 1.2);
+    },
+  },
+  {
+    id: 'bat', name: 'مضرب مسامير • Nail Bat', reach: 100, damage: 12, weight: 1.5, speed: 0.95,
+    bladeFrom: 0.5, color: '#b5763a', glow: '#d0925a', trail: 'rgba(200,140,80,0.4)',
+    draw(ctx, len) {
+      const bg = ctx.createLinearGradient(0, -6, 0, 6);
+      bg.addColorStop(0, '#c98a4a'); bg.addColorStop(1, '#7a4a24');
+      ctx.fillStyle = bg;
+      ctx.beginPath();
+      ctx.moveTo(-14, -3); ctx.lineTo(len - 6, -9);
+      ctx.quadraticCurveTo(len + 2, 0, len - 6, 9);
+      ctx.lineTo(-14, 3); ctx.closePath(); ctx.fill();
+      // nails
+      ctx.fillStyle = '#cfd2da';
+      for (let i = 0; i < 5; i++) {
+        const x = len * 0.5 + i * ((len * 0.45) / 5);
+        for (const s of [-1, 1]) {
+          const y = s * (6 + i * 0.4);
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 3, y + s * 6); ctx.lineTo(x + 5, y); ctx.closePath(); ctx.fill();
+        }
+      }
+    },
+  },
+];
+
+const WEAPONS_BY_ID = Object.fromEntries(WEAPONS.map((w) => [w.id, w]));
+function getWeapon(id) { return WEAPONS_BY_ID[id] || WEAPONS[0]; }
+
+</script>
+  <script>
+/* =========================================================================
+ * maps.js — Arena definitions
+ * Each arena provides layered sky colours, a set of solid platforms (with a
+ * visual style), spawn points, an accent colour, decoration hints and an
+ * optional hazard. Rendering (parallax + themed decor) lives in game.js.
+ * Coordinates are in world units on a 1600 x 900 stage.
+ * ========================================================================= */
+'use strict';
+
+const STAGE_W = 1600;
+const STAGE_H = 900;
+
+const MAPS = [
+  {
+    id: 'temple', name: 'المعبد • Temple',
+    sky: ['#241146', '#4a2c6b', '#8a3d7a'], accent: '#ffb703', theme: 'temple',
+    platformStyle: 'stone',
+    platforms: [
+      { x: 120, y: 640, w: 620, h: 44 },
+      { x: 860, y: 640, w: 620, h: 44 },
+      { x: 500, y: 420, w: 600, h: 36 },
+      { x: 180, y: 300, w: 220, h: 34 },
+      { x: 1200, y: 300, w: 220, h: 34 },
+    ],
+    spawns: [{ x: 320, y: 560 }, { x: 1280, y: 560 }],
+    hazard: { type: 'void', y: 1050 },
+    decor: { pillars: true, torches: true, portal: true },
+  },
+  {
+    id: 'sky', name: 'الجزر الطائرة • Sky Isles',
+    sky: ['#0a3a6a', '#2a86c9', '#9fdcff'], accent: '#8ce0ff', theme: 'sky',
+    platformStyle: 'cloud',
+    platforms: [
+      { x: 200, y: 700, w: 360, h: 40 },
+      { x: 1040, y: 700, w: 360, h: 40 },
+      { x: 620, y: 560, w: 360, h: 36 },
+      { x: 120, y: 430, w: 200, h: 34 },
+      { x: 1280, y: 430, w: 200, h: 34 },
+      { x: 700, y: 320, w: 200, h: 32 },
+    ],
+    spawns: [{ x: 360, y: 620 }, { x: 1240, y: 620 }],
+    hazard: { type: 'void', y: 1050 },
+    decor: { clouds: true, sun: true, birds: true },
+  },
+  {
+    id: 'lava', name: 'كهف الحمم • Lava Cave',
+    sky: ['#1a0808', '#3a0f0a', '#7a1e0e'], accent: '#ff5a1f', theme: 'lava',
+    platformStyle: 'obsidian',
+    platforms: [
+      { x: 100, y: 600, w: 420, h: 44 },
+      { x: 1080, y: 600, w: 420, h: 44 },
+      { x: 560, y: 470, w: 480, h: 36 },
+      { x: 300, y: 340, w: 200, h: 32 },
+      { x: 1100, y: 340, w: 200, h: 32 },
+    ],
+    spawns: [{ x: 300, y: 520 }, { x: 1300, y: 520 }],
+    hazard: { type: 'lava', y: 820, dps: 0.7 },
+    decor: { stalactites: true, embers: true, glow: true },
+  },
+  {
+    id: 'dojo', name: 'الدوجو • Dojo',
+    sky: ['#14232e', '#1f3a4a', '#3a6073'], accent: '#ff4d6d', theme: 'dojo',
+    platformStyle: 'wood',
+    platforms: [
+      { x: 80, y: 660, w: 1440, h: 48 },
+      { x: 340, y: 470, w: 260, h: 32 },
+      { x: 1000, y: 470, w: 260, h: 32 },
+      { x: 660, y: 330, w: 280, h: 30 },
+    ],
+    spawns: [{ x: 320, y: 580 }, { x: 1280, y: 580 }],
+    hazard: null,
+    decor: { lanterns: true, banners: true, moon: true, mountains: true },
+  },
+  {
+    id: 'towers', name: 'الأبراج • Night Towers',
+    sky: ['#0a0a1e', '#1c1c46', '#3a2a6b'], accent: '#c77dff', theme: 'towers',
+    platformStyle: 'brick',
+    platforms: [
+      { x: 120, y: 720, w: 240, h: 180 },
+      { x: 500, y: 600, w: 200, h: 300 },
+      { x: 900, y: 600, w: 200, h: 300 },
+      { x: 1240, y: 720, w: 240, h: 180 },
+      { x: 680, y: 400, w: 240, h: 30 },
+    ],
+    spawns: [{ x: 220, y: 640 }, { x: 1360, y: 640 }],
+    hazard: { type: 'void', y: 1050 },
+    decor: { city: true, moon: true, stars: true, rain: true },
+  },
+  {
+    id: 'arena', name: 'حلبة الأبطال • Grand Arena',
+    sky: ['#2a1a0a', '#6b3a1a', '#c98a3a'], accent: '#ffd23f', theme: 'arena',
+    platformStyle: 'stone',
+    platforms: [
+      { x: 120, y: 680, w: 1360, h: 60 },
+      { x: 300, y: 520, w: 220, h: 30 },
+      { x: 1080, y: 520, w: 220, h: 30 },
+      { x: 640, y: 420, w: 320, h: 30 },
+    ],
+    spawns: [{ x: 360, y: 600 }, { x: 1240, y: 600 }],
+    hazard: null,
+    decor: { crowd: true, pillars: true, sun: true },
+  },
+  {
+    id: 'space', name: 'محطة الفضاء • Space Station',
+    sky: ['#04040f', '#0a0a2a', '#141440'], accent: '#61f0ff', theme: 'space',
+    platformStyle: 'tech',
+    platforms: [
+      { x: 160, y: 700, w: 380, h: 40 },
+      { x: 1060, y: 700, w: 380, h: 40 },
+      { x: 620, y: 540, w: 360, h: 34 },
+      { x: 200, y: 400, w: 220, h: 30 },
+      { x: 1180, y: 400, w: 220, h: 30 },
+    ],
+    spawns: [{ x: 340, y: 620 }, { x: 1260, y: 620 }],
+    hazard: { type: 'void', y: 1050 },
+    decor: { stars: true, planet: true, grid: true },
+  },
+];
+
+const MAPS_BY_ID = Object.fromEntries(MAPS.map((m) => [m.id, m]));
+function getMap(id) { return MAPS_BY_ID[id] || MAPS[0]; }
+
+</script>
+  <script>
+/* =========================================================================
+ * stickman.js — The ragdoll fighter
+ * A Verlet-based stickman with an active balance controller (so it stands
+ * and walks instead of collapsing), a driven weapon arm for attacking, hit
+ * detection against the opponent, health, stun, block and death (limp
+ * ragdoll). Rendered as a stylised stick figure with a held weapon.
+ * ========================================================================= */
+'use strict';
+
+class Stickman {
+  constructor(world, opts) {
+    this.world = world;
+    this.opts = opts;
+    this.color = opts.color || '#2b6bff';
+    this.outline = opts.outline || '#0e2f8a';
+    this.name = opts.name || 'Fighter';
+    this.facing = opts.facing || 1;
+    this.weapon = getWeapon(opts.weaponId || 'sword');
+    this.fx = opts.fx;         // particle system
+    this.audio = opts.audio;
+    this.id = opts.id || 0;
+
+    this.maxHealth = 100;
+    this.health = 100;
+    this.alive = true;
+    this.stun = 0;             // frames of lost control after heavy hit
+    this.attackTimer = 0;      // >0 while an attack swing is active
+    this.attackCooldown = 0;
+    this.attackDir = 0;        // -1 up-swing / 1 down-swing alternation
+    this.blocking = false;
+    this.wantAttack = false;
+    this.hitFlash = 0;
+    this.control = { move: 0, jump: false, attack: false, block: false, dash: false };
+    this._lastGrounded = false;
+    this._jumpLock = 0;
+    this._jumpHeld = false;
+    this.maxJumps = 2;         // ground jump + one air (double) jump
+    this.jumpsLeft = 2;
+    this.dashCooldown = 0;
+    this.special = 0;          // rage meter 0..1
+    this.rageActive = false;
+    this.rageTimer = 0;
+    this._hitParticles = new Map(); // opponent particle -> cooldown frames
+    this.deathTimer = 0;
+
+    this.build(opts.x, opts.y);
+  }
+
+  /* ----- Construction ----- */
+  build(x, y) {
+    const P = (px, py, r, m) => this.world.addParticle(new Particle(px, py, r, m));
+    // Torso
+    this.head = P(x, y - 92, 15, 1.2);
+    this.chest = P(x, y - 54, 8, 1.4);
+    this.pelvis = P(x, y - 12, 8, 1.6);
+    // Arms (A = right side, B = left side)
+    this.elbowA = P(x + 16, y - 40, 6, 0.6);
+    this.handA = P(x + 26, y - 18, 7, 0.6);
+    this.elbowB = P(x - 16, y - 40, 6, 0.6);
+    this.handB = P(x - 26, y - 18, 7, 0.6);
+    // Legs
+    this.kneeA = P(x + 9, y + 16, 6, 0.8);
+    this.footA = P(x + 11, y + 46, 7, 0.9);
+    this.kneeB = P(x - 9, y + 16, 6, 0.8);
+    this.footB = P(x - 11, y + 46, 7, 0.9);
+
+    this.all = [this.head, this.chest, this.pelvis, this.elbowA, this.handA,
+      this.elbowB, this.handB, this.kneeA, this.footA, this.kneeB, this.footB];
+
+    const C = (a, b, stiff) => this.world.addConstraint(new Constraint(a, b, stiff));
+    // Spine
+    C(this.head, this.chest, 1);
+    C(this.chest, this.pelvis, 1);
+    this.spineBrace = C(this.head, this.pelvis, 0.6); // keeps torso rigid
+    // Arms
+    this.armLenA1 = C(this.chest, this.elbowA, 0.9).length;
+    this.armLenA2 = C(this.elbowA, this.handA, 0.9).length;
+    C(this.chest, this.elbowB, 0.9);
+    C(this.elbowB, this.handB, 0.9);
+    // Legs
+    C(this.pelvis, this.kneeA, 1);
+    C(this.kneeA, this.footA, 1);
+    C(this.pelvis, this.kneeB, 1);
+    C(this.kneeB, this.footB, 1);
+
+    // Remember rest lengths for pose targets
+    this.torsoLen = Utils.dist(this.chest.x, this.chest.y, this.pelvis.x, this.pelvis.y);
+    this.neckLen = Utils.dist(this.head.x, this.head.y, this.chest.x, this.chest.y);
+    this.legLen = 58;
+    this.standHeight = 52;   // how high the pelvis is held above the feet when standing
+    this.armReach = 44;
+
+    // give the whole body a slight tag so hit-detection can skip self
+    this.all.forEach((p) => (p.owner = this));
+  }
+
+  /* ----- Queries ----- */
+  get x() { return this.pelvis.x; }
+  get y() { return this.pelvis.y; }
+  get centerX() { return (this.chest.x + this.pelvis.x) / 2; }
+  get centerY() { return (this.chest.y + this.pelvis.y) / 2; }
+
+  isGrounded() { return this.footA.onGround || this.footB.onGround; }
+
+  /** Front / back hand depend on facing so the weapon is always held forward */
+  get frontHand() { return this.facing >= 0 ? this.handA : this.handB; }
+  get frontElbow() { return this.facing >= 0 ? this.elbowA : this.elbowB; }
+  get backHand() { return this.facing >= 0 ? this.handB : this.handA; }
+  get backElbow() { return this.facing >= 0 ? this.elbowB : this.elbowA; }
+
+  setControl(c) { this.control = Object.assign(this.control, c); }
+
+  /* ----- Combat ----- */
+  attack() {
+    if (!this.alive || this.attackCooldown > 0 || this.stun > 0) return;
+    const spd = this.weapon.speed;
+    this.attackTimer = Math.round(20 / spd);
+    this.attackDuration = this.attackTimer;
+    this.attackCooldown = Math.round((this.weapon.fast ? 14 : 26) / spd);
+    this.attackDir *= -1; // alternate overhead / uppercut for variety
+    if (this.audio) this.audio.swing();
+    this._hitParticles.clear();
+  }
+
+  takeHit(dmg, dirX, dirY, power, attacker) {
+    if (!this.alive) return 0;
+    let dealt = dmg;
+    // Blocking reduces damage & knockback when facing the attacker
+    if (this.blocking && (attacker ? Math.sign(attacker.x - this.x) === this.facing : true)) {
+      dealt *= 0.22;
+      if (this.audio) this.audio.clang();
+      if (this.fx) this.fx.sparks(this.frontHand.x, this.frontHand.y, 8);
+    } else {
+      if (this.audio) this.audio.hit(power);
+      if (this.fx) {
+        this.fx.blood(this.centerX, this.centerY, Math.atan2(dirY, dirX), 10 + power * 6, this.color);
+        this.fx.shock(this.centerX, this.centerY, '#fff');
+      }
+    }
+    this.health = Utils.clamp(this.health - dealt, 0, this.maxHealth);
+    this.hitFlash = 8;
+    this.special = Utils.clamp(this.special + dealt * 0.008, 0, 1); // build meter when hurt
+    if (dealt > 6 && !this.rageActive) this.stun = Math.min(30, Math.round(dealt * 1.6));
+    // knockback
+    const kb = power * (this.blocking ? 3 : 9) + dealt * 0.4;
+    const impulse = (p, s) => p.applyImpulse(-dirX * kb * s, -dirY * kb * s - kb * 0.15 * s);
+    impulse(this.chest, 1); impulse(this.pelvis, 0.8); impulse(this.head, 0.6);
+    if (this.health <= 0) this.die();
+    return dealt;
+  }
+
+  die() {
+    if (!this.alive) return;
+    this.alive = false;
+    this.deathTimer = 1;
+    this.control.move = 0;
+    if (this.audio) this.audio.death();
+    if (this.fx) {
+      this.fx.blood(this.centerX, this.centerY, -Math.PI / 2, 30, this.color);
+      this.fx.shock(this.centerX, this.centerY, this.color);
+    }
+    // go limp: relax spine brace so the body folds naturally
+    this.spineBrace.stiffness = 0.05;
+  }
+
+  fallOut() {
+    // fell into the void / off stage
+    if (!this.alive) return;
+    this.health = 0;
+    this.die();
+  }
+
+  /* ----- Weapon geometry for hit detection & drawing ----- */
+  getWeaponSegment() {
+    const hand = this.frontHand;
+    const elbow = this.frontElbow;
+    // weapon points along the forearm direction
+    let dx = hand.x - elbow.x, dy = hand.y - elbow.y;
+    let len = Math.hypot(dx, dy) || 1;
+    dx /= len; dy /= len;
+    const reach = this.weapon.reach;
+    const tipX = hand.x + dx * reach;
+    const tipY = hand.y + dy * reach;
+    const bladeStartT = this.weapon.bladeFrom;
+    const bsX = hand.x + dx * reach * bladeStartT;
+    const bsY = hand.y + dy * reach * bladeStartT;
+    const speed = Math.hypot(hand.vx, hand.vy);
+    return { gripX: hand.x, gripY: hand.y, dx, dy, tipX, tipY, bsX, bsY, speed, len: reach };
+  }
+
+  /** All limb segments of THIS fighter (used as targets for opponent's weapon) */
+  limbSegments() {
+    return [
+      [this.head, this.chest], [this.chest, this.pelvis],
+      [this.chest, this.frontElbow], [this.frontElbow, this.frontHand],
+      [this.chest, this.backElbow], [this.backElbow, this.backHand],
+      [this.pelvis, this.kneeA], [this.kneeA, this.footA],
+      [this.pelvis, this.kneeB], [this.kneeB, this.footB],
+    ];
+  }
+
+  /** Resolve weapon hits against an opponent. Called by the game each frame. */
+  resolveHitsOn(opponent) {
+    if (!this.alive || this.attackTimer <= 0) return;
+    const w = this.getWeaponSegment();
+    const cont = this.weapon.continuous;
+    const minSpeed = cont ? 0.5 : 3.2;
+    if (w.speed < minSpeed && !cont) return;
+
+    for (const [a, b] of opponent.limbSegments()) {
+      const seg = Utils.segmentToSegment(w.bsX, w.bsY, w.tipX, w.tipY, a.x, a.y, b.x, b.y);
+      const threshold = 14;
+      if (seg.dist < threshold) {
+        // per-limb cooldown so a single swing doesn't multi-hit each frame
+        const key = a;
+        const cd = this._hitParticles.get(key) || 0;
+        if (cd > 0) continue;
+        const power = cont
+          ? 0.6 + w.speed * 0.05
+          : Utils.clamp(w.speed / 9, 0.5, 2.2);
+        let dmg = this.weapon.damage * (cont ? (this.weapon.dps || 0.9) : (0.7 + power * 0.6));
+        if (this.rageActive) dmg *= 1.6;               // rage boosts damage
+        const dirX = w.dx, dirY = w.dy;
+        const dealt = opponent.takeHit(dmg, dirX, dirY, power * (this.rageActive ? 1.3 : 1), this);
+        if (dealt > 0) {
+          this.special = Utils.clamp(this.special + dealt * 0.011, 0, 1); // build meter on hits dealt
+          if (this.fx) {
+            this.fx.damageText(seg.qx, seg.qy - 10, dealt,
+              opponent.blocking ? '#8ce0ff' : (this.rageActive ? '#ff5a6e' : '#ffe36e'));
+            if (!cont) this.fx.sparks(seg.qx, seg.qy, this.rageActive ? 12 : 6);
+          }
+        }
+        this._hitParticles.set(key, cont ? 8 : 999); // one hit per swing (or ticking for chainsaw)
+        if (!cont) break; // one target per swing for non-continuous
+      }
+    }
+  }
+
+  /* ----- Per-frame control & balance ----- */
+  update(opponent) {
+    // tick timers
+    if (this.attackCooldown > 0) this.attackCooldown--;
+    if (this.stun > 0) this.stun--;
+    if (this.hitFlash > 0) this.hitFlash--;
+    if (this._jumpLock > 0) this._jumpLock--;
+    if (this.dashCooldown > 0) this.dashCooldown--;
+    for (const [k, v] of this._hitParticles) {
+      if (v < 999) { const nv = v - 1; if (nv <= 0) this._hitParticles.delete(k); else this._hitParticles.set(k, nv); }
+    }
+
+    // Rage / special meter
+    if (this.rageActive) {
+      this.rageTimer--;
+      if (this.rageTimer <= 0) { this.rageActive = false; this.special = 0; }
+    } else if (this.special >= 1) {
+      // auto-activate rage mode when the meter fills — a comeback boost
+      this.rageActive = true;
+      this.rageTimer = 300; // ~5s
+      if (this.audio) this.audio.win();
+      if (this.fx) { this.fx.shock(this.centerX, this.centerY, this.color); this.fx.sparks(this.centerX, this.centerY, 16); }
+    }
+
+    if (!this.alive) { this.updateDead(); return; }
+
+    // Face the opponent automatically
+    if (opponent && opponent.alive) {
+      const dir = Math.sign(opponent.centerX - this.centerX) || this.facing;
+      this.facing = dir;
+    }
+
+    const canAct = this.stun <= 0;
+    this.blocking = canAct && this.control.block && this.isGrounded();
+
+    // Movement
+    const grounded = this.isGrounded();
+    const rageMul = this.rageActive ? 1.35 : 1;
+    const moveInput = canAct && !this.blocking ? this.control.move : 0;
+    const speed = (grounded ? 0.9 : 0.42) * rageMul;
+    if (moveInput !== 0) {
+      const push = moveInput * speed;
+      this.pelvis.applyForce(push * 6, 0);
+      this.chest.applyForce(push * 3, 0);
+      // step legs
+      this.footA.applyForce(push * 3, 0);
+      this.footB.applyForce(push * 3, 0);
+    }
+
+    // Reset jumps once actually settled on the ground
+    if (grounded && this._jumpLock <= 0) this.jumpsLeft = this.maxJumps;
+
+    // Jump — rising edge, with double jump in the air
+    const jumpPressed = canAct && this.control.jump && !this._jumpHeld;
+    if (jumpPressed && this.jumpsLeft > 0 && this._jumpLock <= 0) {
+      const airJump = !grounded && this.jumpsLeft < this.maxJumps;
+      const j = airJump ? -12 : -12.8;
+      this.pelvis.applyImpulse(0, j);
+      this.chest.applyImpulse(0, j * 0.7);
+      this.footA.applyImpulse(0, j * 0.3);
+      this.footB.applyImpulse(0, j * 0.3);
+      this.jumpsLeft--;
+      this._jumpLock = 10;
+      if (this.audio) this.audio.jump();
+      if (this.fx) {
+        this.fx.dust(this.pelvis.x, this.footA.y + 6, 0, 6);
+        if (airJump) this.fx.shock(this.pelvis.x, this.footA.y + 10, '#ffffff');
+      }
+    }
+    this._jumpHeld = this.control.jump;
+
+    // Dash — quick horizontal burst
+    if (canAct && this.control.dash && this.dashCooldown <= 0) {
+      const dir = moveInput !== 0 ? Math.sign(moveInput) : this.facing;
+      const power = 20 * (this.rageActive ? 1.2 : 1);
+      this.pelvis.applyImpulse(dir * power, -2);
+      this.chest.applyImpulse(dir * power * 0.8, -1);
+      this.footA.applyImpulse(dir * power * 0.6, 0);
+      this.footB.applyImpulse(dir * power * 0.6, 0);
+      this.dashCooldown = 42;
+      this.facing = dir;
+      if (this.audio) this.audio.swing();
+      if (this.fx) {
+        this.fx.dust(this.pelvis.x - dir * 12, this.pelvis.y + 20, dir > 0 ? Math.PI : 0, 8);
+        this.fx.shock(this.centerX, this.centerY, this.color);
+      }
+      this.control.dash = false;
+    }
+
+    // Landing dust / sfx
+    if (grounded && !this._lastGrounded) {
+      if (this.audio) this.audio.land();
+      if (this.fx) this.fx.dust(this.pelvis.x, Math.max(this.footA.y, this.footB.y) + 4, 0, 5);
+    }
+    this._lastGrounded = grounded;
+
+    // Attack trigger (edge handled by game via wantAttack)
+    if (canAct && this.control.attack && !this.blocking) {
+      this.attack();
+      this.control.attack = false; // consume; game re-sets on hold if desired
+    }
+
+    this.balance(grounded);
+    this.poseArms();
+    this.poseLegs(moveInput, grounded);
+    this.clampVelocities();
+  }
+
+  updateDead() {
+    this.deathTimer++;
+    // no active control — the ragdoll just falls with gravity/constraints
+    this.clampVelocities();
+  }
+
+  /** Active balance: keep the torso upright above the pelvis */
+  balance(grounded) {
+    const strength = grounded ? 0.16 : 0.06;
+    // rotate chest & head around pelvis toward vertical
+    const cur = Math.atan2(this.chest.y - this.pelvis.y, this.chest.x - this.pelvis.x);
+    const target = -Math.PI / 2; // straight up
+    let err = Utils.angleDiff(cur, target);
+    rotateAround(this.chest, this.pelvis, err * strength);
+    rotateAround(this.head, this.pelvis, err * strength * 0.9);
+    // gentle lift so the body doesn't sag when standing
+    if (grounded) {
+      this.chest.applyForce(0, -this.world.gravity * this.chest.mass * 0.6);
+      this.head.applyForce(0, -this.world.gravity * this.head.mass * 0.6);
+    }
+  }
+
+  /** Drive the weapon arm (front) for idle guard and attack swing */
+  poseArms() {
+    const chest = this.chest;
+    const f = this.facing;
+
+    // ----- Front (weapon) arm -----
+    let aim;
+    if (this.attackTimer > 0) {
+      const t = 1 - this.attackTimer / this.attackDuration; // 0..1 through swing
+      // Overhead chop or uppercut depending on attackDir
+      if (this.attackDir >= 0) {
+        aim = Utils.lerp(-2.4, 0.5, t); // from raised-back to down-forward
+      } else {
+        aim = Utils.lerp(1.4, -1.2, t); // uppercut
+      }
+      this.attackTimer--;
+    } else if (this.blocking) {
+      aim = -0.3; // hold weapon up defensively
+    } else {
+      aim = -0.35 + Math.sin(performance.now() * 0.004 + this.id) * 0.08; // idle sway
+    }
+    const worldAim = f >= 0 ? aim : Math.PI - aim;
+    const reach = this.armReach;
+    const tHandX = chest.x + Math.cos(worldAim) * reach;
+    const tHandY = chest.y + Math.sin(worldAim) * reach + 6;
+    const tElbowX = chest.x + Math.cos(worldAim) * reach * 0.5;
+    const tElbowY = chest.y + Math.sin(worldAim) * reach * 0.5 + 4;
+    const k = this.attackTimer > 0 ? 0.55 : 0.28;
+    const hand = this.frontHand, elbow = this.frontElbow;
+    hand.x += (tHandX - hand.x) * k; hand.y += (tHandY - hand.y) * k;
+    elbow.x += (tElbowX - elbow.x) * k * 0.8; elbow.y += (tElbowY - elbow.y) * k * 0.8;
+
+    // ----- Back arm: relaxed guard pose -----
+    const bAim = f >= 0 ? Math.PI - 0.6 : 0.6;
+    const bh = this.backHand, be = this.backElbow;
+    const bhx = chest.x + Math.cos(bAim) * reach * 0.9;
+    const bhy = chest.y + Math.sin(bAim) * reach * 0.9 + 12;
+    bh.x += (bhx - bh.x) * 0.12; bh.y += (bhy - bh.y) * 0.12;
+    be.x += ((chest.x + Math.cos(bAim) * reach * 0.5) - be.x) * 0.1;
+    be.y += ((chest.y + Math.sin(bAim) * reach * 0.5 + 6) - be.y) * 0.1;
+  }
+
+  /** Active standing / walking controller: holds the pelvis up over the feet
+   *  (so the knees don't buckle) and drives a simple two-step walk cycle. */
+  poseLegs(moveInput, grounded) {
+    if (!grounded) {
+      // In the air: tuck legs toward the pelvis so they don't dangle awkwardly
+      const tuck = (foot, side) => {
+        foot.x += (this.pelvis.x + side * 8 - foot.x) * 0.06;
+        foot.y += (this.pelvis.y + 30 - foot.y) * 0.06;
+      };
+      tuck(this.footA, 1); tuck(this.footB, -1);
+      return;
+    }
+
+    const stance = 13;
+    const phase = performance.now() * 0.013;
+    const moving = moveInput !== 0;
+    const walk = moving ? Math.sin(phase) * 11 : 0;
+    const lift = moving ? Math.max(0, -Math.cos(phase)) * 10 : 0;
+
+    // Hold the pelvis at standing height above the lowest foot
+    const footY = Math.max(this.footA.y, this.footB.y);
+    const targetPelvisY = footY - this.standHeight;
+    if (this.pelvis.y > targetPelvisY) {
+      this.pelvis.y += (targetPelvisY - this.pelvis.y) * 0.28;
+    }
+
+    const footTargetY = this.pelvis.y + this.standHeight;
+    // Foot A (front-ish) — steps forward on one half of the cycle
+    const taX = this.pelvis.x + stance + walk;
+    this.footA.x += (taX - this.footA.x) * 0.14;
+    this.footA.y += (footTargetY - lift - this.footA.y) * 0.10;
+    // Foot B — opposite phase
+    const tbX = this.pelvis.x - stance - walk;
+    this.footB.x += (tbX - this.footB.x) * 0.14;
+    this.footB.y += (footTargetY - (moving ? Math.max(0, Math.cos(phase)) * 10 : 0) - this.footB.y) * 0.10;
+
+    // Keep knees between pelvis and feet, bent slightly toward facing
+    const bendKnee = (knee, foot, side) => {
+      const mx = (this.pelvis.x + foot.x) / 2 + this.facing * 5 + side * 3;
+      const my = (this.pelvis.y + foot.y) / 2 + 3;
+      knee.x += (mx - knee.x) * 0.3;
+      knee.y += (my - knee.y) * 0.3;
+    };
+    bendKnee(this.kneeA, this.footA, 1);
+    bendKnee(this.kneeB, this.footB, -1);
+  }
+
+  clampVelocities() {
+    const max = 24;
+    for (const p of this.all) {
+      let vx = p.x - p.px, vy = p.y - p.py;
+      const s = Math.hypot(vx, vy);
+      if (s > max) {
+        vx = (vx / s) * max; vy = (vy / s) * max;
+        p.px = p.x - vx; p.py = p.y - vy;
+      }
+    }
+  }
+
+  /* ----- Rendering ----- */
+  render(ctx, time) {
+    const flash = this.hitFlash > 0 && this.hitFlash % 2 === 0;
+    const bodyColor = flash ? '#ffffff' : this.color;
+    const limbW = 12;
+
+    // shadow
+    const groundY = Math.max(this.footA.y, this.footB.y) + 8;
+    ctx.save();
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.ellipse(this.pelvis.x, groundY, 34, 8, 0, 0, Utils.TAU);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    // rage aura when the special meter is charged/active
+    if (this.rageActive || (this.special >= 1 && this.alive)) {
+      const t = this.rageActive ? 1 : 0.6;
+      ctx.save();
+      ctx.shadowBlur = 26; ctx.shadowColor = this.color;
+      ctx.globalAlpha = 0.35 + Math.sin(time * 0.3) * 0.1;
+      ctx.strokeStyle = this.color; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(this.centerX, this.centerY, 44 * t, 0, Utils.TAU); ctx.stroke();
+      ctx.restore();
+    }
+
+    // hit-flash glow
+    if (flash) { ctx.shadowBlur = 16; ctx.shadowColor = '#ffffff'; }
+
+    // back arm (drawn first, behind body)
+    this.limb(ctx, this.chest, this.backElbow, this.backHand, bodyColor, limbW - 2);
+
+    // legs
+    this.limb(ctx, this.pelvis, this.kneeB, this.footB, bodyColor, limbW);
+    this.limb(ctx, this.pelvis, this.kneeA, this.footA, bodyColor, limbW);
+
+    // torso
+    this.bone(ctx, this.chest, this.pelvis, bodyColor, limbW + 3);
+    // neck
+    this.bone(ctx, this.head, this.chest, bodyColor, limbW - 1);
+
+    // head
+    this.drawHead(ctx, bodyColor);
+
+    // front (weapon) arm + weapon
+    this.limb(ctx, this.chest, this.frontElbow, this.frontHand, bodyColor, limbW);
+    ctx.shadowBlur = 0;
+    this.drawWeapon(ctx, time);
+
+    ctx.restore();
+  }
+
+  /** Two-point limb (torso / neck) with outline, fill and centre sheen */
+  bone(ctx, a, b, color, width) {
+    ctx.strokeStyle = this.outline; ctx.lineWidth = width + 4;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.strokeStyle = color; ctx.lineWidth = width;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = width * 0.34;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+
+  /** Three-point limb (arm / leg) with outline, fill, sheen and a cap */
+  limb(ctx, a, b, c, color, width) {
+    const path = () => { ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c.x, c.y); ctx.stroke(); };
+    ctx.strokeStyle = this.outline; ctx.lineWidth = width + 4; path();
+    ctx.strokeStyle = color; ctx.lineWidth = width; path();
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = width * 0.32; path();
+    // hand/foot cap with outline
+    ctx.fillStyle = this.outline;
+    ctx.beginPath(); ctx.arc(c.x, c.y, width * 0.5 + 1.5, 0, Utils.TAU); ctx.fill();
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(c.x, c.y, width * 0.5, 0, Utils.TAU); ctx.fill();
+  }
+
+  drawHead(ctx, color) {
+    const h = this.head;
+    const ang = Math.atan2(this.chest.y - h.y, this.chest.x - h.x) + Math.PI / 2;
+    ctx.save();
+    ctx.translate(h.x, h.y);
+    ctx.rotate(ang);
+    // head outline + fill + top sheen
+    ctx.fillStyle = this.outline;
+    ctx.beginPath(); ctx.arc(0, 0, h.radius + 2, 0, Utils.TAU); ctx.fill();
+    const hg = ctx.createRadialGradient(-4, -5, 2, 0, 0, h.radius);
+    hg.addColorStop(0, this._lighten(color)); hg.addColorStop(1, color);
+    ctx.fillStyle = hg;
+    ctx.beginPath(); ctx.arc(0, 0, h.radius, 0, Utils.TAU); ctx.fill();
+
+    const attacking = this.attackTimer > 0;
+    if (this.alive) {
+      const ex = this.facing * 4;
+      // angry brows while attacking / raging
+      if (attacking || this.rageActive) {
+        ctx.strokeStyle = '#111'; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(ex - 5, -7); ctx.lineTo(ex + 5, -4);
+        ctx.stroke();
+      }
+      // eyes
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(ex, -1, 3.4, 0, Utils.TAU); ctx.fill();
+      ctx.fillStyle = this.rageActive ? '#e11d48' : '#111';
+      ctx.beginPath(); ctx.arc(ex + this.facing * 1.2, -1, 1.8, 0, Utils.TAU); ctx.fill();
+    } else {
+      ctx.strokeStyle = '#111'; ctx.lineWidth = 2;
+      for (const sx of [-4, 4]) {
+        ctx.beginPath();
+        ctx.moveTo(sx - 2.5, -4); ctx.lineTo(sx + 2.5, 0);
+        ctx.moveTo(sx + 2.5, -4); ctx.lineTo(sx - 2.5, 0);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  _lighten(hex) {
+    if (hex[0] !== '#') return hex;
+    let h = hex.replace('#', '');
+    if (h.length === 3) h = h.split('').map((x) => x + x).join('');
+    const n = parseInt(h, 16);
+    const r = Math.min(255, ((n >> 16) & 255) + 60);
+    const g = Math.min(255, ((n >> 8) & 255) + 60);
+    const b = Math.min(255, (n & 255) + 60);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  drawWeapon(ctx, time) {
+    if (!this.alive && this.deathTimer > 40) return; // dropped after a moment
+    const hand = this.frontHand, elbow = this.frontElbow;
+    const ang = Math.atan2(hand.y - elbow.y, hand.x - elbow.x);
+
+    // coloured swing trail
+    if (this.attackTimer > 0 && !this.weapon.continuous) {
+      ctx.save();
+      ctx.translate(hand.x, hand.y); ctx.rotate(ang);
+      const r = this.weapon.reach;
+      const grad = ctx.createLinearGradient(0, 0, r, 0);
+      grad.addColorStop(0, 'rgba(255,255,255,0)');
+      grad.addColorStop(1, this.weapon.trail || 'rgba(255,255,255,0.4)');
+      ctx.strokeStyle = grad; ctx.lineWidth = r * 0.55; ctx.lineCap = 'round';
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.72, -0.75, 0.5); ctx.stroke();
+      ctx.restore();
+    }
+
+    ctx.save();
+    ctx.translate(hand.x, hand.y);
+    ctx.rotate(ang);
+    if (this.weapon.glow && (this.weapon.energy || this.attackTimer > 0)) {
+      ctx.shadowBlur = this.weapon.energy ? 16 : 9;
+      ctx.shadowColor = this.weapon.glow;
+    }
+    this.weapon.draw(ctx, this.weapon.reach, 8, this.attackTimer > 0, time * 0.06);
+    ctx.restore();
+  }
+
+  /** Debug helper (not used in normal play) */
+  drawDebug(ctx) {
+    ctx.fillStyle = 'rgba(255,255,0,0.6)';
+    for (const p of this.all) {
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Utils.TAU); ctx.fill();
+    }
+  }
+}
+
+</script>
+  <script>
+/* =========================================================================
+ * ai.js — Opponent AI controller
+ * A simple but effective finite-state fighter AI: it closes distance,
+ * spaces itself to weapon reach, attacks in bursts, retreats and blocks
+ * when the player is attacking, and occasionally jumps. Difficulty scales
+ * reaction time, aggression and block chance.
+ * ========================================================================= */
+'use strict';
+
+class AIController {
+  constructor(self, target, difficulty = 'normal') {
+    this.self = self;
+    this.target = target;
+    this.setDifficulty(difficulty);
+    this.decisionTimer = 0;
+    this.state = 'approach';
+    this.jumpTimer = Utils.randInt(60, 180);
+    this.attackHold = 0;
+    this.blockTimer = 0;
+  }
+
+  setDifficulty(d) {
+    this.difficulty = d;
+    const table = {
+      easy:   { react: 26, aggression: 0.4, block: 0.15, spacing: 1.15, jump: 0.15 },
+      normal: { react: 16, aggression: 0.62, block: 0.35, spacing: 1.0, jump: 0.28 },
+      hard:   { react: 9,  aggression: 0.82, block: 0.55, spacing: 0.92, jump: 0.4 },
+      insane: { react: 4,  aggression: 0.95, block: 0.72, spacing: 0.88, jump: 0.5 },
+    };
+    this.cfg = table[d] || table.normal;
+  }
+
+  update() {
+    const self = this.self, target = this.target;
+    const control = { move: 0, jump: false, attack: false, block: false, dash: false };
+    if (!self.alive) { self.setControl(control); return; }
+
+    if (!target.alive) {
+      // victory idle: stop moving
+      self.setControl(control);
+      return;
+    }
+
+    const dx = target.centerX - self.centerX;
+    const dy = target.centerY - self.centerY;
+    const dist = Math.hypot(dx, dy);
+    const reach = (self.weapon.reach + self.armReach) * this.cfg.spacing;
+    const dir = Math.sign(dx) || 1;
+
+    // Periodic re-decision (reaction time)
+    this.decisionTimer--;
+    if (this.decisionTimer <= 0) {
+      this.decisionTimer = this.cfg.react + Utils.randInt(-3, 6);
+      // React to the player's incoming attack → maybe block or dodge
+      if (target.attackTimer > 0 && dist < reach + 40) {
+        if (Math.random() < this.cfg.block) { this.state = 'block'; this.blockTimer = Utils.randInt(12, 26); }
+        else if (Math.random() < 0.4) { this.state = 'retreat'; this.blockTimer = Utils.randInt(10, 20); }
+        else this.state = 'attack';
+      } else if (dist > reach + 30) {
+        this.state = 'approach';
+      } else if (dist < reach - 55) {
+        this.state = Math.random() < 0.5 ? 'retreat' : 'attack';
+      } else {
+        // in the pocket → attack if aggressive
+        this.state = Math.random() < this.cfg.aggression ? 'attack' : 'space';
+      }
+    }
+
+    // Execute current state
+    switch (this.state) {
+      case 'approach':
+        control.move = dir;
+        // dash to close a big gap quickly
+        if (dist > reach + 220 && self.dashCooldown <= 0 && Math.random() < this.cfg.aggression * 0.1) control.dash = true;
+        break;
+      case 'retreat':
+        control.move = -dir;
+        if (this.blockTimer-- <= 0) this.state = 'approach';
+        break;
+      case 'space':
+        control.move = dist < reach - 30 ? -dir * 0.6 : dir * 0.6;
+        break;
+      case 'block':
+        control.block = true;
+        control.move = -dir * 0.3;
+        if (this.blockTimer-- <= 0) this.state = 'approach';
+        break;
+      case 'attack':
+        if (dist < reach + 20) {
+          if (self.attackCooldown <= 0) { control.attack = true; }
+          // small step-in
+          control.move = dist > reach - 20 ? dir * 0.5 : 0;
+        } else {
+          control.move = dir;
+        }
+        if (this.attackHold-- <= 0) { this.attackHold = Utils.randInt(6, 16); }
+        break;
+    }
+
+    // Jump occasionally, or to chase a jumping/elevated target
+    this.jumpTimer--;
+    if (this.jumpTimer <= 0) {
+      this.jumpTimer = Utils.randInt(70, 200);
+      if (Math.random() < this.cfg.jump) control.jump = true;
+    }
+    if (dy < -70 && dist < reach + 60 && Math.random() < 0.06) control.jump = true;
+
+    // Don't walk off ledges into the void hazard (very rough edge-avoidance)
+    self.setControl(control);
+  }
+}
+
+</script>
+  <script>
+/* =========================================================================
+ * input.js — Keyboard + touch input
+ * Player 1: WASD + (J attack / K block)   or on-screen touch controls
+ * Player 2: Arrow keys + (, attack / . block)
+ * Touch: virtual joystick (move) and Jump / Attack / Block buttons.
+ * ========================================================================= */
+'use strict';
+
+class InputManager {
+  constructor() {
+    this.keys = new Set();
+    this.touch = { move: 0, jump: false, attack: false, block: false, dash: false };
+    this._bindKeyboard();
+    this._pauseCb = null;
+  }
+
+  onPause(cb) { this._pauseCb = cb; }
+
+  _bindKeyboard() {
+    window.addEventListener('keydown', (e) => {
+      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      this.keys.add(k);
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
+      if (k === 'Escape' || k === 'p') this._pauseCb && this._pauseCb();
+    });
+    window.addEventListener('keyup', (e) => {
+      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      this.keys.delete(k);
+    });
+    window.addEventListener('blur', () => this.keys.clear());
+  }
+
+  /** Wire up on-screen touch controls (mobile) */
+  bindTouch(root) {
+    const joyBase = root.querySelector('#joyBase');
+    const joyStick = root.querySelector('#joyStick');
+    const btnJump = root.querySelector('#btnJump');
+    const btnAttack = root.querySelector('#btnAttack');
+    const btnBlock = root.querySelector('#btnBlock');
+    const btnDash = root.querySelector('#btnDash');
+    if (!joyBase) return;
+    const vibrate = (ms) => { try { navigator.vibrate && navigator.vibrate(ms); } catch (e) {} };
+
+    let joyId = null, cx = 0, cy = 0, radius = 60;
+
+    const startJoy = (id, x, y) => {
+      const rect = joyBase.getBoundingClientRect();
+      cx = rect.left + rect.width / 2;
+      cy = rect.top + rect.height / 2;
+      radius = rect.width / 2;
+      joyId = id;
+      moveJoy(x, y);
+    };
+    const moveJoy = (x, y) => {
+      let dx = x - cx, dy = y - cy;
+      const d = Math.hypot(dx, dy);
+      const clamped = Math.min(d, radius);
+      const ang = Math.atan2(dy, dx);
+      const sx = Math.cos(ang) * clamped, sy = Math.sin(ang) * clamped;
+      joyStick.style.transform = `translate(${sx}px, ${sy}px)`;
+      this.touch.move = Utils.clamp(dx / radius, -1, 1);
+      if (dy < -radius * 0.5) this.touch.jump = true; else this.touch.jump = false;
+    };
+    const endJoy = () => {
+      joyId = null;
+      joyStick.style.transform = 'translate(0,0)';
+      this.touch.move = 0; this.touch.jump = false;
+    };
+
+    joyBase.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const t = e.changedTouches[0];
+      startJoy(t.identifier, t.clientX, t.clientY);
+    }, { passive: false });
+    window.addEventListener('touchmove', (e) => {
+      for (const t of e.changedTouches) if (t.identifier === joyId) moveJoy(t.clientX, t.clientY);
+    }, { passive: false });
+    window.addEventListener('touchend', (e) => {
+      for (const t of e.changedTouches) if (t.identifier === joyId) endJoy();
+    });
+    // Mouse fallback for joystick (desktop testing)
+    joyBase.addEventListener('mousedown', (e) => { startJoy('mouse', e.clientX, e.clientY); });
+    window.addEventListener('mousemove', (e) => { if (joyId === 'mouse') moveJoy(e.clientX, e.clientY); });
+    window.addEventListener('mouseup', () => { if (joyId === 'mouse') endJoy(); });
+
+    const hold = (el, prop, buzz = 10) => {
+      if (!el) return;
+      const on = (e) => { e.preventDefault(); this.touch[prop] = true; el.classList.add('pressed'); vibrate(buzz); };
+      const off = (e) => { e.preventDefault(); this.touch[prop] = false; el.classList.remove('pressed'); };
+      el.addEventListener('touchstart', on, { passive: false });
+      el.addEventListener('touchend', off, { passive: false });
+      el.addEventListener('touchcancel', off, { passive: false });
+      el.addEventListener('mousedown', on);
+      el.addEventListener('mouseup', off);
+      el.addEventListener('mouseleave', off);
+    };
+    hold(btnJump, 'jump', 8);
+    hold(btnAttack, 'attack', 12);
+    hold(btnBlock, 'block', 6);
+    hold(btnDash, 'dash', 14);
+  }
+
+  has(...ks) { return ks.some((k) => this.keys.has(k)); }
+
+  /** Player 1 control state (keyboard OR touch merged) */
+  p1() {
+    let move = 0;
+    if (this.has('a', 'A')) move -= 1;
+    if (this.has('d', 'D')) move += 1;
+    move += this.touch.move;
+    return {
+      move: Utils.clamp(move, -1, 1),
+      jump: this.has('w', 'W') || this.touch.jump,
+      attack: this.has('j', 'J', ' ', 'f', 'F') || this.touch.attack,
+      block: this.has('k', 'K', 's', 'S') || this.touch.block,
+      dash: this.has('l', 'L', 'q', 'Q') || this.touch.dash,
+    };
+  }
+
+  /** Player 2 control state (keyboard only) */
+  p2() {
+    let move = 0;
+    if (this.has('ArrowLeft')) move -= 1;
+    if (this.has('ArrowRight')) move += 1;
+    return {
+      move,
+      jump: this.has('ArrowUp'),
+      attack: this.has('Enter', '.', '0'),
+      block: this.has('ArrowDown'),
+      dash: this.has('/', 'Shift', ','),
+    };
+  }
+}
+
+</script>
+  <script>
+/* =========================================================================
+ * network.js — Online multiplayer (peer-to-peer, host-authoritative)
+ *
+ * Uses Trystero (loaded on demand from a CDN) for serverless WebRTC:
+ *   • Create Room  → a short code; a friend joins with that code.
+ *   • Join Room    → enter a friend's code.
+ *   • Quick Match  → everyone joins a shared lobby and gets paired with the
+ *                    next available online player.
+ *
+ * The HOST runs the authoritative physics simulation and streams compact
+ * world snapshots to the GUEST; the GUEST streams its input back. If the
+ * networking library can't be loaded (offline / blocked), online is disabled
+ * gracefully and the rest of the game is unaffected.
+ * ========================================================================= */
+'use strict';
+
+class NetworkManager extends Utils.Emitter {
+  constructor() {
+    super();
+    this.lib = null;             // Trystero module
+    this.room = null;
+    this.role = null;            // 'host' | 'guest'
+    this.selfId = null;
+    this.peerId = null;
+    this.connected = false;
+    this.roomCode = null;
+    this.appId = 'stickman-duel-arena-2026';
+    // action send/receive handles
+    this._send = {};
+    this._loading = null;
+  }
+
+  /** Dynamically import Trystero (tries a couple of strategies/CDNs). */
+  async load() {
+    if (this.lib) return this.lib;
+    if (this._loading) return this._loading;
+    const sources = [
+      'https://esm.run/trystero/nostr',
+      'https://esm.sh/trystero/nostr',
+      'https://cdn.jsdelivr.net/npm/trystero/nostr/index.min.js',
+      'https://esm.run/trystero/mqtt',
+    ];
+    this._loading = (async () => {
+      let lastErr;
+      for (const src of sources) {
+        try {
+          const mod = await import(/* @vite-ignore */ src);
+          if (mod && mod.joinRoom) { this.lib = mod; return mod; }
+        } catch (e) { lastErr = e; }
+      }
+      throw lastErr || new Error('Trystero unavailable');
+    })();
+    return this._loading;
+  }
+
+  _randomCode() {
+    return Math.floor(1000 + Math.random() * 9000).toString(); // 4-digit
+  }
+
+  /** Wire up the room's actions and peer events. */
+  _setupRoom(roomId) {
+    const { joinRoom, selfId } = this.lib;
+    this.selfId = selfId;
+    this.room = joinRoom({ appId: this.appId }, roomId);
+
+    const [sendState, getState] = this.room.makeAction('state');
+    const [sendInput, getInput] = this.room.makeAction('input');
+    const [sendMeta, getMeta] = this.room.makeAction('meta');
+    this._send = { state: sendState, input: sendInput, meta: sendMeta };
+
+    getState((data) => this.emit('state', data));
+    getInput((data) => this.emit('input', data));
+    getMeta((data, peer) => this.emit('meta', data, peer));
+
+    this.room.onPeerJoin((peer) => {
+      this.peerId = peer;
+      this.connected = true;
+      // Quick-match role resolution: lower id hosts (deterministic)
+      if (this.role === 'pending') {
+        this.role = this.selfId < peer ? 'host' : 'guest';
+      }
+      this.emit('peerjoin', peer);
+    });
+    this.room.onPeerLeave((peer) => {
+      if (peer === this.peerId) {
+        this.connected = false;
+        this.peerId = null;
+        this.emit('peerleave', peer);
+      }
+    });
+  }
+
+  async host() {
+    await this.load();
+    this.role = 'host';
+    this.roomCode = this._randomCode();
+    this._setupRoom('ROOM-' + this.roomCode);
+    return this.roomCode;
+  }
+
+  async join(code) {
+    await this.load();
+    this.role = 'guest';
+    this.roomCode = String(code).trim();
+    this._setupRoom('ROOM-' + this.roomCode);
+    return this.roomCode;
+  }
+
+  async quick() {
+    await this.load();
+    this.role = 'pending'; // decided when a peer joins
+    this.roomCode = 'QUICK';
+    this._setupRoom('LOBBY-QUICK');
+    return this.roomCode;
+  }
+
+  sendState(s) { if (this._send.state) this._send.state(s); }
+  sendInput(i) { if (this._send.input) this._send.input(i); }
+  sendMeta(m) { if (this._send.meta) this._send.meta(m); }
+
+  leave() {
+    try { if (this.room) this.room.leave(); } catch (e) {}
+    this.room = null;
+    this.connected = false;
+    this.role = null;
+    this.peerId = null;
+    this._send = {};
+  }
+}
+
+</script>
+  <script>
+/* =========================================================================
+ * game.js — Game orchestration
+ * State machine (menu → setup → countdown → playing → round/match over),
+ * dynamic camera, arena rendering, HUD, round & match logic, and the main
+ * fixed-timestep loop. Ties together physics, stickmen, AI, input, audio,
+ * particles and the UI screens.
+ * ========================================================================= */
+'use strict';
+
+class Game {
+  constructor() {
+    this.canvas = document.getElementById('stage');
+    this.ctx = this.canvas.getContext('2d');
+    this.audio = new AudioManager();
+    this.fx = new ParticleSystem();
+    this.input = new InputManager();
+    this.state = 'menu';
+    this.time = 0;
+    this._acc = 0;
+    this._last = 0;
+    this.slowmo = 0;         // hitstop / slow-motion frames
+    this.shake = 0;
+
+    // Match configuration (defaults)
+    this.config = {
+      mode: '1p',            // '1p' | '2p'
+      difficulty: 'normal',
+      p1Weapon: 'sword',
+      p2Weapon: 'katana',
+      p1Color: '#2b6bff',
+      p2Color: '#ff3b57',
+      map: 'temple',
+      rounds: 3,             // best-of
+      timeLimit: 60,         // seconds per round
+    };
+
+    this.camera = { x: STAGE_W / 2, y: STAGE_H / 2, scale: 1, tx: STAGE_W / 2, ty: STAGE_H / 2, tscale: 1 };
+    this.scores = [0, 0];
+    this.round = 0;
+    this.roundTime = 0;
+    this.countdown = 0;
+    this._lastWinner = null;
+
+    // Online multiplayer
+    this.net = new NetworkManager();
+    this.online = null;               // { role:'host'|'guest', remoteInput, lastSnap }
+    this.onlineLoadout = { color: '#2b6bff', weaponId: 'sword' };
+    this.remoteLoadout = { color: '#ff3b57', weaponId: 'katana' };
+    this._wireNet();
+
+    this._resize = this._resize.bind(this);
+    window.addEventListener('resize', this._resize);
+    this._resize();
+
+    this.buildSetupUI();
+    this.bindUI();
+    this.input.bindTouch(document);
+    this.input.onPause(() => this.togglePause());
+
+    this.showScreen('menu');
+    requestAnimationFrame((t) => this.loop(t));
+  }
+
+  /* =====================================================================
+   * Canvas sizing
+   * ===================================================================== */
+  _resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = this.canvas.clientWidth || window.innerWidth;
+    const h = this.canvas.clientHeight || window.innerHeight;
+    this.canvas.width = Math.floor(w * dpr);
+    this.canvas.height = Math.floor(h * dpr);
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.viewW = w;
+    this.viewH = h;
+  }
+
+  /* =====================================================================
+   * UI construction & binding
+   * ===================================================================== */
+  buildSetupUI() {
+    // Weapon pickers for both players
+    this._buildWeaponPicker('p1WeaponList', 'p1Weapon');
+    this._buildWeaponPicker('p2WeaponList', 'p2Weapon');
+    this._buildMapPicker();
+  }
+
+  _buildWeaponPicker(containerId, cfgKey) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.innerHTML = '';
+    WEAPONS.forEach((w) => {
+      const btn = document.createElement('button');
+      btn.className = 'pick weapon-pick';
+      btn.dataset.id = w.id;
+      const cnv = document.createElement('canvas');
+      cnv.width = 96; cnv.height = 52;
+      this._drawWeaponIcon(cnv, w);
+      const label = document.createElement('span');
+      label.textContent = w.name;
+      btn.appendChild(cnv); btn.appendChild(label);
+      btn.addEventListener('click', () => {
+        this.config[cfgKey] = w.id;
+        el.querySelectorAll('.pick').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.audio.uiClick();
+      });
+      if (this.config[cfgKey] === w.id) btn.classList.add('active');
+      el.appendChild(btn);
+    });
+  }
+
+  _drawWeaponIcon(cnv, w) {
+    const c = cnv.getContext('2d');
+    c.clearRect(0, 0, cnv.width, cnv.height);
+    c.save();
+    c.translate(14, cnv.height / 2);
+    const scale = Math.min(1, 74 / w.reach);
+    c.scale(scale, scale);
+    // little grip dot
+    c.fillStyle = '#cbd5e1';
+    c.beginPath(); c.arc(0, 0, 5, 0, Utils.TAU); c.fill();
+    w.draw(c, w.reach, 8, false, 0);
+    c.restore();
+  }
+
+  _buildMapPicker() {
+    const el = document.getElementById('mapList');
+    if (!el) return;
+    el.innerHTML = '';
+    MAPS.forEach((m) => {
+      const btn = document.createElement('button');
+      btn.className = 'pick map-pick';
+      btn.dataset.id = m.id;
+      const cnv = document.createElement('canvas');
+      cnv.width = 128; cnv.height = 72;
+      this._drawMapThumb(cnv, m);
+      const label = document.createElement('span');
+      label.textContent = m.name;
+      btn.appendChild(cnv); btn.appendChild(label);
+      btn.addEventListener('click', () => {
+        this.config.map = m.id;
+        el.querySelectorAll('.pick').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.audio.uiClick();
+      });
+      if (this.config.map === m.id) btn.classList.add('active');
+      el.appendChild(btn);
+    });
+  }
+
+  _drawMapThumb(cnv, m) {
+    const c = cnv.getContext('2d');
+    const g = c.createLinearGradient(0, 0, 0, cnv.height);
+    m.sky.forEach((col, i) => g.addColorStop(i / (m.sky.length - 1), col));
+    c.fillStyle = g; c.fillRect(0, 0, cnv.width, cnv.height);
+    const sx = cnv.width / STAGE_W, sy = cnv.height / STAGE_H;
+    c.fillStyle = 'rgba(255,255,255,0.85)';
+    m.platforms.forEach((p) => c.fillRect(p.x * sx, p.y * sy, p.w * sx, Math.max(2, p.h * sy)));
+    if (m.hazard && m.hazard.type === 'lava') {
+      c.fillStyle = 'rgba(255,80,20,0.6)';
+      c.fillRect(0, m.hazard.y * sy, cnv.width, cnv.height - m.hazard.y * sy);
+    }
+  }
+
+  bindUI() {
+    const click = (id, fn) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', () => { this.audio.init(); this.audio.resume(); this.audio.uiClick(); fn(); });
+    };
+
+    click('btnPlay1p', () => { this.config.mode = '1p'; this.openSetup(); });
+    click('btnPlay2p', () => { this.config.mode = '2p'; this.openSetup(); });
+    click('btnPlayOnline', () => this.openOnline());
+    click('btnHowto', () => this.showScreen('howto'));
+    click('btnHowtoBack', () => this.showScreen('menu'));
+    click('btnSetupBack', () => this.showScreen('menu'));
+    click('btnStart', () => this.startMatch());
+
+    // Online screen
+    click('btnNetCreate', () => this.netCreate());
+    click('btnNetJoin', () => this.netJoin());
+    click('btnNetQuick', () => this.netQuick());
+    click('btnNetStart', () => this.netStart());
+    click('btnNetBack', () => { this.net.leave(); this.online = null; this.showScreen('menu'); });
+
+    click('btnPauseResume', () => this.togglePause());
+    click('btnPauseRestart', () => { this.hideScreen('pause'); this.startMatch(); });
+    click('btnPauseMenu', () => { this.state = 'menu'; this.hideScreen('pause'); this.showScreen('menu'); this.audio.stopMusic(); });
+    click('btnPauseBtn', () => this.togglePause());
+
+    click('btnResultRematch', () => this._onRematch());
+    click('btnResultMenu', () => {
+      if (this.online) { this.net.leave(); this.online = null; }
+      this.state = 'menu'; this.hideScreen('result'); this.showScreen('menu'); this.audio.stopMusic();
+    });
+
+    // Segmented option groups (difficulty, rounds)
+    this._bindSegment('difficultyGroup', (v) => (this.config.difficulty = v));
+    this._bindSegment('roundsGroup', (v) => (this.config.rounds = parseInt(v, 10)));
+
+    // Color swatches
+    this._bindColors('p1Colors', 'p1Color');
+    this._bindColors('p2Colors', 'p2Color');
+
+    // Audio toggles
+    const sfxT = document.getElementById('toggleSfx');
+    const musT = document.getElementById('toggleMusic');
+    if (sfxT) sfxT.addEventListener('change', () => this.audio.setMuted(!sfxT.checked));
+    if (musT) musT.addEventListener('change', () => this.audio.toggleMusic(musT.checked));
+  }
+
+  _bindSegment(groupId, fn) {
+    const el = document.getElementById(groupId);
+    if (!el) return;
+    el.querySelectorAll('button').forEach((b) => {
+      b.addEventListener('click', () => {
+        el.querySelectorAll('button').forEach((x) => x.classList.remove('active'));
+        b.classList.add('active');
+        fn(b.dataset.value);
+        this.audio.uiClick();
+      });
+    });
+  }
+
+  _bindColors(groupId, cfgKey) {
+    const el = document.getElementById(groupId);
+    if (!el) return;
+    el.querySelectorAll('button').forEach((b) => {
+      b.style.background = b.dataset.color;
+      b.addEventListener('click', () => {
+        el.querySelectorAll('button').forEach((x) => x.classList.remove('active'));
+        b.classList.add('active');
+        this.config[cfgKey] = b.dataset.color;
+        this.audio.uiClick();
+      });
+      if (b.dataset.color === this.config[cfgKey]) b.classList.add('active');
+    });
+  }
+
+  openSetup() {
+    // Toggle 1p-only controls (difficulty) & second-player labels
+    const diffWrap = document.getElementById('difficultyWrap');
+    if (diffWrap) diffWrap.style.display = this.config.mode === '1p' ? '' : 'none';
+    const p2title = document.getElementById('p2Title');
+    if (p2title) p2title.textContent = this.config.mode === '1p' ? 'الخصم (كمبيوتر) • CPU' : 'اللاعب 2 • Player 2';
+    this.showScreen('setup');
+  }
+
+  showScreen(name) {
+    document.querySelectorAll('.screen').forEach((s) => s.classList.add('hidden'));
+    const el = document.getElementById('screen' + name.charAt(0).toUpperCase() + name.slice(1));
+    if (el) el.classList.remove('hidden');
+    const overlay = document.getElementById('overlay');
+    if (overlay) overlay.classList.toggle('active', name !== 'playing');
+    // Toggle touch controls, HUD and pause button visibility
+    const showMatchUI = name === 'playing';
+    document.getElementById('hud').classList.toggle('hidden', !showMatchUI);
+    document.getElementById('touchControls').classList.toggle('hidden', !showMatchUI);
+    document.getElementById('btnPauseBtn').classList.toggle('hidden', !showMatchUI);
+  }
+
+  hideScreen(name) {
+    const el = document.getElementById('screen' + name.charAt(0).toUpperCase() + name.slice(1));
+    if (el) el.classList.add('hidden');
+  }
+
+  /* =====================================================================
+   * Match / round lifecycle
+   * ===================================================================== */
+  startMatch() {
+    this.audio.init(); this.audio.resume();
+    const musT = document.getElementById('toggleMusic');
+    if (!musT || musT.checked) this.audio.toggleMusic(true);
+    this.scores = [0, 0];
+    this.round = 0;
+    document.querySelectorAll('.screen').forEach((s) => s.classList.add('hidden'));
+    document.getElementById('overlay').classList.remove('active');
+    this.startRound();
+  }
+
+  startRound() {
+    this.round++;
+    this.map = getMap(this.config.map);
+    this.world = new PhysicsWorld({
+      gravity: 0.62, iterations: 7,
+      bounds: { x: 0, y: -400, w: STAGE_W, h: STAGE_H + 400 },
+    });
+    this.world.platforms = this.map.platforms.map((p) => ({ ...p }));
+    this.fx.clear();
+
+    const s = this.map.spawns;
+    this.f1 = new Stickman(this.world, {
+      x: s[0].x, y: s[0].y, id: 0, facing: 1,
+      color: this.config.p1Color, outline: this._darken(this.config.p1Color),
+      weaponId: this.config.p1Weapon, name: 'P1', fx: this.fx, audio: this.audio,
+    });
+    this.f2 = new Stickman(this.world, {
+      x: s[1].x, y: s[1].y, id: 1, facing: -1,
+      color: this.config.p2Color, outline: this._darken(this.config.p2Color),
+      weaponId: this.config.p2Weapon, name: this.config.mode === '1p' ? 'CPU' : 'P2',
+      fx: this.fx, audio: this.audio,
+    });
+
+    this.ai = this.config.mode === '1p' ? new AIController(this.f2, this.f1, this.config.difficulty) : null;
+
+    // pickups (health / weapon crates)
+    this.pickups = [];
+    this._pickupTimer = 360;
+
+    this.roundTime = this.config.timeLimit;
+    this.countdown = 3.0;
+    this.state = 'countdown';
+    this._countShown = -1;
+    this.camera.scale = this.camera.tscale = this._fullStageScale();
+    this.camera.x = this.camera.tx = STAGE_W / 2;
+    this.camera.y = this.camera.ty = STAGE_H / 2;
+
+    this.updateHUD();
+    this.showScreen('playing');
+    document.getElementById('roundBanner').textContent = `الجولة ${this.round} • ROUND ${this.round}`;
+  }
+
+  endRound(winner) {
+    if (this.state === 'roundover') return;
+    this.state = 'roundover';
+    this._lastWinner = winner;
+    if (winner === 0) this.scores[0]++;
+    else if (winner === 1) this.scores[1]++;
+    this.slowmo = 60;
+    this.shake = 14;
+    this.updateHUD();
+    const needed = Math.ceil(this.config.rounds / 2);
+    const matchOver = this.scores[0] >= needed || this.scores[1] >= needed;
+    setTimeout(() => {
+      if (matchOver) this.endMatch();
+      else if (this.state === 'roundover') this.startRound();
+    }, 2200);
+  }
+
+  endMatch() {
+    this.state = 'matchover';
+    const p1Won = this.scores[0] > this.scores[1];
+
+    // Online: host announces the result; both show their own perspective
+    if (this.online) {
+      if (this.online.role === 'host') {
+        this.net.sendMeta({ type: 'matchend', scores: this.scores.slice(), p1Won });
+      }
+      this._showOnlineResult({ scores: this.scores.slice(), p1Won });
+      return;
+    }
+
+    const title = document.getElementById('resultTitle');
+    const sub = document.getElementById('resultSub');
+    if (this.config.mode === '1p') {
+      title.textContent = p1Won ? 'انتصار! • VICTORY' : 'هزيمة • DEFEAT';
+      title.className = 'result-title ' + (p1Won ? 'win' : 'lose');
+    } else {
+      title.textContent = p1Won ? 'فاز اللاعب 1 • PLAYER 1 WINS' : 'فاز اللاعب 2 • PLAYER 2 WINS';
+      title.className = 'result-title ' + (p1Won ? 'win' : 'lose2');
+    }
+    sub.textContent = `النتيجة ${this.scores[0]} - ${this.scores[1]}`;
+    if (p1Won) { this.audio.win(); this.fx.confetti(this.viewW / 2, this.viewH * 0.3); }
+    else this.config.mode === '1p' ? this.audio.lose() : this.audio.win();
+    document.getElementById('screenResult').classList.remove('hidden');
+    document.getElementById('overlay').classList.add('active');
+  }
+
+  togglePause() {
+    if (this.online) return; // no pausing in online matches
+    if (this.state === 'playing') {
+      this.state = 'paused';
+      document.getElementById('screenPause').classList.remove('hidden');
+      document.getElementById('overlay').classList.add('active');
+      this.audio.uiClick();
+    } else if (this.state === 'paused') {
+      this.state = 'playing';
+      document.getElementById('screenPause').classList.add('hidden');
+      document.getElementById('overlay').classList.remove('active');
+    }
+  }
+
+  /* =====================================================================
+   * Online multiplayer
+   * ===================================================================== */
+  _wireNet() {
+    this.net.on('peerjoin', () => this._onPeerJoin());
+    this.net.on('peerleave', () => this._onPeerLeave());
+    this.net.on('input', (d) => { if (this.online && this.online.role === 'host') this.online.remoteInput = d; });
+    this.net.on('state', (d) => { if (this.online && this.online.role === 'guest') this.online.lastSnap = d; });
+    this.net.on('meta', (d) => this._onMeta(d));
+  }
+
+  _setNetStatus(msg, showStart = false) {
+    const s = document.getElementById('netStatus');
+    if (s) s.textContent = msg;
+    const btn = document.getElementById('btnNetStart');
+    if (btn) btn.style.display = showStart ? '' : 'none';
+  }
+
+  openOnline() {
+    // sync loadout from current config
+    this.onlineLoadout = { color: this.config.p1Color, weaponId: this.config.p1Weapon };
+    this._buildOnlineLoadout();
+    const codeBox = document.getElementById('netCodeBox');
+    if (codeBox) codeBox.textContent = '----';
+    this._setNetStatus('اختر لونك وسلاحك، ثم أنشئ غرفة أو انضم.', false);
+    this.showScreen('online');
+  }
+
+  _buildOnlineLoadout() {
+    // colour swatches
+    const colEl = document.getElementById('netColors');
+    if (colEl && !colEl._built) {
+      ['#2b6bff', '#ff3b57', '#22c55e', '#f59e0b', '#a855f7', '#14b8a6'].forEach((c) => {
+        const b = document.createElement('button'); b.style.background = c; b.dataset.color = c;
+        b.addEventListener('click', () => {
+          this.onlineLoadout.color = c;
+          colEl.querySelectorAll('button').forEach((x) => x.classList.remove('active'));
+          b.classList.add('active'); this.audio.uiClick();
+        });
+        colEl.appendChild(b);
+      });
+      colEl._built = true;
+    }
+    if (colEl) colEl.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.color === this.onlineLoadout.color));
+    // weapon list
+    const wEl = document.getElementById('netWeapons');
+    if (wEl && !wEl._built) {
+      WEAPONS.forEach((w) => {
+        const btn = document.createElement('button'); btn.className = 'pick'; btn.dataset.id = w.id;
+        const cnv = document.createElement('canvas'); cnv.width = 88; cnv.height = 46;
+        this._drawWeaponIcon(cnv, w);
+        const label = document.createElement('span'); label.textContent = w.name.split('•')[0].trim();
+        btn.appendChild(cnv); btn.appendChild(label);
+        btn.addEventListener('click', () => {
+          this.onlineLoadout.weaponId = w.id;
+          wEl.querySelectorAll('.pick').forEach((x) => x.classList.remove('active'));
+          btn.classList.add('active'); this.audio.uiClick();
+        });
+        wEl.appendChild(btn);
+      });
+      wEl._built = true;
+    }
+    if (wEl) wEl.querySelectorAll('.pick').forEach((b) => b.classList.toggle('active', b.dataset.id === this.onlineLoadout.weaponId));
+  }
+
+  async netCreate() {
+    this.audio.init(); this.audio.resume();
+    this._setNetStatus('جارٍ إنشاء الغرفة...', false);
+    try {
+      const code = await this.net.host();
+      const codeBox = document.getElementById('netCodeBox');
+      if (codeBox) codeBox.textContent = code;
+      this._setNetStatus('شارك الرقم مع صديقك وانتظر انضمامه...', false);
+    } catch (e) {
+      this._setNetStatus('تعذّر الاتصال بخادم المطابقة. تأكد من الإنترنت وحاول مجددًا.', false);
+    }
+  }
+
+  async netJoin() {
+    this.audio.init(); this.audio.resume();
+    const inp = document.getElementById('netCodeInput');
+    const code = inp ? inp.value.trim() : '';
+    if (!/^\d{3,6}$/.test(code)) { this._setNetStatus('أدخل رقم غرفة صحيحًا (٣-٦ أرقام).', false); return; }
+    this._setNetStatus('جارٍ الاتصال بالغرفة ' + code + '...', false);
+    try {
+      await this.net.join(code);
+      // if no peer within a while, hint
+      setTimeout(() => { if (!this.net.connected) this._setNetStatus('لم يتم العثور على الغرفة بعد... تأكد من الرقم.', false); }, 6000);
+    } catch (e) {
+      this._setNetStatus('تعذّر الاتصال. تأكد من الإنترنت.', false);
+    }
+  }
+
+  async netQuick() {
+    this.audio.init(); this.audio.resume();
+    this._setNetStatus('جارٍ البحث عن لاعب متصل...', false);
+    try {
+      await this.net.quick();
+      setTimeout(() => { if (!this.net.connected) this._setNetStatus('لا يوجد لاعبون الآن... انتظر أو ادعُ صديقًا برقم غرفة.', false); }, 8000);
+    } catch (e) {
+      this._setNetStatus('تعذّر الاتصال بخادم المطابقة.', false);
+    }
+  }
+
+  _onPeerJoin() {
+    // exchange loadout
+    this.net.sendMeta({ type: 'hello', loadout: this.onlineLoadout });
+    if (this.net.role === 'host') {
+      this._setNetStatus('انضم صديقك! اضغط "ابدأ" لبدء المباراة.', true);
+    } else if (this.net.role === 'guest') {
+      this._setNetStatus('تم الاتصال! في انتظار أن يبدأ المضيف...', false);
+    } else {
+      // quick match: role resolves shortly
+      setTimeout(() => {
+        if (this.net.role === 'host') this._setNetStatus('تم العثور على خصم! اضغط "ابدأ".', true);
+        else this._setNetStatus('تم العثور على خصم! في انتظار المضيف...', false);
+      }, 300);
+    }
+    this.audio.pickup();
+  }
+
+  _onPeerLeave() {
+    if (this.online) {
+      this._setNetStatus('انقطع اتصال الخصم.', false);
+      this.endMatchOnlineDisconnect();
+    } else {
+      this._setNetStatus('غادر الخصم الغرفة.', false);
+    }
+  }
+
+  _onMeta(d) {
+    if (!d || !d.type) return;
+    if (d.type === 'hello') {
+      this.remoteLoadout = d.loadout || this.remoteLoadout;
+    } else if (d.type === 'start') {
+      this._startOnlineMatch('guest', d);
+    } else if (d.type === 'matchend') {
+      this._showOnlineResult(d);
+    } else if (d.type === 'rematch') {
+      // guest requested a rematch → host restarts
+      if (this.net.role === 'host' && this.net.connected) this.netStart();
+    }
+  }
+
+  _onRematch() {
+    if (this.online) {
+      if (this.online.role === 'host') {
+        this.hideScreen('result'); this.netStart();
+      } else {
+        // ask the host to restart
+        this.net.sendMeta({ type: 'rematch' });
+        const sub = document.getElementById('resultSub');
+        if (sub) sub.textContent = 'بانتظار موافقة المضيف على الإعادة...';
+      }
+      return;
+    }
+    this.hideScreen('result'); this.startMatch();
+  }
+
+  netStart() {
+    if (this.net.role !== 'host') return;
+    const startData = {
+      type: 'start',
+      map: this.config.map,
+      rounds: this.config.rounds,
+      host: this.onlineLoadout,
+      guest: this.remoteLoadout,
+    };
+    this.net.sendMeta(startData);
+    this._startOnlineMatch('host', startData);
+  }
+
+  _startOnlineMatch(role, data) {
+    const host = data.host, guest = data.guest;
+    this.config.mode = 'online';
+    this.config.map = data.map || 'temple';
+    this.config.rounds = data.rounds || 3;
+    this.config.p1Color = host.color; this.config.p1Weapon = host.weaponId;
+    this.config.p2Color = guest.color; this.config.p2Weapon = guest.weaponId;
+    this.online = { role, remoteInput: {}, lastSnap: null };
+    document.querySelectorAll('.screen').forEach((s) => s.classList.add('hidden'));
+    document.getElementById('overlay').classList.remove('active');
+    this.audio.init(); this.audio.resume();
+    const musT = document.getElementById('toggleMusic');
+    if (!musT || musT.checked) this.audio.toggleMusic(true);
+    this.scores = [0, 0];
+    this.round = 0;
+    this.startRound();
+  }
+
+  endMatchOnlineDisconnect() {
+    if (!this.online) return;
+    this.state = 'matchover';
+    const title = document.getElementById('resultTitle');
+    const sub = document.getElementById('resultSub');
+    if (title) { title.textContent = 'انقطع الاتصال • DISCONNECTED'; title.className = 'result-title lose'; }
+    if (sub) sub.textContent = 'غادر الخصم';
+    document.getElementById('screenResult').classList.remove('hidden');
+    document.getElementById('overlay').classList.add('active');
+    this.online = null;
+    this.net.leave();
+  }
+
+  _showOnlineResult(d) {
+    this.state = 'matchover';
+    const iAmHost = this.online && this.online.role === 'host';
+    const iWon = iAmHost ? d.p1Won : !d.p1Won;
+    const title = document.getElementById('resultTitle');
+    const sub = document.getElementById('resultSub');
+    if (title) {
+      title.textContent = iWon ? 'انتصار! • VICTORY' : 'هزيمة • DEFEAT';
+      title.className = 'result-title ' + (iWon ? 'win' : 'lose');
+    }
+    if (sub) sub.textContent = `النتيجة ${d.scores[0]} - ${d.scores[1]}`;
+    if (iWon) { this.audio.win(); this.fx.confetti(this.viewW / 2, this.viewH * 0.3); } else this.audio.lose();
+    document.getElementById('screenResult').classList.remove('hidden');
+    document.getElementById('overlay').classList.add('active');
+  }
+
+  /* ---- Snapshot pack (host) / apply (guest) ---- */
+  _packSnapshot() {
+    const packF = (f) => ({
+      p: f.all.flatMap((pt) => [Math.round(pt.x), Math.round(pt.y)]),
+      h: Math.round(f.health), sp: +f.special.toFixed(2), al: f.alive ? 1 : 0,
+      fc: f.facing, at: f.attackTimer, rg: f.rageActive ? 1 : 0, wp: f.weapon.id,
+    });
+    return {
+      st: this.state === 'countdown' ? 0 : (this.state === 'roundover' ? 2 : 1),
+      cd: +this.countdown.toFixed(2), rt: Math.round(this.roundTime),
+      sc: this.scores.slice(), rnd: this.round,
+      f1: packF(this.f1), f2: packF(this.f2),
+      pk: (this.pickups || []).map((p) => [Math.round(p.x), Math.round(p.y), p.type === 'health' ? 0 : 1, p.weaponId || '']),
+    };
+  }
+
+  _applySnapshot(s) {
+    if (!this.f1 || !this.f2) return;
+    const applyF = (f, d) => {
+      for (let i = 0; i < f.all.length; i++) {
+        const pt = f.all[i];
+        pt.px = pt.x; pt.py = pt.y;
+        pt.x = d.p[i * 2]; pt.y = d.p[i * 2 + 1];
+      }
+      f.health = d.h; f.special = d.sp; f.alive = !!d.al; f.facing = d.fc;
+      f.attackTimer = d.at; f.rageActive = !!d.rg;
+      if (d.wp && f.weapon.id !== d.wp) f.weapon = getWeapon(d.wp);
+    };
+    applyF(this.f1, s.f1); applyF(this.f2, s.f2);
+    this.scores = s.sc; this.round = s.rnd; this.roundTime = s.rt;
+    this.state = s.st === 0 ? 'countdown' : (s.st === 2 ? 'roundover' : 'playing');
+    this.countdown = s.cd;
+    this.pickups = s.pk.map((a) => ({ x: a[0], y: a[1], type: a[2] === 0 ? 'health' : 'weapon', weaponId: a[3], bob: this.time * 0.06, life: 999 }));
+  }
+
+  _updateGuest(dt) {
+    this.time += 0; // time already advanced by caller
+    if (this.state === 'playing' || this.state === 'countdown') {
+      this.net.sendInput(this.input.p1());
+    }
+    if (this.online.lastSnap) this._applySnapshot(this.online.lastSnap);
+    this.fx.update();
+    this.updateCamera();
+    this.updateHUD();
+    if (this.shake > 0) this.shake *= 0.88;
+  }
+
+  /* =====================================================================
+   * Update
+   * ===================================================================== */
+  update(dt) {
+    this.time += dt;
+
+    // Online GUEST: no local simulation — just send input & apply snapshots
+    if (this.online && this.online.role === 'guest') { this._updateGuest(dt); return; }
+
+    if (this.state === 'countdown') {
+      this.countdown -= dt / 60;
+      const n = Math.ceil(this.countdown);
+      if (n !== this._countShown && n > 0) {
+        this._countShown = n;
+        this.audio.countdown(false);
+      }
+      this.updateCamera();
+      // let bodies settle physically during countdown
+      // control/pose FIRST, then integrate + collide so collision has final say
+      this.f1.update(this.f2);
+      this.f2.update(this.f1);
+      this.world.step(1);
+      if (this.online && this.online.role === 'host') this.net.sendState(this._packSnapshot());
+      if (this.countdown <= 0) {
+        this.state = 'playing';
+        this.audio.countdown(true);
+      }
+      return;
+    }
+
+    if (this.state !== 'playing' && this.state !== 'roundover') return;
+
+    // slow-motion after a KO
+    let steps = 1;
+    if (this.slowmo > 0) { this.slowmo--; if (this.slowmo % 3 !== 0) { this.updateCamera(); this.fx.update(); return; } }
+
+    if (this.state === 'playing') {
+      // Controls
+      this.f1.setControl(this.input.p1());
+      if (this.online && this.online.role === 'host') this.f2.setControl(this.online.remoteInput || {});
+      else if (this.config.mode === '2p') this.f2.setControl(this.input.p2());
+      else if (this.ai) this.ai.update();
+
+      // Round timer
+      this.roundTime -= dt / 60;
+      if (this.roundTime <= 0) {
+        this.roundTime = 0;
+        this._timeoutResolve();
+      }
+    }
+
+    // Fighters control/pose FIRST, then integrate + collide (collision wins,
+    // so limbs can never be left buried in / below a platform).
+    this.f1.update(this.f2);
+    this.f2.update(this.f1);
+    this.world.step(1);
+
+    // Combat resolution (both directions)
+    if (this.state === 'playing') {
+      const prevH1 = this.f1.health, prevH2 = this.f2.health;
+      this.f1.resolveHitsOn(this.f2);
+      this.f2.resolveHitsOn(this.f1);
+      const maxDelta = Math.max(prevH1 - this.f1.health, prevH2 - this.f2.health);
+      if (maxDelta > 0) {
+        this.shake = Math.max(this.shake, 4 + maxDelta * 0.5);
+        if (maxDelta > 9) this.slowmo = Math.max(this.slowmo, 5); // brief hitstop on heavy blows
+      }
+
+      // Hazards / falling out
+      this._checkHazards(this.f1);
+      this._checkHazards(this.f2);
+
+      // Pickups
+      this._updatePickups();
+
+      // Win check
+      if (!this.f1.alive || !this.f2.alive) {
+        const winner = !this.f1.alive && !this.f2.alive ? -1 : (this.f1.alive ? 0 : 1);
+        this.slowmo = 50;
+        this.shake = 16;
+        this.endRound(winner);
+      }
+    }
+
+    // Host streams the authoritative world to the guest
+    if (this.online && this.online.role === 'host') this.net.sendState(this._packSnapshot());
+
+    this.fx.update();
+    this.updateCamera();
+    this.updateHUD();
+    if (this.shake > 0) this.shake *= 0.88;
+  }
+
+  _timeoutResolve() {
+    if (this.f1.health === this.f2.health) { this.endRound(-1); }
+    else this.endRound(this.f1.health > this.f2.health ? 0 : 1);
+  }
+
+  _checkHazards(f) {
+    if (!f.alive) return;
+    const haz = this.map.hazard;
+    // fell below the stage
+    if (f.pelvis.y > STAGE_H + 260) { f.fallOut(); return; }
+    if (haz && haz.type === 'lava') {
+      // touching the lava surface deals damage over time
+      const feetY = Math.max(f.footA.y, f.footB.y);
+      if (feetY > haz.y - 6) {
+        f.health = Utils.clamp(f.health - (haz.dps || 0.5), 0, f.maxHealth);
+        f.hitFlash = 4;
+        if (this.time % 8 < 1) this.fx.blood(f.footA.x, haz.y, -Math.PI / 2, 4, '#ff7a1f');
+        if (f.health <= 0) f.die();
+      }
+    }
+  }
+
+  /* =====================================================================
+   * Pickups (health / weapon crates)
+   * ===================================================================== */
+  _updatePickups() {
+    this._pickupTimer--;
+    if (this._pickupTimer <= 0 && this.pickups.length < 2) {
+      this._spawnPickup();
+      this._pickupTimer = Utils.randInt(480, 780); // 8–13s
+    }
+    for (let i = this.pickups.length - 1; i >= 0; i--) {
+      const p = this.pickups[i];
+      p.bob += 0.06; p.life--;
+      if (p.life <= 0) { this.pickups.splice(i, 1); continue; }
+      for (const f of [this.f1, this.f2]) {
+        if (!f.alive) continue;
+        if (Utils.dist(p.x, p.y, f.centerX, f.centerY) < 42) {
+          this._collectPickup(p, f);
+          this.pickups.splice(i, 1);
+          break;
+        }
+      }
+    }
+  }
+
+  _spawnPickup() {
+    const plat = Utils.pick(this.map.platforms);
+    const x = plat.x + Utils.rand(50, Math.max(60, plat.w - 50));
+    const y = plat.y - 40;
+    const type = Math.random() < 0.55 ? 'health' : 'weapon';
+    const weaponId = type === 'weapon' ? Utils.pick(WEAPONS).id : null;
+    this.pickups.push({ x, y, type, weaponId, bob: Math.random() * Utils.TAU, life: 780 });
+    if (this.audio) this.audio.uiHover();
+    this.fx.shock(x, y, type === 'health' ? '#6bff8e' : '#ffd23f');
+  }
+
+  _collectPickup(p, f) {
+    if (this.audio) this.audio.pickup();
+    if (p.type === 'health') {
+      const before = f.health;
+      f.health = Utils.clamp(f.health + 35, 0, f.maxHealth);
+      this.fx.floatText(f.centerX, f.centerY - 44, '+' + Math.round(f.health - before), '#6bff8e', 28);
+      for (let k = 0; k < 12; k++) this.fx.spawn({
+        x: f.centerX, y: f.centerY, vx: Utils.rand(-3, 3), vy: Utils.rand(-6, -1),
+        life: 34, maxLife: 34, size: 5, color: '#6bff8e', gravity: 0.2, glow: true,
+      });
+    } else {
+      f.weapon = getWeapon(p.weaponId);
+      this.fx.sparks(f.centerX, f.centerY, 16);
+      this.fx.floatText(f.centerX, f.centerY - 44, getWeapon(p.weaponId).name.split('•')[0].trim(), '#ffe36e', 24);
+    }
+  }
+
+  _renderPickups(ctx) {
+    if (!this.pickups) return;
+    for (const p of this.pickups) {
+      const y = p.y + Math.sin(p.bob) * 6;
+      const col = p.type === 'health' ? '#6bff8e' : '#ffd23f';
+      ctx.save();
+      // floating ring
+      ctx.strokeStyle = this._hexA(col, 0.5); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(p.x, y, 23, 0, Utils.TAU); ctx.stroke();
+      ctx.shadowBlur = 16; ctx.shadowColor = col;
+      if (p.type === 'health') {
+        ctx.fillStyle = '#12321f';
+        this._roundRect(ctx, p.x - 16, y - 16, 32, 32, 9); ctx.fill();
+        ctx.fillStyle = col;
+        ctx.fillRect(p.x - 3.5, y - 10, 7, 20); ctx.fillRect(p.x - 10, y - 3.5, 20, 7);
+      } else {
+        ctx.fillStyle = '#3a2e10';
+        this._roundRect(ctx, p.x - 17, y - 17, 34, 34, 7); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.save();
+        const w = getWeapon(p.weaponId);
+        const s = Math.min(0.85, 26 / w.reach);
+        ctx.translate(p.x - 11, y); ctx.scale(s, s);
+        w.draw(ctx, w.reach, 6, false, this.time * 0.06);
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+  }
+
+  /* =====================================================================
+   * Camera
+   * ===================================================================== */
+  _fullStageScale() {
+    return Math.max(this.viewW / STAGE_W, this.viewH / STAGE_H);
+  }
+
+  updateCamera() {
+    const a = this.f1, b = this.f2;
+    const minX = Math.min(a.centerX, b.centerX), maxX = Math.max(a.centerX, b.centerX);
+    const minY = Math.min(a.head.y, b.head.y), maxY = Math.max(a.footA.y, b.footA.y);
+    const pad = 260;
+    let vw = (maxX - minX) + pad * 2;
+    let vh = (maxY - minY) + pad * 2;
+    const aspect = this.viewW / this.viewH;
+    if (vw / vh < aspect) vw = vh * aspect; else vh = vw / aspect;
+    let scale = this.viewW / vw;
+    const minScale = this._fullStageScale() * 0.98;
+    const maxScale = Math.max(minScale * 1.9, this.viewH / 620);
+    scale = Utils.clamp(scale, minScale, maxScale);
+    let cx = (minX + maxX) / 2;
+    let cy = (minY + maxY) / 2;
+    // clamp camera so we mostly stay within the stage
+    const halfW = this.viewW / scale / 2, halfH = this.viewH / scale / 2;
+    cx = Utils.clamp(cx, halfW, STAGE_W - halfW);
+    cy = Utils.clamp(cy, halfH, STAGE_H - halfH + 120);
+    if (STAGE_W < halfW * 2) cx = STAGE_W / 2;
+    if (STAGE_H < halfH * 2) cy = STAGE_H / 2;
+    // smooth
+    this.camera.tx = cx; this.camera.ty = cy; this.camera.tscale = scale;
+    const sm = 0.1;
+    this.camera.x += (this.camera.tx - this.camera.x) * sm;
+    this.camera.y += (this.camera.ty - this.camera.y) * sm;
+    this.camera.scale += (this.camera.tscale - this.camera.scale) * sm;
+  }
+
+  applyCamera(ctx) {
+    let sx = 0, sy = 0;
+    if (this.shake > 0.5) {
+      sx = Utils.rand(-this.shake, this.shake);
+      sy = Utils.rand(-this.shake, this.shake);
+    }
+    ctx.translate(this.viewW / 2 + sx, this.viewH / 2 + sy);
+    ctx.scale(this.camera.scale, this.camera.scale);
+    ctx.translate(-this.camera.x, -this.camera.y);
+  }
+
+  /* =====================================================================
+   * Render
+   * ===================================================================== */
+  render() {
+    const ctx = this.ctx;
+    ctx.clearRect(0, 0, this.viewW, this.viewH);
+    if (!this.map) { this._renderMenuBg(ctx); return; }
+
+    ctx.save();
+    this.applyCamera(ctx);
+
+    this.renderArena(ctx);
+    this._renderPickups(ctx);
+    // fighters (draw the losing/dead one behind)
+    const order = [this.f1, this.f2].sort((p, q) => (p.alive === q.alive ? 0 : p.alive ? 1 : -1));
+    order.forEach((f) => f.render(ctx, this.time));
+    this.fx.render(ctx);
+
+    ctx.restore();
+
+    // screen-space vignette for depth
+    this._renderVignette(ctx);
+
+    // world-space UI drawn in screen space
+    this.renderOverlayText(ctx);
+  }
+
+  _renderVignette(ctx) {
+    const g = ctx.createRadialGradient(
+      this.viewW / 2, this.viewH / 2, this.viewH * 0.35,
+      this.viewW / 2, this.viewH / 2, this.viewH * 0.85);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(1, 'rgba(0,0,0,0.38)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, this.viewW, this.viewH);
+  }
+
+  renderArena(ctx) {
+    const m = this.map;
+    // sky gradient (extends well beyond stage for camera movement)
+    const g = ctx.createLinearGradient(0, -200, 0, STAGE_H);
+    m.sky.forEach((c, i) => g.addColorStop(i / (m.sky.length - 1), c));
+    ctx.fillStyle = g;
+    ctx.fillRect(-400, -600, STAGE_W + 800, STAGE_H + 800);
+
+    // parallax offset from camera
+    const par = this.camera.x - STAGE_W / 2;
+
+    // themed background decorations (far → near)
+    this._renderDecor(ctx, m, par);
+
+    // hazards
+    if (m.hazard && m.hazard.type === 'lava') this._renderLava(ctx, m.hazard);
+
+    // platforms
+    for (const p of m.platforms) this._renderPlatform(ctx, p, m);
+
+    // soft ground fog / vignette bottom
+    const fog = ctx.createLinearGradient(0, STAGE_H - 200, 0, STAGE_H + 200);
+    fog.addColorStop(0, 'rgba(0,0,0,0)');
+    fog.addColorStop(1, this._hexA(this._shade(m.sky[0], -0.5), 0.6));
+    ctx.fillStyle = fog;
+    ctx.fillRect(-400, STAGE_H - 200, STAGE_W + 800, 500);
+  }
+
+  /* Deterministic PRNG so decorations don't flicker frame-to-frame */
+  _rng(seed) {
+    let t = seed + 0x6d2b79f5;
+    return () => {
+      t += 0x6d2b79f5;
+      let x = Math.imul(t ^ (t >>> 15), 1 | t);
+      x ^= x + Math.imul(x ^ (x >>> 7), 61 | x);
+      return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  _renderDecor(ctx, m, par) {
+    const d = m.decor || {};
+    const T = this.time;
+    const P = (base, depth) => base + par * (1 - depth); // parallax x
+
+    // ---- Sky bodies ----
+    if (d.sun) {
+      const sx = P(1250, 0.15), sy = 170;
+      const sg = ctx.createRadialGradient(sx, sy, 20, sx, sy, 160);
+      sg.addColorStop(0, 'rgba(255,240,190,0.95)');
+      sg.addColorStop(0.3, this._hexA(m.accent, 0.5));
+      sg.addColorStop(1, this._hexA(m.accent, 0));
+      ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(sx, sy, 160, 0, Utils.TAU); ctx.fill();
+      ctx.fillStyle = '#fff6d8'; ctx.beginPath(); ctx.arc(sx, sy, 52, 0, Utils.TAU); ctx.fill();
+    }
+    if (d.moon) {
+      const mx = P(1240, 0.15), my = 150;
+      const mg = ctx.createRadialGradient(mx, my, 10, mx, my, 120);
+      mg.addColorStop(0, 'rgba(230,240,255,0.6)'); mg.addColorStop(1, 'rgba(230,240,255,0)');
+      ctx.fillStyle = mg; ctx.beginPath(); ctx.arc(mx, my, 120, 0, Utils.TAU); ctx.fill();
+      ctx.fillStyle = '#e9eefc'; ctx.beginPath(); ctx.arc(mx, my, 48, 0, Utils.TAU); ctx.fill();
+      ctx.fillStyle = 'rgba(180,195,225,0.5)';
+      ctx.beginPath(); ctx.arc(mx - 14, my - 10, 8, 0, Utils.TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(mx + 16, my + 8, 6, 0, Utils.TAU); ctx.fill();
+    }
+    if (d.stars) {
+      const rng = this._rng(7);
+      ctx.fillStyle = '#ffffff';
+      for (let i = 0; i < 90; i++) {
+        const x = P(rng() * (STAGE_W + 200) - 100, 0.05);
+        const y = rng() * STAGE_H * 0.7;
+        const tw = 0.4 + 0.6 * Math.abs(Math.sin(T * 0.03 + i));
+        ctx.globalAlpha = tw; ctx.beginPath();
+        ctx.arc(x, y, rng() * 1.6 + 0.6, 0, Utils.TAU); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    if (d.planet) {
+      const px = P(360, 0.1), py = 230;
+      const pg = ctx.createRadialGradient(px - 20, py - 20, 10, px, py, 90);
+      pg.addColorStop(0, '#7ad7ff'); pg.addColorStop(0.6, '#3a7fd6'); pg.addColorStop(1, '#16305a');
+      ctx.fillStyle = pg; ctx.beginPath(); ctx.arc(px, py, 90, 0, Utils.TAU); ctx.fill();
+      ctx.strokeStyle = 'rgba(160,230,255,0.5)'; ctx.lineWidth = 6;
+      ctx.save(); ctx.translate(px, py); ctx.rotate(-0.4);
+      ctx.beginPath(); ctx.ellipse(0, 0, 140, 34, 0, 0, Utils.TAU); ctx.stroke(); ctx.restore();
+    }
+    if (d.grid) {
+      ctx.strokeStyle = this._hexA(m.accent, 0.12); ctx.lineWidth = 1.5;
+      for (let x = 0; x <= STAGE_W; x += 80) { ctx.beginPath(); ctx.moveTo(P(x, 0.2), 0); ctx.lineTo(P(x, 0.2), STAGE_H); ctx.stroke(); }
+    }
+
+    // ---- Mid layers ----
+    if (d.mountains) {
+      ctx.fillStyle = this._hexA(this._shade(m.sky[1], -0.3), 0.8);
+      for (let i = 0; i < 5; i++) {
+        const bx = P(i * 380 - 100, 0.35);
+        ctx.beginPath(); ctx.moveTo(bx, STAGE_H); ctx.lineTo(bx + 200, 380); ctx.lineTo(bx + 400, STAGE_H); ctx.closePath(); ctx.fill();
+      }
+    }
+    if (d.city) {
+      const rng = this._rng(3);
+      for (let layer = 0; layer < 2; layer++) {
+        const depth = 0.3 + layer * 0.15;
+        ctx.fillStyle = this._hexA(this._shade(m.sky[1], layer === 0 ? -0.4 : -0.2), 0.9);
+        for (let i = 0; i < 14; i++) {
+          const bw = 60 + rng() * 70;
+          const bh = 120 + rng() * 320;
+          const bx = P(i * 130 - 60 + layer * 40, depth);
+          ctx.fillRect(bx, STAGE_H - bh, bw, bh);
+          // windows
+          ctx.fillStyle = this._hexA(m.accent, 0.5);
+          for (let wy = STAGE_H - bh + 16; wy < STAGE_H - 20; wy += 26) {
+            for (let wx = bx + 10; wx < bx + bw - 10; wx += 20) {
+              if (rng() > 0.5) ctx.fillRect(wx, wy, 7, 10);
+            }
+          }
+          ctx.fillStyle = this._hexA(this._shade(m.sky[1], layer === 0 ? -0.4 : -0.2), 0.9);
+        }
+      }
+    }
+    if (d.crowd) {
+      // arena stands with a pixelated crowd
+      ctx.fillStyle = this._shade(m.sky[0], -0.3);
+      ctx.fillRect(-400, STAGE_H - 340, STAGE_W + 800, 140);
+      const rng = this._rng(11);
+      for (let i = 0; i < 140; i++) {
+        ctx.fillStyle = `hsl(${(rng() * 360) | 0} 50% ${40 + rng() * 30}%)`;
+        const x = P(-100 + i * 13, 0.5);
+        const y = STAGE_H - 320 + (i % 4) * 26 + Math.sin(T * 0.1 + i) * 2;
+        ctx.beginPath(); ctx.arc(x, y, 5, 0, Utils.TAU); ctx.fill();
+      }
+    }
+
+    // ---- Portal ring (temple) ----
+    if (d.portal) {
+      const cx = STAGE_W / 2, cy = STAGE_H * 0.4, r = 235;
+      const grad = ctx.createRadialGradient(cx, cy, r * 0.55, cx, cy, r);
+      grad.addColorStop(0, 'rgba(255,255,255,0)');
+      grad.addColorStop(0.85, this._hexA(m.accent, 0));
+      grad.addColorStop(0.94, this._hexA(m.accent, 0.55));
+      grad.addColorStop(1, this._hexA(m.accent, 0));
+      ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Utils.TAU); ctx.fill();
+      ctx.strokeStyle = this._hexA(m.accent, 0.55); ctx.lineWidth = 10;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Utils.TAU); ctx.stroke();
+      ctx.strokeStyle = this._hexA('#ffffff', 0.25); ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(cx, cy, r - 14 + Math.sin(T * 0.05) * 4, T * 0.02, T * 0.02 + 4); ctx.stroke();
+    }
+    if (d.pillars) {
+      ctx.fillStyle = this._hexA(this._shade(m.sky[2], -0.2), 0.85);
+      for (const bx of [180, 1360]) {
+        const x = P(bx, 0.4);
+        ctx.fillRect(x - 34, 120, 68, STAGE_H);
+        ctx.fillStyle = this._hexA(m.accent, 0.25);
+        ctx.fillRect(x - 40, 110, 80, 20);
+        ctx.fillStyle = this._hexA(this._shade(m.sky[2], -0.2), 0.85);
+      }
+    }
+
+    // ---- Foreground animated bits ----
+    if (d.clouds) {
+      const rng = this._rng(5);
+      for (let i = 0; i < 7; i++) {
+        const cw = 120 + rng() * 160;
+        const cx = ((rng() * (STAGE_W + 400) + T * (0.15 + rng() * 0.15)) % (STAGE_W + 500)) - 250;
+        const cy = 100 + rng() * 320;
+        ctx.fillStyle = 'rgba(255,255,255,0.75)';
+        this._cloud(ctx, P(cx, 0.25), cy, cw);
+      }
+    }
+    if (d.torches) {
+      for (const bx of [200, 1340]) {
+        const x = P(bx, 0.4), y = 200;
+        const fl = 10 + Math.sin(T * 0.4 + bx) * 4;
+        const fg = ctx.createRadialGradient(x, y, 2, x, y, 40 + fl);
+        fg.addColorStop(0, 'rgba(255,220,120,0.9)'); fg.addColorStop(1, 'rgba(255,120,20,0)');
+        ctx.fillStyle = fg; ctx.beginPath(); ctx.arc(x, y, 40 + fl, 0, Utils.TAU); ctx.fill();
+      }
+    }
+    if (d.lanterns) {
+      for (let i = 0; i < 5; i++) {
+        const x = P(200 + i * 300, 0.3), y = 130 + Math.sin(T * 0.03 + i) * 10;
+        ctx.fillStyle = 'rgba(255,90,110,0.9)';
+        ctx.beginPath(); ctx.ellipse(x, y, 18, 24, 0, 0, Utils.TAU); ctx.fill();
+        ctx.fillStyle = 'rgba(255,200,120,0.6)';
+        ctx.beginPath(); ctx.arc(x, y, 8, 0, Utils.TAU); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,90,110,0.4)'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, y - 24); ctx.stroke();
+      }
+    }
+    if (d.banners) {
+      for (const bx of [520, 1080]) {
+        const x = P(bx, 0.45);
+        ctx.fillStyle = this._hexA(m.accent, 0.8);
+        ctx.beginPath(); ctx.moveTo(x - 26, 100); ctx.lineTo(x + 26, 100);
+        ctx.lineTo(x + 26, 300); ctx.lineTo(x, 280); ctx.lineTo(x - 26, 300); ctx.closePath(); ctx.fill();
+      }
+    }
+    if (d.stalactites) {
+      ctx.fillStyle = this._shade(m.sky[1], -0.2);
+      const rng = this._rng(9);
+      for (let i = 0; i < 16; i++) {
+        const x = P(i * 110 + rng() * 40, 0.4);
+        const h = 60 + rng() * 90;
+        ctx.beginPath(); ctx.moveTo(x - 22, -50); ctx.lineTo(x + 22, -50); ctx.lineTo(x, h); ctx.closePath(); ctx.fill();
+      }
+    }
+    if (d.embers) {
+      ctx.fillStyle = 'rgba(255,150,40,0.8)';
+      for (let i = 0; i < 30; i++) {
+        const x = (i * 97 + T * 0.6) % STAGE_W;
+        const y = STAGE_H - ((T * (0.5 + (i % 3) * 0.3) + i * 60) % STAGE_H);
+        ctx.globalAlpha = Utils.clamp(y / STAGE_H, 0, 1) * 0.8;
+        ctx.beginPath(); ctx.arc(P(x, 0.6), y, 2 + (i % 2), 0, Utils.TAU); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    if (d.rain) {
+      ctx.strokeStyle = 'rgba(150,180,220,0.35)'; ctx.lineWidth = 1.5;
+      for (let i = 0; i < 60; i++) {
+        const x = ((i * 61 + T * 6) % (STAGE_W + 100)) - 50;
+        const y = (i * 53 + T * 12) % STAGE_H;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 4, y + 16); ctx.stroke();
+      }
+    }
+    if (d.birds) {
+      ctx.strokeStyle = 'rgba(40,50,70,0.5)'; ctx.lineWidth = 2;
+      for (let i = 0; i < 5; i++) {
+        const x = ((T * (0.6 + i * 0.1) + i * 300) % (STAGE_W + 200)) - 100;
+        const y = 120 + i * 40 + Math.sin(T * 0.08 + i) * 12;
+        const f = Math.sin(T * 0.3 + i) * 6;
+        ctx.beginPath(); ctx.moveTo(x - 10, y + f); ctx.lineTo(x, y); ctx.lineTo(x + 10, y + f); ctx.stroke();
+      }
+    }
+  }
+
+  _cloud(ctx, x, y, w) {
+    ctx.beginPath();
+    ctx.arc(x, y, w * 0.28, 0, Utils.TAU);
+    ctx.arc(x + w * 0.26, y - w * 0.08, w * 0.22, 0, Utils.TAU);
+    ctx.arc(x + w * 0.5, y, w * 0.26, 0, Utils.TAU);
+    ctx.arc(x + w * 0.25, y + w * 0.06, w * 0.3, 0, Utils.TAU);
+    ctx.fill();
+  }
+
+  _renderLava(ctx, haz) {
+    const g = ctx.createLinearGradient(0, haz.y - 20, 0, STAGE_H + 200);
+    g.addColorStop(0, '#ffd27a'); g.addColorStop(0.2, '#ff7a1f'); g.addColorStop(0.6, '#e02b0a'); g.addColorStop(1, '#5a1000');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(-400, haz.y);
+    for (let x = -400; x <= STAGE_W + 400; x += 30) {
+      ctx.lineTo(x, haz.y + Math.sin(x * 0.02 + this.time * 0.06) * 9);
+    }
+    ctx.lineTo(STAGE_W + 400, STAGE_H + 300);
+    ctx.lineTo(-400, STAGE_H + 300);
+    ctx.closePath(); ctx.fill();
+    // glow line
+    ctx.strokeStyle = 'rgba(255,220,140,0.7)'; ctx.lineWidth = 4;
+    ctx.beginPath();
+    for (let x = -400; x <= STAGE_W + 400; x += 30) {
+      const y = haz.y + Math.sin(x * 0.02 + this.time * 0.06) * 9;
+      x === -400 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    // bubbles
+    ctx.fillStyle = 'rgba(255,230,150,0.6)';
+    for (let i = 0; i < 10; i++) {
+      const x = (i * 170 + this.time * 0.5) % STAGE_W;
+      const y = haz.y + 30 + Math.sin(this.time * 0.04 + i) * 20;
+      ctx.beginPath(); ctx.arc(x, y, 3 + (i % 3), 0, Utils.TAU); ctx.fill();
+    }
+  }
+
+  _renderPlatform(ctx, p, m) {
+    ctx.save();
+    const style = m.platformStyle || 'stone';
+    const base = { stone: '#8a8f9c', cloud: '#eef4ff', wood: '#8a5a2b', obsidian: '#2a2430',
+      brick: '#6b4a5a', tech: '#39506e', }[style] || this._shade(m.accent, -0.2);
+
+    if (style === 'cloud') {
+      ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      this._cloud(ctx, p.x, p.y + p.h * 0.5, p.w);
+      ctx.fillStyle = 'rgba(210,225,250,0.9)';
+      ctx.beginPath(); ctx.ellipse(p.x + p.w / 2, p.y + p.h, p.w / 2, p.h * 0.6, 0, 0, Math.PI); ctx.fill();
+      ctx.restore(); return;
+    }
+
+    // body with vertical shading
+    const g = ctx.createLinearGradient(0, p.y, 0, p.y + p.h);
+    g.addColorStop(0, this._shade(base, 0.15));
+    g.addColorStop(0.12, base);
+    g.addColorStop(1, this._shade(base, -0.5));
+    ctx.fillStyle = g;
+    this._roundRect(ctx, p.x, p.y, p.w, p.h, 9);
+    ctx.fill();
+
+    // top accent lip
+    ctx.fillStyle = style === 'tech' ? m.accent : this._shade(base, 0.35);
+    this._roundRect(ctx, p.x, p.y, p.w, 7, 9);
+    ctx.fill();
+
+    // texture per style
+    ctx.save();
+    this._roundRect(ctx, p.x, p.y, p.w, p.h, 9); ctx.clip();
+    ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 2;
+    if (style === 'stone' || style === 'brick') {
+      const bw = style === 'brick' ? 46 : 70, bh = style === 'brick' ? 22 : 999;
+      for (let y = p.y + 14; y < p.y + p.h; y += bh) {
+        ctx.beginPath(); ctx.moveTo(p.x, y); ctx.lineTo(p.x + p.w, y); ctx.stroke();
+      }
+      for (let row = 0, y = p.y + 7; y < p.y + p.h; y += 22, row++) {
+        for (let x = p.x + (row % 2 ? bw / 2 : 0); x < p.x + p.w; x += bw) {
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 22); ctx.stroke();
+        }
+      }
+    } else if (style === 'wood') {
+      ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+      for (let x = p.x + 30; x < p.x + p.w; x += 46) {
+        ctx.beginPath(); ctx.moveTo(x, p.y); ctx.lineTo(x, p.y + p.h); ctx.stroke();
+      }
+    } else if (style === 'tech') {
+      ctx.strokeStyle = this._hexA(m.accent, 0.4);
+      for (let x = p.x + 20; x < p.x + p.w; x += 40) {
+        ctx.beginPath(); ctx.moveTo(x, p.y + 10); ctx.lineTo(x, p.y + p.h); ctx.stroke();
+      }
+      ctx.fillStyle = this._hexA(m.accent, 0.6);
+      for (let x = p.x + 16; x < p.x + p.w; x += 60) ctx.fillRect(x, p.y + p.h - 10, 10, 4);
+    } else if (style === 'obsidian') {
+      ctx.strokeStyle = this._hexA('#ff6a2a', 0.4);
+      for (let x = p.x + 24; x < p.x + p.w; x += 60) {
+        ctx.beginPath(); ctx.moveTo(x, p.y); ctx.lineTo(x + 12, p.y + p.h); ctx.stroke();
+      }
+    }
+    ctx.restore();
+    ctx.restore();
+  }
+
+  renderOverlayText(ctx) {
+    ctx.save();
+    ctx.textAlign = 'center';
+    if (this.state === 'countdown') {
+      const n = Math.ceil(this.countdown);
+      const frac = this.countdown - Math.floor(this.countdown);
+      const scale = 1 + (1 - frac) * 0.6;
+      ctx.globalAlpha = Utils.clamp(frac + 0.2, 0, 1);
+      ctx.font = `900 ${120 * scale}px Arial`;
+      ctx.fillStyle = '#fff';
+      ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 8;
+      const txt = n > 0 ? n.toString() : 'اقتل! FIGHT!';
+      ctx.strokeText(txt, this.viewW / 2, this.viewH / 2);
+      ctx.fillText(txt, this.viewW / 2, this.viewH / 2);
+    }
+    if (this.state === 'roundover') {
+      ctx.globalAlpha = 0.9;
+      ctx.font = '900 64px Arial';
+      const w = !this.f1.alive && !this.f2.alive ? 'تعادل • DRAW'
+        : (this.f1.alive ? (this.config.mode === '1p' ? 'أحسنت! • K.O.' : 'اللاعب 1 • P1 K.O.')
+          : (this.config.mode === '1p' ? 'K.O.!' : 'اللاعب 2 • P2 K.O.'));
+      ctx.fillStyle = '#ffe36e';
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 8;
+      ctx.strokeText(w, this.viewW / 2, this.viewH * 0.32);
+      ctx.fillText(w, this.viewW / 2, this.viewH * 0.32);
+    }
+    ctx.restore();
+  }
+
+  _renderMenuBg(ctx) {
+    const g = ctx.createLinearGradient(0, 0, 0, this.viewH);
+    g.addColorStop(0, '#1a1030'); g.addColorStop(1, '#3a1b52');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, this.viewW, this.viewH);
+  }
+
+  /* =====================================================================
+   * HUD
+   * ===================================================================== */
+  updateHUD() {
+    const setW = (id, v) => { const e = document.getElementById(id); if (e) e.style.width = Utils.clamp(v, 0, 100) + '%'; };
+    setW('p1HealthFill', (this.f1.health / this.f1.maxHealth) * 100);
+    setW('p2HealthFill', (this.f2.health / this.f2.maxHealth) * 100);
+    setW('p1SpecialFill', this.f1.special * 100);
+    setW('p2SpecialFill', this.f2.special * 100);
+    const se1 = document.getElementById('p1Special'), se2 = document.getElementById('p2Special');
+    if (se1) se1.classList.toggle('rage', this.f1.rageActive);
+    if (se2) se2.classList.toggle('rage', this.f2.rageActive);
+    const t = document.getElementById('matchTimer');
+    if (t) t.textContent = Math.ceil(this.roundTime);
+    this._renderPips('p1Pips', this.scores[0]);
+    this._renderPips('p2Pips', this.scores[1]);
+    const n1 = document.getElementById('p1Name'), n2 = document.getElementById('p2Name');
+    const youIsP1 = !this.online || this.online.role === 'host';
+    if (n1) n1.textContent = 'لاعب 1' + (this.online && youIsP1 ? ' (أنت)' : '');
+    if (n2) n2.textContent = this.config.mode === '1p' ? 'كمبيوتر' : ('لاعب 2' + (this.online && !youIsP1 ? ' (أنت)' : ''));
+    const w1 = document.getElementById('p1WeaponName'), w2 = document.getElementById('p2WeaponName');
+    if (w1) w1.textContent = getWeapon(this.config.p1Weapon).name.split('•')[0].trim();
+    if (w2) w2.textContent = getWeapon(this.config.p2Weapon).name.split('•')[0].trim();
+  }
+
+  _renderPips(id, score) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const needed = Math.ceil(this.config.rounds / 2);
+    if (el.children.length !== needed) {
+      el.innerHTML = '';
+      for (let i = 0; i < needed; i++) { const d = document.createElement('span'); d.className = 'pip'; el.appendChild(d); }
+    }
+    [...el.children].forEach((c, i) => c.classList.toggle('filled', i < score));
+  }
+
+  /* =====================================================================
+   * Main loop (fixed timestep physics, variable render)
+   * ===================================================================== */
+  loop(t) {
+    const dtMs = Math.min(50, t - (this._last || t));
+    this._last = t;
+    this._acc += dtMs;
+    const stepMs = 1000 / 60;
+    let iterations = 0;
+    while (this._acc >= stepMs && iterations < 5) {
+      if (this.state !== 'paused' && this.state !== 'menu' && this.state !== 'setup' &&
+          this.state !== 'matchover' && this.state !== 'howto' && this.state !== 'online') {
+        this.update(1);
+      }
+      this._acc -= stepMs;
+      iterations++;
+    }
+    this.render();
+    requestAnimationFrame((tt) => this.loop(tt));
+  }
+
+  /* =====================================================================
+   * Small helpers
+   * ===================================================================== */
+  _darken(hex) { return this._shade(hex, -0.4); }
+
+  _shade(hex, amt) {
+    const c = this._hex2rgb(hex);
+    const f = amt < 0 ? 0 : 255;
+    const p = Math.abs(amt);
+    const r = Math.round((f - c.r) * p) + c.r;
+    const g = Math.round((f - c.g) * p) + c.g;
+    const b = Math.round((f - c.b) * p) + c.b;
+    return `rgb(${r},${g},${b})`;
+  }
+
+  _hexA(hex, a) {
+    const c = this._hex2rgb(hex);
+    return `rgba(${c.r},${c.g},${c.b},${a})`;
+  }
+
+  _hex2rgb(hex) {
+    hex = hex.replace('#', '');
+    if (hex.length === 3) hex = hex.split('').map((x) => x + x).join('');
+    const n = parseInt(hex, 16);
+    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+  }
+
+  _roundRect(ctx, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+}
+
+window.addEventListener('DOMContentLoaded', () => { window.GAME = new Game(); });
+
+</script>
+</body>
+</html>

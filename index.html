@@ -17,6 +17,7 @@
       <div class="hud-side left">
         <div class="hud-name" id="p1Name">لاعب 1</div>
         <div class="health-bar"><div class="health-fill p1" id="p1HealthFill"></div></div>
+        <div class="special-bar" id="p1Special"><div class="special-fill" id="p1SpecialFill"></div></div>
         <div class="hud-row">
           <div class="pips" id="p1Pips"></div>
           <div class="weapon-name" id="p1WeaponName">سيف</div>
@@ -31,6 +32,7 @@
       <div class="hud-side right">
         <div class="hud-name" id="p2Name">كمبيوتر</div>
         <div class="health-bar"><div class="health-fill p2" id="p2HealthFill"></div></div>
+        <div class="special-bar" id="p2Special"><div class="special-fill" id="p2SpecialFill"></div></div>
         <div class="hud-row">
           <div class="weapon-name" id="p2WeaponName">كاتانا</div>
           <div class="pips" id="p2Pips"></div>
@@ -43,11 +45,15 @@
 
     <!-- ===================== TOUCH CONTROLS ===================== -->
     <div id="touchControls" class="hidden">
-      <div id="joyBase" class="joy-base"><div id="joyStick" class="joy-stick"></div></div>
+      <div id="joyBase" class="joy-base">
+        <div id="joyStick" class="joy-stick"></div>
+        <span class="joy-hint">حرّك • اقفز ↑</span>
+      </div>
       <div class="action-buttons">
-        <button id="btnBlock" class="act-btn block" aria-label="block">🛡️</button>
-        <button id="btnJump" class="act-btn jump" aria-label="jump">⬆️</button>
-        <button id="btnAttack" class="act-btn attack" aria-label="attack">⚔️</button>
+        <button id="btnBlock" class="act-btn block" aria-label="block"><span>🛡️</span><b>صد</b></button>
+        <button id="btnDash" class="act-btn dash" aria-label="dash"><span>💨</span><b>اندفاع</b></button>
+        <button id="btnJump" class="act-btn jump" aria-label="jump"><span>⬆️</span><b>قفز</b></button>
+        <button id="btnAttack" class="act-btn attack" aria-label="attack"><span>⚔️</span></button>
       </div>
     </div>
 
@@ -63,6 +69,7 @@
         <div class="menu-buttons">
           <button id="btnPlay1p" class="btn btn-primary">🎮 لاعب واحد <small>ضد الكمبيوتر</small></button>
           <button id="btnPlay2p" class="btn">👥 لاعبان <small>على نفس الجهاز</small></button>
+          <button id="btnPlayOnline" class="btn">🌐 أونلاين <small>العب مع أصدقائك</small></button>
           <button id="btnHowto" class="btn btn-ghost">📖 كيف تلعب</button>
         </div>
         <div class="menu-footer">
@@ -93,6 +100,43 @@
           </div>
         </div>
         <button id="btnHowtoBack" class="btn btn-primary">رجوع</button>
+      </section>
+
+      <!-- Online -->
+      <section id="screenOnline" class="screen hidden">
+        <h2 class="screen-title">اللعب أونلاين • Online</h2>
+        <div class="online-grid">
+          <div class="field"><label>لونك • Your colour</label>
+            <div class="colors" id="netColors"></div>
+          </div>
+          <div class="field"><label>سلاحك • Your weapon</label>
+            <div class="pick-list weapons" id="netWeapons"></div>
+          </div>
+        </div>
+        <div class="online-actions">
+          <div class="online-card">
+            <h3>🎮 أنشئ غرفة</h3>
+            <p>سيظهر رقم — شاركه مع صديقك ليدخل.</p>
+            <div class="net-code" id="netCodeBox">----</div>
+            <button id="btnNetCreate" class="btn btn-primary">إنشاء غرفة</button>
+          </div>
+          <div class="online-card">
+            <h3>🔑 ادخل برقم</h3>
+            <p>اكتب رقم غرفة صديقك واضغط دخول.</p>
+            <input id="netCodeInput" class="net-input" inputmode="numeric" maxlength="6" placeholder="1234" />
+            <button id="btnNetJoin" class="btn">دخول</button>
+          </div>
+          <div class="online-card">
+            <h3>⚡ روم عشوائي</h3>
+            <p>العب مع أقرب لاعب متصل الآن.</p>
+            <button id="btnNetQuick" class="btn">بحث سريع</button>
+          </div>
+        </div>
+        <div class="net-status" id="netStatus">اختر لونك وسلاحك، ثم أنشئ غرفة أو ادخل برقم.</div>
+        <div class="setup-actions">
+          <button id="btnNetBack" class="btn btn-ghost">رجوع</button>
+          <button id="btnNetStart" class="btn btn-primary big" style="display:none">ابدأ المباراة ⚔️</button>
+        </div>
       </section>
 
       <!-- Setup / Character select -->
@@ -205,6 +249,7 @@
   <script src="js/stickman.js"></script>
   <script src="js/ai.js"></script>
   <script src="js/input.js"></script>
+  <script src="js/network.js"></script>
   <script src="js/game.js"></script>
 </body>
 </html>

@@ -9,7 +9,7 @@
 class InputManager {
   constructor() {
     this.keys = new Set();
-    this.touch = { move: 0, jump: false, attack: false, block: false };
+    this.touch = { move: 0, jump: false, attack: false, block: false, dash: false };
     this._bindKeyboard();
     this._pauseCb = null;
   }
@@ -37,7 +37,9 @@ class InputManager {
     const btnJump = root.querySelector('#btnJump');
     const btnAttack = root.querySelector('#btnAttack');
     const btnBlock = root.querySelector('#btnBlock');
+    const btnDash = root.querySelector('#btnDash');
     if (!joyBase) return;
+    const vibrate = (ms) => { try { navigator.vibrate && navigator.vibrate(ms); } catch (e) {} };
 
     let joyId = null, cx = 0, cy = 0, radius = 60;
 
@@ -81,9 +83,9 @@ class InputManager {
     window.addEventListener('mousemove', (e) => { if (joyId === 'mouse') moveJoy(e.clientX, e.clientY); });
     window.addEventListener('mouseup', () => { if (joyId === 'mouse') endJoy(); });
 
-    const hold = (el, prop) => {
+    const hold = (el, prop, buzz = 10) => {
       if (!el) return;
-      const on = (e) => { e.preventDefault(); this.touch[prop] = true; el.classList.add('pressed'); };
+      const on = (e) => { e.preventDefault(); this.touch[prop] = true; el.classList.add('pressed'); vibrate(buzz); };
       const off = (e) => { e.preventDefault(); this.touch[prop] = false; el.classList.remove('pressed'); };
       el.addEventListener('touchstart', on, { passive: false });
       el.addEventListener('touchend', off, { passive: false });
@@ -92,9 +94,10 @@ class InputManager {
       el.addEventListener('mouseup', off);
       el.addEventListener('mouseleave', off);
     };
-    hold(btnJump, 'jump');
-    hold(btnAttack, 'attack');
-    hold(btnBlock, 'block');
+    hold(btnJump, 'jump', 8);
+    hold(btnAttack, 'attack', 12);
+    hold(btnBlock, 'block', 6);
+    hold(btnDash, 'dash', 14);
   }
 
   has(...ks) { return ks.some((k) => this.keys.has(k)); }
@@ -110,6 +113,7 @@ class InputManager {
       jump: this.has('w', 'W') || this.touch.jump,
       attack: this.has('j', 'J', ' ', 'f', 'F') || this.touch.attack,
       block: this.has('k', 'K', 's', 'S') || this.touch.block,
+      dash: this.has('l', 'L', 'q', 'Q') || this.touch.dash,
     };
   }
 
@@ -121,8 +125,9 @@ class InputManager {
     return {
       move,
       jump: this.has('ArrowUp'),
-      attack: this.has('Enter', '.', ',', '0'),
-      block: this.has('ArrowDown', 'Shift'),
+      attack: this.has('Enter', '.', '0'),
+      block: this.has('ArrowDown'),
+      dash: this.has('/', 'Shift', ','),
     };
   }
 }
