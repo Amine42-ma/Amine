@@ -31,6 +31,8 @@ class Stickman {
     this.wantAttack = false;
     this.hitFlash = 0;
     this.isLocal = false;      // true for the human player on this device (for the tag)
+    this.leashMin = -Infinity; // AI-only spatial guard to prevent self ring-out
+    this.leashMax = Infinity;
     this.control = { move: 0, jump: false, attack: false, block: false, dash: false };
     this._lastGrounded = false;
     this._jumpLock = 0;
@@ -38,6 +40,7 @@ class Stickman {
     this.maxJumps = 2;         // ground jump + one air (double) jump
     this.jumpsLeft = 2;
     this.dashCooldown = 0;
+    this.knockdownTimer = 0;   // brief stagger/recovery after a heavy hit
     this.special = 0;          // rage meter 0..1
     this.rageActive = false;
     this.rageTimer = 0;
@@ -142,6 +145,11 @@ class Stickman {
     this.hitFlash = 8;
     this.special = Utils.clamp(this.special + dealt * 0.008, 0, 1); // build meter when hurt
     if (dealt > 6 && !this.rageActive) this.stun = Math.min(30, Math.round(dealt * 1.6));
+    // Heavy unblocked hits make the fighter stagger — balance goes floppy for a
+    // moment so it dips/reels and rights itself gradually (not an instant snap).
+    if (!this.blocking && dealt > 9 && !this.rageActive) {
+      this.knockdownTimer = Math.min(42, 16 + Math.round(dealt));
+    }
     // knockback
     const kb = power * (this.blocking ? 3 : 9) + dealt * 0.4;
     const impulse = (p, s) => p.applyImpulse(-dirX * kb * s, -dirY * kb * s - kb * 0.15 * s);
@@ -245,6 +253,7 @@ class Stickman {
     if (this.hitFlash > 0) this.hitFlash--;
     if (this._jumpLock > 0) this._jumpLock--;
     if (this.dashCooldown > 0) this.dashCooldown--;
+    if (this.knockdownTimer > 0) this.knockdownTimer--;
     for (const [k, v] of this._hitParticles) {
       if (v < 999) { const nv = v - 1; if (nv <= 0) this._hitParticles.delete(k); else this._hitParticles.set(k, nv); }
     }
@@ -278,7 +287,7 @@ class Stickman {
     const rageMul = this.rageActive ? 1.3 : 1;
     const moveInput = canAct && !this.blocking ? this.control.move : 0;
     this._moveInput = moveInput;
-    const speed = (grounded ? 0.6 : 0.34) * rageMul;
+    const speed = (grounded ? 0.5 : 0.3) * rageMul;
     if (moveInput !== 0) {
       const push = moveInput * speed;
       this.pelvis.applyForce(push * 6, 0);
@@ -286,7 +295,7 @@ class Stickman {
       this.footA.applyForce(push * 3, 0);
       this.footB.applyForce(push * 3, 0);
       // Cap horizontal cruise speed so movement stays controllable
-      const maxV = 6 * rageMul;
+      const maxV = 4.5 * rageMul;
       for (const p of [this.pelvis, this.chest, this.footA, this.footB]) {
         const vx = p.x - p.px;
         if (Math.abs(vx) > maxV) p.px = p.x - Math.sign(vx) * maxV;
@@ -367,6 +376,18 @@ class Stickman {
         const vx = p.x - p.px; p.px = p.x - vx * 0.4;
       }
     }
+    // Spatial leash (AI): hard-clamp the core AND feet to a safe x-range so the
+    // CPU can never walk itself off a ledge — even during the micro-airborne
+    // frames near an edge. Based on platform proximity (set by the AI), not the
+    // flickering grounded flag. Dropped during stun so the player can still
+    // knock it out of the ring.
+    if (this.stun <= 0 && (this.leashMin > -Infinity || this.leashMax < Infinity)) {
+      const clamp = (p) => {
+        if (p.x < this.leashMin) { const d = this.leashMin - p.x; p.x += d; p.px += d; if (p.x - p.px < 0) p.px = p.x; }
+        else if (p.x > this.leashMax) { const d = this.leashMax - p.x; p.x += d; p.px += d; if (p.x - p.px > 0) p.px = p.x; }
+      };
+      clamp(this.pelvis); clamp(this.chest); clamp(this.footA); clamp(this.footB);
+    }
     this.clampVelocities();
   }
 
@@ -378,7 +399,11 @@ class Stickman {
 
   /** Active balance: keep the torso upright above the pelvis */
   balance(grounded) {
-    const strength = grounded ? 0.16 : 0.06;
+    // gentler correction so the fighter rises and rights itself gradually
+    // instead of snapping upright the instant it touches down; while staggered
+    // from a heavy hit the correction is weaker still, so it reels and recovers.
+    const stagger = this.knockdownTimer > 0 ? 0.35 : 1;
+    const strength = (grounded ? 0.1 : 0.045) * stagger;
     // rotate chest & head around pelvis toward vertical
     const cur = Math.atan2(this.chest.y - this.pelvis.y, this.chest.x - this.pelvis.x);
     const target = -Math.PI / 2; // straight up
@@ -458,7 +483,9 @@ class Stickman {
     const footY = Math.max(this.footA.y, this.footB.y);
     const targetPelvisY = footY - this.standHeight;
     if (this.pelvis.y > targetPelvisY) {
-      const corr = (targetPelvisY - this.pelvis.y) * 0.28;
+      // rise gradually; even slower while staggered so the fighter dips first
+      const rise = this.knockdownTimer > 0 ? 0.08 : 0.18;
+      const corr = (targetPelvisY - this.pelvis.y) * rise;
       this.pelvis.y += corr;
       this.pelvis.py += corr;
     }
@@ -501,7 +528,7 @@ class Stickman {
   render(ctx, time) {
     const flash = this.hitFlash > 0 && this.hitFlash % 2 === 0;
     const bodyColor = flash ? '#ffffff' : this.color;
-    const limbW = 12;
+    const limbW = 13;
 
     // shadow
     const groundY = Math.max(this.footA.y, this.footB.y) + 8;
@@ -596,7 +623,7 @@ class Stickman {
   /** Three-point limb (arm / leg) with outline, fill, sheen and a cap */
   limb(ctx, a, b, c, color, width) {
     const path = () => { ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c.x, c.y); ctx.stroke(); };
-    ctx.strokeStyle = this.outline; ctx.lineWidth = width + 4; path();
+    ctx.strokeStyle = this.outline; ctx.lineWidth = width + 5; path();
     ctx.strokeStyle = color; ctx.lineWidth = width; path();
     ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = width * 0.32; path();
     // hand/foot cap with outline
@@ -621,28 +648,52 @@ class Stickman {
     ctx.beginPath(); ctx.arc(0, 0, h.radius, 0, Utils.TAU); ctx.fill();
 
     const attacking = this.attackTimer > 0;
+    const angry = attacking || this.rageActive;
     if (this.alive) {
-      const ex = this.facing * 4;
-      // angry brows while attacking / raging
-      if (attacking || this.rageActive) {
-        ctx.strokeStyle = '#111'; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+      // Two human-like eyes sitting in the UPPER part of the head (not centred),
+      // both looking toward the facing direction.
+      const f = this.facing;
+      const eyeY = -4.5;            // upper third of the head
+      const shift = f * 2.2;        // bias the pair toward the way we're facing
+      const pupilCol = this.rageActive ? '#e11d48' : '#141414';
+      for (const ox of [-4.6, 4.4]) {
+        const ex = ox + shift;
+        // white
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.ellipse(ex, eyeY, 3.5, 4.3, 0, 0, Utils.TAU); ctx.fill();
+        // pupil looking toward facing
+        ctx.fillStyle = pupilCol;
+        ctx.beginPath(); ctx.arc(ex + f * 1.5, eyeY + 0.8, angry ? 2.2 : 1.9, 0, Utils.TAU); ctx.fill();
+        // tiny catch-light
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.beginPath(); ctx.arc(ex + f * 1.0, eyeY - 0.4, 0.7, 0, Utils.TAU); ctx.fill();
+      }
+      // eyebrows: neutral when calm, angled down-in when attacking / raging
+      ctx.strokeStyle = '#141414'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+      for (const side of [-1, 1]) {
+        const bx = side * 4.6 + shift;
         ctx.beginPath();
-        ctx.moveTo(ex - 5, -7); ctx.lineTo(ex + 5, -4);
+        if (angry) { ctx.moveTo(bx - side * 3.4, eyeY - 6.5); ctx.lineTo(bx + side * 2.6, eyeY - 4); }
+        else { ctx.moveTo(bx - 3, eyeY - 7); ctx.lineTo(bx + 3, eyeY - 7.4); }
         ctx.stroke();
       }
-      // eyes
-      ctx.fillStyle = '#fff';
-      ctx.beginPath(); ctx.arc(ex, -1, 3.4, 0, Utils.TAU); ctx.fill();
-      ctx.fillStyle = this.rageActive ? '#e11d48' : '#111';
-      ctx.beginPath(); ctx.arc(ex + this.facing * 1.2, -1, 1.8, 0, Utils.TAU); ctx.fill();
+      // mouth: small line, gritted when attacking
+      ctx.strokeStyle = 'rgba(20,20,20,0.7)'; ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      if (angry) { ctx.moveTo(shift - 3, 7); ctx.lineTo(shift + 3, 7); ctx.moveTo(shift - 2, 5.5); ctx.lineTo(shift - 2, 8.5); ctx.moveTo(shift + 1, 5.5); ctx.lineTo(shift + 1, 8.5); }
+      else { ctx.moveTo(shift - 2.5 + f, 7); ctx.lineTo(shift + 3.5 + f, 6.2); }
+      ctx.stroke();
     } else {
-      ctx.strokeStyle = '#111'; ctx.lineWidth = 2;
-      for (const sx of [-4, 4]) {
+      // X-eyes when knocked out
+      ctx.strokeStyle = '#141414'; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+      for (const sx of [-4.5, 4.5]) {
         ctx.beginPath();
-        ctx.moveTo(sx - 2.5, -4); ctx.lineTo(sx + 2.5, 0);
-        ctx.moveTo(sx + 2.5, -4); ctx.lineTo(sx - 2.5, 0);
+        ctx.moveTo(sx - 2.6, -6); ctx.lineTo(sx + 2.6, -1);
+        ctx.moveTo(sx + 2.6, -6); ctx.lineTo(sx - 2.6, -1);
         ctx.stroke();
       }
+      ctx.strokeStyle = 'rgba(20,20,20,0.6)'; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(0, 8, 2.5, Math.PI, Utils.TAU); ctx.stroke(); // sad mouth
     }
     ctx.restore();
   }

@@ -1024,17 +1024,31 @@ class AudioManager {
 
   /* ---- Named sound effects ---- */
 
-  swing() { this.noise(0.14, 0.25, 2600); this.tone(320, 0.12, 'triangle', 0.12, null, 620); }
-
-  hit(power = 1) {
-    const p = Utils.clamp(power, 0.4, 2.2);
-    this.noise(0.16, 0.5 * p, 900 + 300 * p);
-    this.tone(140 - 20 * p, 0.18, 'square', 0.28 * p, null, 60);
+  // whoosh: a filtered noise sweep + airy tone
+  swing() {
+    this.noise(0.12, 0.22, 3200);
+    this.noise(0.08, 0.16, 1400);
+    this.tone(360, 0.11, 'triangle', 0.1, null, 700);
   }
 
-  clang() { this.tone(880, 0.16, 'square', 0.2, null, 500); this.tone(1320, 0.12, 'triangle', 0.12); this.noise(0.06, 0.2, 4000); }
+  // meaty impact: punchy low thump + transient crack, scaled by power
+  hit(power = 1) {
+    const p = Utils.clamp(power, 0.4, 2.2);
+    this.noise(0.05, 0.55 * p, 5200);              // sharp transient crack
+    this.noise(0.18, 0.4 * p, 800 + 200 * p);      // body
+    this.tone(150 - 24 * p, 0.2, 'sine', 0.4 * p, null, 48);   // punchy thump
+    this.tone(90, 0.12, 'square', 0.18 * p, null, 55);
+  }
 
-  jump() { this.tone(300, 0.16, 'sine', 0.2, null, 620); }
+  // metallic parry: two detuned rings + a bright ping
+  clang() {
+    this.tone(1200, 0.18, 'square', 0.16, null, 620);
+    this.tone(1840, 0.16, 'triangle', 0.12, null, 900);
+    this.tone(2600, 0.1, 'sine', 0.08);
+    this.noise(0.05, 0.22, 6000);
+  }
+
+  jump() { this.tone(300, 0.16, 'sine', 0.2, null, 640); this.noise(0.05, 0.08, 2000); }
 
   land() { this.noise(0.1, 0.2, 500); }
 
@@ -1054,22 +1068,68 @@ class AudioManager {
   lose() { [392, 349, 294, 233].forEach((f, i) => setTimeout(() => this.tone(f, 0.35, 'sawtooth', 0.25), i * 150)); }
   countdown(final = false) { this.tone(final ? 880 : 520, final ? 0.35 : 0.16, 'triangle', 0.3, null, final ? 1200 : 520); }
 
-  /* ---- Simple looping music bed (arpeggio + bass) ---- */
+  /* ---- Percussion (routed through the music bus) ---- */
+  kick(dest) {
+    if (!this.ctx) return;
+    const t = this._now();
+    const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(150, t);
+    o.frequency.exponentialRampToValueAtTime(45, t + 0.14);
+    g.gain.setValueAtTime(0.6, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    o.connect(g); g.connect(dest || this.musicGain);
+    o.start(t); o.stop(t + 0.2);
+  }
+  hat(dest, open = false) { this.noise(open ? 0.08 : 0.03, 0.12, 9000, dest || this.musicGain); }
+  snare(dest) {
+    this.noise(0.13, 0.28, 3200, dest || this.musicGain);
+    this.tone(210, 0.12, 'triangle', 0.12, dest || this.musicGain, 150);
+  }
+
+  /* ---- Layered looping music: pads + bass + arpeggio + drums ---- */
   startMusic() {
     if (!this.enabled || !this.ctx || this._musicTimer) return;
-    const scale = [220, 261.63, 293.66, 329.63, 392, 440, 523.25];
-    const bass = [55, 55, 82.4, 65.4];
+    // A-minor progression: Am – F – C – G (one chord per bar, 16 steps/bar)
+    const chords = [
+      { bass: 55.00, notes: [220.00, 261.63, 329.63] }, // Am
+      { bass: 43.65, notes: [174.61, 220.00, 261.63] }, // F
+      { bass: 65.41, notes: [261.63, 329.63, 392.00] }, // C
+      { bass: 49.00, notes: [196.00, 246.94, 293.66] }, // G
+    ];
+    const arpPat = [0, 2, 1, 2, 0, 1, 2, 1]; // index into chord.notes over 8 eighth-notes
     this._musicStep = 0;
-    const stepTime = 0.22;
+    const bpm = 104;
+    const stepTime = 60 / bpm / 4; // 16th notes
     const loop = () => {
       if (!this.musicEnabled) return;
       const s = this._musicStep;
-      const note = scale[(s * 2) % scale.length];
-      this.tone(note, 0.2, 'triangle', 0.10, this.musicGain);
-      if (s % 2 === 0) this.tone(note * 2, 0.14, 'sine', 0.05, this.musicGain);
-      if (s % 4 === 0) this.tone(bass[(s / 4) % bass.length | 0], 0.4, 'sawtooth', 0.08, this.musicGain);
+      const bar = Math.floor(s / 16) % chords.length;
+      const step = s % 16;             // 0..15 within the bar
+      const chord = chords[bar];
+      const pad = this.musicGain;
+
+      // Pad chord at the start of each bar (soft, sustained)
+      if (step === 0) {
+        chord.notes.forEach((f) => this.tone(f, 1.9, 'sine', 0.045, pad));
+        this.tone(chord.notes[0] * 2, 1.9, 'triangle', 0.02, pad);
+      }
+      // Bassline: root on every beat, with a little octave bounce
+      if (step % 4 === 0) this.tone(chord.bass, 0.42, 'sawtooth', 0.11, pad, chord.bass * 0.99);
+      if (step % 4 === 2) this.tone(chord.bass * 2, 0.2, 'square', 0.05, pad);
+      // Arpeggio melody on eighth notes
+      if (step % 2 === 0) {
+        const n = chord.notes[arpPat[(step / 2) % arpPat.length]] * 2;
+        this.tone(n, 0.22, 'triangle', 0.06, pad);
+      }
+      // Drums: kick on 1 & 3, snare on 2 & 4, hats on every 8th
+      if (step === 0 || step === 8 || step === 6) this.kick(pad);
+      if (step === 4 || step === 12) this.snare(pad);
+      if (step % 2 === 0) this.hat(pad, step % 8 === 6);
+
       this._musicStep++;
     };
+    loop();
     this._musicTimer = setInterval(loop, stepTime * 1000);
   }
 
@@ -1739,6 +1799,8 @@ class Stickman {
     this.wantAttack = false;
     this.hitFlash = 0;
     this.isLocal = false;      // true for the human player on this device (for the tag)
+    this.leashMin = -Infinity; // AI-only spatial guard to prevent self ring-out
+    this.leashMax = Infinity;
     this.control = { move: 0, jump: false, attack: false, block: false, dash: false };
     this._lastGrounded = false;
     this._jumpLock = 0;
@@ -1746,6 +1808,7 @@ class Stickman {
     this.maxJumps = 2;         // ground jump + one air (double) jump
     this.jumpsLeft = 2;
     this.dashCooldown = 0;
+    this.knockdownTimer = 0;   // brief stagger/recovery after a heavy hit
     this.special = 0;          // rage meter 0..1
     this.rageActive = false;
     this.rageTimer = 0;
@@ -1850,6 +1913,11 @@ class Stickman {
     this.hitFlash = 8;
     this.special = Utils.clamp(this.special + dealt * 0.008, 0, 1); // build meter when hurt
     if (dealt > 6 && !this.rageActive) this.stun = Math.min(30, Math.round(dealt * 1.6));
+    // Heavy unblocked hits make the fighter stagger — balance goes floppy for a
+    // moment so it dips/reels and rights itself gradually (not an instant snap).
+    if (!this.blocking && dealt > 9 && !this.rageActive) {
+      this.knockdownTimer = Math.min(42, 16 + Math.round(dealt));
+    }
     // knockback
     const kb = power * (this.blocking ? 3 : 9) + dealt * 0.4;
     const impulse = (p, s) => p.applyImpulse(-dirX * kb * s, -dirY * kb * s - kb * 0.15 * s);
@@ -1953,6 +2021,7 @@ class Stickman {
     if (this.hitFlash > 0) this.hitFlash--;
     if (this._jumpLock > 0) this._jumpLock--;
     if (this.dashCooldown > 0) this.dashCooldown--;
+    if (this.knockdownTimer > 0) this.knockdownTimer--;
     for (const [k, v] of this._hitParticles) {
       if (v < 999) { const nv = v - 1; if (nv <= 0) this._hitParticles.delete(k); else this._hitParticles.set(k, nv); }
     }
@@ -1986,7 +2055,7 @@ class Stickman {
     const rageMul = this.rageActive ? 1.3 : 1;
     const moveInput = canAct && !this.blocking ? this.control.move : 0;
     this._moveInput = moveInput;
-    const speed = (grounded ? 0.6 : 0.34) * rageMul;
+    const speed = (grounded ? 0.5 : 0.3) * rageMul;
     if (moveInput !== 0) {
       const push = moveInput * speed;
       this.pelvis.applyForce(push * 6, 0);
@@ -1994,7 +2063,7 @@ class Stickman {
       this.footA.applyForce(push * 3, 0);
       this.footB.applyForce(push * 3, 0);
       // Cap horizontal cruise speed so movement stays controllable
-      const maxV = 6 * rageMul;
+      const maxV = 4.5 * rageMul;
       for (const p of [this.pelvis, this.chest, this.footA, this.footB]) {
         const vx = p.x - p.px;
         if (Math.abs(vx) > maxV) p.px = p.x - Math.sign(vx) * maxV;
@@ -2075,6 +2144,18 @@ class Stickman {
         const vx = p.x - p.px; p.px = p.x - vx * 0.4;
       }
     }
+    // Spatial leash (AI): hard-clamp the core AND feet to a safe x-range so the
+    // CPU can never walk itself off a ledge — even during the micro-airborne
+    // frames near an edge. Based on platform proximity (set by the AI), not the
+    // flickering grounded flag. Dropped during stun so the player can still
+    // knock it out of the ring.
+    if (this.stun <= 0 && (this.leashMin > -Infinity || this.leashMax < Infinity)) {
+      const clamp = (p) => {
+        if (p.x < this.leashMin) { const d = this.leashMin - p.x; p.x += d; p.px += d; if (p.x - p.px < 0) p.px = p.x; }
+        else if (p.x > this.leashMax) { const d = this.leashMax - p.x; p.x += d; p.px += d; if (p.x - p.px > 0) p.px = p.x; }
+      };
+      clamp(this.pelvis); clamp(this.chest); clamp(this.footA); clamp(this.footB);
+    }
     this.clampVelocities();
   }
 
@@ -2086,7 +2167,11 @@ class Stickman {
 
   /** Active balance: keep the torso upright above the pelvis */
   balance(grounded) {
-    const strength = grounded ? 0.16 : 0.06;
+    // gentler correction so the fighter rises and rights itself gradually
+    // instead of snapping upright the instant it touches down; while staggered
+    // from a heavy hit the correction is weaker still, so it reels and recovers.
+    const stagger = this.knockdownTimer > 0 ? 0.35 : 1;
+    const strength = (grounded ? 0.1 : 0.045) * stagger;
     // rotate chest & head around pelvis toward vertical
     const cur = Math.atan2(this.chest.y - this.pelvis.y, this.chest.x - this.pelvis.x);
     const target = -Math.PI / 2; // straight up
@@ -2166,7 +2251,9 @@ class Stickman {
     const footY = Math.max(this.footA.y, this.footB.y);
     const targetPelvisY = footY - this.standHeight;
     if (this.pelvis.y > targetPelvisY) {
-      const corr = (targetPelvisY - this.pelvis.y) * 0.28;
+      // rise gradually; even slower while staggered so the fighter dips first
+      const rise = this.knockdownTimer > 0 ? 0.08 : 0.18;
+      const corr = (targetPelvisY - this.pelvis.y) * rise;
       this.pelvis.y += corr;
       this.pelvis.py += corr;
     }
@@ -2209,7 +2296,7 @@ class Stickman {
   render(ctx, time) {
     const flash = this.hitFlash > 0 && this.hitFlash % 2 === 0;
     const bodyColor = flash ? '#ffffff' : this.color;
-    const limbW = 12;
+    const limbW = 13;
 
     // shadow
     const groundY = Math.max(this.footA.y, this.footB.y) + 8;
@@ -2304,7 +2391,7 @@ class Stickman {
   /** Three-point limb (arm / leg) with outline, fill, sheen and a cap */
   limb(ctx, a, b, c, color, width) {
     const path = () => { ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c.x, c.y); ctx.stroke(); };
-    ctx.strokeStyle = this.outline; ctx.lineWidth = width + 4; path();
+    ctx.strokeStyle = this.outline; ctx.lineWidth = width + 5; path();
     ctx.strokeStyle = color; ctx.lineWidth = width; path();
     ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = width * 0.32; path();
     // hand/foot cap with outline
@@ -2329,28 +2416,52 @@ class Stickman {
     ctx.beginPath(); ctx.arc(0, 0, h.radius, 0, Utils.TAU); ctx.fill();
 
     const attacking = this.attackTimer > 0;
+    const angry = attacking || this.rageActive;
     if (this.alive) {
-      const ex = this.facing * 4;
-      // angry brows while attacking / raging
-      if (attacking || this.rageActive) {
-        ctx.strokeStyle = '#111'; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+      // Two human-like eyes sitting in the UPPER part of the head (not centred),
+      // both looking toward the facing direction.
+      const f = this.facing;
+      const eyeY = -4.5;            // upper third of the head
+      const shift = f * 2.2;        // bias the pair toward the way we're facing
+      const pupilCol = this.rageActive ? '#e11d48' : '#141414';
+      for (const ox of [-4.6, 4.4]) {
+        const ex = ox + shift;
+        // white
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.ellipse(ex, eyeY, 3.5, 4.3, 0, 0, Utils.TAU); ctx.fill();
+        // pupil looking toward facing
+        ctx.fillStyle = pupilCol;
+        ctx.beginPath(); ctx.arc(ex + f * 1.5, eyeY + 0.8, angry ? 2.2 : 1.9, 0, Utils.TAU); ctx.fill();
+        // tiny catch-light
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.beginPath(); ctx.arc(ex + f * 1.0, eyeY - 0.4, 0.7, 0, Utils.TAU); ctx.fill();
+      }
+      // eyebrows: neutral when calm, angled down-in when attacking / raging
+      ctx.strokeStyle = '#141414'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+      for (const side of [-1, 1]) {
+        const bx = side * 4.6 + shift;
         ctx.beginPath();
-        ctx.moveTo(ex - 5, -7); ctx.lineTo(ex + 5, -4);
+        if (angry) { ctx.moveTo(bx - side * 3.4, eyeY - 6.5); ctx.lineTo(bx + side * 2.6, eyeY - 4); }
+        else { ctx.moveTo(bx - 3, eyeY - 7); ctx.lineTo(bx + 3, eyeY - 7.4); }
         ctx.stroke();
       }
-      // eyes
-      ctx.fillStyle = '#fff';
-      ctx.beginPath(); ctx.arc(ex, -1, 3.4, 0, Utils.TAU); ctx.fill();
-      ctx.fillStyle = this.rageActive ? '#e11d48' : '#111';
-      ctx.beginPath(); ctx.arc(ex + this.facing * 1.2, -1, 1.8, 0, Utils.TAU); ctx.fill();
+      // mouth: small line, gritted when attacking
+      ctx.strokeStyle = 'rgba(20,20,20,0.7)'; ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      if (angry) { ctx.moveTo(shift - 3, 7); ctx.lineTo(shift + 3, 7); ctx.moveTo(shift - 2, 5.5); ctx.lineTo(shift - 2, 8.5); ctx.moveTo(shift + 1, 5.5); ctx.lineTo(shift + 1, 8.5); }
+      else { ctx.moveTo(shift - 2.5 + f, 7); ctx.lineTo(shift + 3.5 + f, 6.2); }
+      ctx.stroke();
     } else {
-      ctx.strokeStyle = '#111'; ctx.lineWidth = 2;
-      for (const sx of [-4, 4]) {
+      // X-eyes when knocked out
+      ctx.strokeStyle = '#141414'; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+      for (const sx of [-4.5, 4.5]) {
         ctx.beginPath();
-        ctx.moveTo(sx - 2.5, -4); ctx.lineTo(sx + 2.5, 0);
-        ctx.moveTo(sx + 2.5, -4); ctx.lineTo(sx - 2.5, 0);
+        ctx.moveTo(sx - 2.6, -6); ctx.lineTo(sx + 2.6, -1);
+        ctx.moveTo(sx + 2.6, -6); ctx.lineTo(sx - 2.6, -1);
         ctx.stroke();
       }
+      ctx.strokeStyle = 'rgba(20,20,20,0.6)'; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(0, 8, 2.5, Math.PI, Utils.TAU); ctx.stroke(); // sad mouth
     }
     ctx.restore();
   }
@@ -2421,15 +2532,59 @@ class Stickman {
 'use strict';
 
 class AIController {
-  constructor(self, target, difficulty = 'normal') {
+  constructor(self, target, difficulty = 'normal', arena = {}) {
     this.self = self;
     this.target = target;
+    this.platforms = arena.platforms || [];   // for ledge / void awareness
+    this.hazard = arena.hazard || null;
     this.setDifficulty(difficulty);
     this.decisionTimer = 0;
     this.state = 'approach';
     this.jumpTimer = Utils.randInt(60, 180);
     this.attackHold = 0;
     this.blockTimer = 0;
+  }
+
+  /** Is there solid ground to stand on near world-x, a bit below the feet? */
+  _groundAt(x, footY) {
+    for (const p of this.platforms) {
+      if (x >= p.x - 6 && x <= p.x + p.w + 6 && p.y >= footY - 30 && p.y <= footY + 200) return true;
+    }
+    return false;
+  }
+
+  /** Over lava? treat as no-go too. */
+  _dangerAt(x, footY) {
+    if (this.hazard && this.hazard.type === 'lava' && footY > this.hazard.y - 40) return true;
+    return false;
+  }
+
+  /** The platform the AI is currently standing on (or null). */
+  _standingPlatform(x, footY) {
+    for (const p of this.platforms) {
+      if (x >= p.x - 6 && x <= p.x + p.w + 6 && Math.abs(footY - p.y) < 60) return p;
+    }
+    return null;
+  }
+
+  /** Is there any platform somewhere below (x, y) to land on? */
+  _groundBelow(x, y) {
+    for (const p of this.platforms) {
+      if (x >= p.x - 8 && x <= p.x + p.w + 8 && p.y >= y - 10 && p.y <= y + 420) return true;
+    }
+    return false;
+  }
+
+  /** X of the nearest platform (at or below y) the AI can steer toward. */
+  _nearestGroundX(x, y) {
+    let best = null, bd = Infinity;
+    for (const p of this.platforms) {
+      if (p.y < y - 60) continue;                 // ignore platforms well above
+      const cx = Utils.clamp(x, p.x + 14, p.x + p.w - 14);
+      const d = Math.abs(cx - x) + Math.max(0, p.y - y) * 0.25;
+      if (d < bd) { bd = d; best = cx; }
+    }
+    return best;
   }
 
   setDifficulty(d) {
@@ -2510,15 +2665,67 @@ class AIController {
         break;
     }
 
-    // Jump occasionally, or to chase a jumping/elevated target
+    const footY = self.isGrounded() ? Math.max(self.footA.y, self.footB.y) : self.pelvis.y + 46;
+    const midPlatform = this._groundAt(self.pelvis.x - 55, footY) && this._groundAt(self.pelvis.x + 55, footY);
+
+    // Random / chase jumps — only when safely mid-platform (never near an edge)
     this.jumpTimer--;
     if (this.jumpTimer <= 0) {
-      this.jumpTimer = Utils.randInt(70, 200);
-      if (Math.random() < this.cfg.jump) control.jump = true;
+      this.jumpTimer = Utils.randInt(90, 220);
+      if (midPlatform && Math.random() < this.cfg.jump) control.jump = true;
     }
-    if (dy < -70 && dist < reach + 60 && Math.random() < 0.06) control.jump = true;
+    if (dy < -70 && dist < reach + 60 && midPlatform && Math.random() < 0.06) control.jump = true;
 
-    // Don't walk off ledges into the void hazard (very rough edge-avoidance)
+    // ---- Spatial safety: never ring itself out --------------------------
+    // Crossing gaps with ragdoll jumps is unreliable, so the AI parks at a
+    // safe distance from any gap edge (a fixed hold point, NOT the very edge)
+    // and lets the double-jumping player come to it. Parking with a dead-zone
+    // avoids the edge oscillation that used to fling it into the void.
+    const grounded = self.isGrounded();
+    // Hard spatial leash (guarantee): while near a platform, forbid the body
+    // from crossing a safe margin toward any gap. Uses platform proximity (via
+    // footY) rather than the flickering grounded flag, so it stays active during
+    // the micro-airborne frames at an edge. The stickman enforces it (and drops
+    // it during stun so the player can still ring-out the CPU).
+    {
+      const plat0 = this._standingPlatform(self.pelvis.x, footY);
+      if (plat0) {
+        const M = 32;
+        self.leashMin = (!this._groundAt(plat0.x - 30, footY) || this._dangerAt(plat0.x - 30, footY)) ? plat0.x + M : -Infinity;
+        self.leashMax = (!this._groundAt(plat0.x + plat0.w + 30, footY) || this._dangerAt(plat0.x + plat0.w + 30, footY)) ? plat0.x + plat0.w - M : Infinity;
+      } else {
+        self.leashMin = -Infinity; self.leashMax = Infinity;
+      }
+    }
+
+    if (grounded) {
+      const plat = this._standingPlatform(self.pelvis.x, footY);
+      if (plat) {
+        const MARGIN = 70, SLOW = 170;
+        const leftGap = !this._groundAt(plat.x - 30, footY) || this._dangerAt(plat.x - 30, footY);
+        const rightGap = !this._groundAt(plat.x + plat.w + 30, footY) || this._dangerAt(plat.x + plat.w + 30, footY);
+        const safeMin = leftGap ? plat.x + MARGIN : -1e9;
+        const safeMax = rightGap ? plat.x + plat.w - MARGIN : 1e9;
+        // Decelerate smoothly as we near a gap edge so we arrive with ~no
+        // momentum and never overshoot into the void.
+        if (control.move < 0) {
+          const room = self.pelvis.x - safeMin;            // distance we may still move left
+          if (room < SLOW) { control.move = room <= 2 ? 0 : -Math.max(0.12, room / SLOW); control.jump = false; }
+          if (self.pelvis.x < safeMin) control.move = 0.5; // gently recover if pushed past
+        }
+        if (control.move > 0) {
+          const room = safeMax - self.pelvis.x;
+          if (room < SLOW) { control.move = room <= 2 ? 0 : Math.max(0.12, room / SLOW); control.jump = false; }
+          if (self.pelvis.x > safeMax) control.move = -0.5;
+        }
+      }
+    } else if (!this._groundBelow(self.pelvis.x, self.pelvis.y)) {
+      // Airborne over a void → steer back toward the nearest safe ground.
+      const gx = this._nearestGroundX(self.pelvis.x, self.pelvis.y);
+      if (gx != null) control.move = Math.sign(gx - self.pelvis.x);
+      control.jump = false; control.dash = false;
+    }
+
     self.setControl(control);
   }
 }
@@ -3097,7 +3304,10 @@ class Game {
       fx: this.fx, audio: this.audio,
     });
 
-    this.ai = this.config.mode === '1p' ? new AIController(this.f2, this.f1, this.config.difficulty) : null;
+    this.ai = this.config.mode === '1p'
+      ? new AIController(this.f2, this.f1, this.config.difficulty,
+          { platforms: this.map.platforms, hazard: this.map.hazard })
+      : null;
 
     // mark which fighter the human on this device controls (for the "أنت" tag)
     if (this.online) {
@@ -3659,14 +3869,14 @@ class Game {
     const a = this.f1, b = this.f2;
     const minX = Math.min(a.centerX, b.centerX), maxX = Math.max(a.centerX, b.centerX);
     const minY = Math.min(a.head.y, b.head.y), maxY = Math.max(a.footA.y, b.footA.y);
-    const pad = 260;
+    const pad = 220;   // tighter framing → fighters read bigger and clearer
     let vw = (maxX - minX) + pad * 2;
     let vh = (maxY - minY) + pad * 2;
     const aspect = this.viewW / this.viewH;
     if (vw / vh < aspect) vw = vh * aspect; else vh = vw / aspect;
     let scale = this.viewW / vw;
     const minScale = this._fullStageScale() * 0.98;
-    const maxScale = Math.max(minScale * 1.9, this.viewH / 620);
+    const maxScale = Math.max(minScale * 2.1, this.viewH / 520); // allow closer zoom
     scale = Utils.clamp(scale, minScale, maxScale);
     let cx = (minX + maxX) / 2;
     let cy = (minY + maxY) / 2;
@@ -4173,7 +4383,7 @@ class Game {
   /* =====================================================================
    * Small helpers
    * ===================================================================== */
-  _darken(hex) { return this._shade(hex, -0.4); }
+  _darken(hex) { return this._shade(hex, -0.58); }
 
   _shade(hex, amt) {
     const c = this._hex2rgb(hex);

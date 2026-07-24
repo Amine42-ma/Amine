@@ -85,17 +85,31 @@ class AudioManager {
 
   /* ---- Named sound effects ---- */
 
-  swing() { this.noise(0.14, 0.25, 2600); this.tone(320, 0.12, 'triangle', 0.12, null, 620); }
-
-  hit(power = 1) {
-    const p = Utils.clamp(power, 0.4, 2.2);
-    this.noise(0.16, 0.5 * p, 900 + 300 * p);
-    this.tone(140 - 20 * p, 0.18, 'square', 0.28 * p, null, 60);
+  // whoosh: a filtered noise sweep + airy tone
+  swing() {
+    this.noise(0.12, 0.22, 3200);
+    this.noise(0.08, 0.16, 1400);
+    this.tone(360, 0.11, 'triangle', 0.1, null, 700);
   }
 
-  clang() { this.tone(880, 0.16, 'square', 0.2, null, 500); this.tone(1320, 0.12, 'triangle', 0.12); this.noise(0.06, 0.2, 4000); }
+  // meaty impact: punchy low thump + transient crack, scaled by power
+  hit(power = 1) {
+    const p = Utils.clamp(power, 0.4, 2.2);
+    this.noise(0.05, 0.55 * p, 5200);              // sharp transient crack
+    this.noise(0.18, 0.4 * p, 800 + 200 * p);      // body
+    this.tone(150 - 24 * p, 0.2, 'sine', 0.4 * p, null, 48);   // punchy thump
+    this.tone(90, 0.12, 'square', 0.18 * p, null, 55);
+  }
 
-  jump() { this.tone(300, 0.16, 'sine', 0.2, null, 620); }
+  // metallic parry: two detuned rings + a bright ping
+  clang() {
+    this.tone(1200, 0.18, 'square', 0.16, null, 620);
+    this.tone(1840, 0.16, 'triangle', 0.12, null, 900);
+    this.tone(2600, 0.1, 'sine', 0.08);
+    this.noise(0.05, 0.22, 6000);
+  }
+
+  jump() { this.tone(300, 0.16, 'sine', 0.2, null, 640); this.noise(0.05, 0.08, 2000); }
 
   land() { this.noise(0.1, 0.2, 500); }
 
@@ -115,22 +129,68 @@ class AudioManager {
   lose() { [392, 349, 294, 233].forEach((f, i) => setTimeout(() => this.tone(f, 0.35, 'sawtooth', 0.25), i * 150)); }
   countdown(final = false) { this.tone(final ? 880 : 520, final ? 0.35 : 0.16, 'triangle', 0.3, null, final ? 1200 : 520); }
 
-  /* ---- Simple looping music bed (arpeggio + bass) ---- */
+  /* ---- Percussion (routed through the music bus) ---- */
+  kick(dest) {
+    if (!this.ctx) return;
+    const t = this._now();
+    const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(150, t);
+    o.frequency.exponentialRampToValueAtTime(45, t + 0.14);
+    g.gain.setValueAtTime(0.6, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    o.connect(g); g.connect(dest || this.musicGain);
+    o.start(t); o.stop(t + 0.2);
+  }
+  hat(dest, open = false) { this.noise(open ? 0.08 : 0.03, 0.12, 9000, dest || this.musicGain); }
+  snare(dest) {
+    this.noise(0.13, 0.28, 3200, dest || this.musicGain);
+    this.tone(210, 0.12, 'triangle', 0.12, dest || this.musicGain, 150);
+  }
+
+  /* ---- Layered looping music: pads + bass + arpeggio + drums ---- */
   startMusic() {
     if (!this.enabled || !this.ctx || this._musicTimer) return;
-    const scale = [220, 261.63, 293.66, 329.63, 392, 440, 523.25];
-    const bass = [55, 55, 82.4, 65.4];
+    // A-minor progression: Am – F – C – G (one chord per bar, 16 steps/bar)
+    const chords = [
+      { bass: 55.00, notes: [220.00, 261.63, 329.63] }, // Am
+      { bass: 43.65, notes: [174.61, 220.00, 261.63] }, // F
+      { bass: 65.41, notes: [261.63, 329.63, 392.00] }, // C
+      { bass: 49.00, notes: [196.00, 246.94, 293.66] }, // G
+    ];
+    const arpPat = [0, 2, 1, 2, 0, 1, 2, 1]; // index into chord.notes over 8 eighth-notes
     this._musicStep = 0;
-    const stepTime = 0.22;
+    const bpm = 104;
+    const stepTime = 60 / bpm / 4; // 16th notes
     const loop = () => {
       if (!this.musicEnabled) return;
       const s = this._musicStep;
-      const note = scale[(s * 2) % scale.length];
-      this.tone(note, 0.2, 'triangle', 0.10, this.musicGain);
-      if (s % 2 === 0) this.tone(note * 2, 0.14, 'sine', 0.05, this.musicGain);
-      if (s % 4 === 0) this.tone(bass[(s / 4) % bass.length | 0], 0.4, 'sawtooth', 0.08, this.musicGain);
+      const bar = Math.floor(s / 16) % chords.length;
+      const step = s % 16;             // 0..15 within the bar
+      const chord = chords[bar];
+      const pad = this.musicGain;
+
+      // Pad chord at the start of each bar (soft, sustained)
+      if (step === 0) {
+        chord.notes.forEach((f) => this.tone(f, 1.9, 'sine', 0.045, pad));
+        this.tone(chord.notes[0] * 2, 1.9, 'triangle', 0.02, pad);
+      }
+      // Bassline: root on every beat, with a little octave bounce
+      if (step % 4 === 0) this.tone(chord.bass, 0.42, 'sawtooth', 0.11, pad, chord.bass * 0.99);
+      if (step % 4 === 2) this.tone(chord.bass * 2, 0.2, 'square', 0.05, pad);
+      // Arpeggio melody on eighth notes
+      if (step % 2 === 0) {
+        const n = chord.notes[arpPat[(step / 2) % arpPat.length]] * 2;
+        this.tone(n, 0.22, 'triangle', 0.06, pad);
+      }
+      // Drums: kick on 1 & 3, snare on 2 & 4, hats on every 8th
+      if (step === 0 || step === 8 || step === 6) this.kick(pad);
+      if (step === 4 || step === 12) this.snare(pad);
+      if (step % 2 === 0) this.hat(pad, step % 8 === 6);
+
       this._musicStep++;
     };
+    loop();
     this._musicTimer = setInterval(loop, stepTime * 1000);
   }
 

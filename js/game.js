@@ -302,7 +302,10 @@ class Game {
       fx: this.fx, audio: this.audio,
     });
 
-    this.ai = this.config.mode === '1p' ? new AIController(this.f2, this.f1, this.config.difficulty) : null;
+    this.ai = this.config.mode === '1p'
+      ? new AIController(this.f2, this.f1, this.config.difficulty,
+          { platforms: this.map.platforms, hazard: this.map.hazard })
+      : null;
 
     // mark which fighter the human on this device controls (for the "أنت" tag)
     if (this.online) {
@@ -864,14 +867,14 @@ class Game {
     const a = this.f1, b = this.f2;
     const minX = Math.min(a.centerX, b.centerX), maxX = Math.max(a.centerX, b.centerX);
     const minY = Math.min(a.head.y, b.head.y), maxY = Math.max(a.footA.y, b.footA.y);
-    const pad = 260;
+    const pad = 220;   // tighter framing → fighters read bigger and clearer
     let vw = (maxX - minX) + pad * 2;
     let vh = (maxY - minY) + pad * 2;
     const aspect = this.viewW / this.viewH;
     if (vw / vh < aspect) vw = vh * aspect; else vh = vw / aspect;
     let scale = this.viewW / vw;
     const minScale = this._fullStageScale() * 0.98;
-    const maxScale = Math.max(minScale * 1.9, this.viewH / 620);
+    const maxScale = Math.max(minScale * 2.1, this.viewH / 520); // allow closer zoom
     scale = Utils.clamp(scale, minScale, maxScale);
     let cx = (minX + maxX) / 2;
     let cy = (minY + maxY) / 2;
@@ -1378,7 +1381,7 @@ class Game {
   /* =====================================================================
    * Small helpers
    * ===================================================================== */
-  _darken(hex) { return this._shade(hex, -0.4); }
+  _darken(hex) { return this._shade(hex, -0.58); }
 
   _shade(hex, amt) {
     const c = this._hex2rgb(hex);
