@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#12081f" />
+  <title>ستيكمان ديويل • Stickman Duel</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%94%EF%B8%8F%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+  <div id="app">
+    <canvas id="stage"></canvas>
+
+    <!-- ===================== HUD ===================== -->
+    <div id="hud" class="hidden">
+      <div class="hud-side left">
+        <div class="hud-name" id="p1Name">لاعب 1</div>
+        <div class="health-bar"><div class="health-fill p1" id="p1HealthFill"></div></div>
+        <div class="hud-row">
+          <div class="pips" id="p1Pips"></div>
+          <div class="weapon-name" id="p1WeaponName">سيف</div>
+        </div>
+      </div>
+
+      <div class="hud-center">
+        <div class="timer" id="matchTimer">60</div>
+        <div class="round-banner" id="roundBanner">الجولة 1 • ROUND 1</div>
+      </div>
+
+      <div class="hud-side right">
+        <div class="hud-name" id="p2Name">كمبيوتر</div>
+        <div class="health-bar"><div class="health-fill p2" id="p2HealthFill"></div></div>
+        <div class="hud-row">
+          <div class="weapon-name" id="p2WeaponName">كاتانا</div>
+          <div class="pips" id="p2Pips"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- pause button (top corner) -->
+    <button id="btnPauseBtn" class="pause-btn hidden" aria-label="pause">❚❚</button>
+
+    <!-- ===================== TOUCH CONTROLS ===================== -->
+    <div id="touchControls" class="hidden">
+      <div id="joyBase" class="joy-base"><div id="joyStick" class="joy-stick"></div></div>
+      <div class="action-buttons">
+        <button id="btnBlock" class="act-btn block" aria-label="block">🛡️</button>
+        <button id="btnJump" class="act-btn jump" aria-label="jump">⬆️</button>
+        <button id="btnAttack" class="act-btn attack" aria-label="attack">⚔️</button>
+      </div>
+    </div>
+
+    <!-- ===================== OVERLAY / SCREENS ===================== -->
+    <div id="overlay" class="active">
+
+      <!-- Main Menu -->
+      <section id="screenMenu" class="screen">
+        <div class="menu-hero">
+          <h1 class="game-title"><span>ستيكمان</span> <span class="accent">ديويل</span></h1>
+          <p class="game-sub">Stickman Duel — قتال فيزيائي احترافي</p>
+        </div>
+        <div class="menu-buttons">
+          <button id="btnPlay1p" class="btn btn-primary">🎮 لاعب واحد <small>ضد الكمبيوتر</small></button>
+          <button id="btnPlay2p" class="btn">👥 لاعبان <small>على نفس الجهاز</small></button>
+          <button id="btnHowto" class="btn btn-ghost">📖 كيف تلعب</button>
+        </div>
+        <div class="menu-footer">
+          <label class="switch"><input type="checkbox" id="toggleSfx" checked><span></span> مؤثرات</label>
+          <label class="switch"><input type="checkbox" id="toggleMusic" checked><span></span> موسيقى</label>
+        </div>
+      </section>
+
+      <!-- How to play -->
+      <section id="screenHowto" class="screen hidden">
+        <h2 class="screen-title">كيف تلعب • How to play</h2>
+        <div class="howto-grid">
+          <div class="howto-card">
+            <h3>📱 اللمس</h3>
+            <p>عصا التحكم للحركة والقفز (حرّكها للأعلى). الأزرار: <b>⚔️ هجوم</b> · <b>⬆️ قفز</b> · <b>🛡️ صد</b>.</p>
+          </div>
+          <div class="howto-card">
+            <h3>⌨️ اللاعب 1</h3>
+            <p><b>A / D</b> الحركة · <b>W</b> قفز · <b>J أو مسافة</b> هجوم · <b>K</b> صد</p>
+          </div>
+          <div class="howto-card">
+            <h3>⌨️ اللاعب 2</h3>
+            <p><b>← →</b> الحركة · <b>↑</b> قفز · <b>Enter</b> هجوم · <b>↓</b> صد</p>
+          </div>
+          <div class="howto-card">
+            <h3>🎯 الهدف</h3>
+            <p>اضرب خصمك بسلاحك لتفريغ صحّته أو ادفعه خارج الحلبة. اربح عدد الجولات المطلوب للفوز بالمباراة.</p>
+          </div>
+        </div>
+        <button id="btnHowtoBack" class="btn btn-primary">رجوع</button>
+      </section>
+
+      <!-- Setup / Character select -->
+      <section id="screenSetup" class="screen hidden">
+        <h2 class="screen-title">إعداد المباراة • Match Setup</h2>
+        <div class="setup-grid">
+          <!-- Player 1 -->
+          <div class="setup-col">
+            <h3 class="col-title p1c">اللاعب 1 • Player 1</h3>
+            <div class="field"><label>اللون</label>
+              <div class="colors" id="p1Colors">
+                <button data-color="#2b6bff"></button>
+                <button data-color="#22c55e"></button>
+                <button data-color="#f59e0b"></button>
+                <button data-color="#e11d48"></button>
+                <button data-color="#a855f7"></button>
+                <button data-color="#14b8a6"></button>
+              </div>
+            </div>
+            <div class="field"><label>السلاح</label>
+              <div class="pick-list weapons" id="p1WeaponList"></div>
+            </div>
+          </div>
+
+          <!-- Player 2 -->
+          <div class="setup-col">
+            <h3 class="col-title p2c" id="p2Title">الخصم (كمبيوتر) • CPU</h3>
+            <div class="field"><label>اللون</label>
+              <div class="colors" id="p2Colors">
+                <button data-color="#ff3b57"></button>
+                <button data-color="#3b82f6"></button>
+                <button data-color="#facc15"></button>
+                <button data-color="#10b981"></button>
+                <button data-color="#c084fc"></button>
+                <button data-color="#f97316"></button>
+              </div>
+            </div>
+            <div class="field"><label>السلاح</label>
+              <div class="pick-list weapons" id="p2WeaponList"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setup-options">
+          <div class="field"><label>الحلبة • Arena</label>
+            <div class="pick-list maps" id="mapList"></div>
+          </div>
+          <div class="options-row">
+            <div class="field" id="difficultyWrap"><label>الصعوبة</label>
+              <div class="segment" id="difficultyGroup">
+                <button data-value="easy">سهل</button>
+                <button data-value="normal" class="active">عادي</button>
+                <button data-value="hard">صعب</button>
+                <button data-value="insane">جنوني</button>
+              </div>
+            </div>
+            <div class="field"><label>عدد الجولات</label>
+              <div class="segment" id="roundsGroup">
+                <button data-value="1">1</button>
+                <button data-value="3" class="active">3</button>
+                <button data-value="5">5</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="setup-actions">
+          <button id="btnSetupBack" class="btn btn-ghost">رجوع</button>
+          <button id="btnStart" class="btn btn-primary big">ابدأ القتال! ⚔️</button>
+        </div>
+      </section>
+
+      <!-- Pause -->
+      <section id="screenPause" class="screen hidden modal">
+        <div class="modal-box">
+          <h2 class="screen-title">إيقاف مؤقت</h2>
+          <button id="btnPauseResume" class="btn btn-primary">▶ استئناف</button>
+          <button id="btnPauseRestart" class="btn">🔄 إعادة</button>
+          <button id="btnPauseMenu" class="btn btn-ghost">🏠 القائمة</button>
+        </div>
+      </section>
+
+      <!-- Result -->
+      <section id="screenResult" class="screen hidden modal">
+        <div class="modal-box">
+          <h2 class="result-title win" id="resultTitle">انتصار!</h2>
+          <p class="result-sub" id="resultSub">0 - 0</p>
+          <button id="btnResultRematch" class="btn btn-primary">🔄 إعادة المباراة</button>
+          <button id="btnResultMenu" class="btn btn-ghost">🏠 القائمة الرئيسية</button>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- Rotate-to-landscape hint (portrait phones only) -->
+    <div class="rotate-hint">
+      <div class="rotate-icon">📱</div>
+      <p>أدِر جهازك أفقيًا للعب</p>
+      <span>Please rotate your device</span>
+    </div>
+  </div>
+
+  <!-- ===================== SCRIPTS ===================== -->
+  <script src="js/utils.js"></script>
+  <script src="js/physics.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/particles.js"></script>
+  <script src="js/weapons.js"></script>
+  <script src="js/maps.js"></script>
+  <script src="js/stickman.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/input.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
