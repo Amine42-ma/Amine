@@ -427,8 +427,7 @@ html, body {
         </div>
         <div class="menu-buttons">
           <button id="btnPlay1p" class="btn btn-primary">🎮 لاعب واحد <small>ضد الكمبيوتر</small></button>
-          <button id="btnPlay2p" class="btn">👥 لاعبان <small>على نفس الجهاز</small></button>
-          <button id="btnPlayOnline" class="btn">🌐 أونلاين <small>العب مع أصدقائك</small></button>
+          <button id="btnPlayOnline" class="btn">🌐 أونلاين <small>العب مع أصدقائك على أجهزة مختلفة</small></button>
           <button id="btnHowto" class="btn btn-ghost">📖 كيف تلعب</button>
         </div>
         <div class="menu-footer">
@@ -442,16 +441,19 @@ html, body {
         <h2 class="screen-title">كيف تلعب • How to play</h2>
         <div class="howto-grid">
           <div class="howto-card">
-            <h3>📱 اللمس</h3>
-            <p>عصا التحكم للحركة والقفز (حرّكها للأعلى). الأزرار: <b>⚔️ هجوم</b> · <b>⬆️ قفز</b> · <b>🛡️ صد</b>.</p>
+            <h3>📱 اللمس (الجوال)</h3>
+            <p>عصا التحكم للحركة والقفز (حرّكها للأعلى — مرتين = قفزة مزدوجة). الأزرار:
+              <b>⚔️ هجوم</b> · <b>⬆️ قفز</b> · <b>💨 اندفاع</b> · <b>🛡️ صد</b>.</p>
           </div>
           <div class="howto-card">
-            <h3>⌨️ اللاعب 1</h3>
-            <p><b>A / D</b> الحركة · <b>W</b> قفز · <b>J أو مسافة</b> هجوم · <b>K</b> صد</p>
+            <h3>⌨️ الكيبورد</h3>
+            <p><b>A / D</b> الحركة · <b>W</b> قفز (مرتين = مزدوج) · <b>J أو مسافة</b> هجوم ·
+              <b>L</b> اندفاع · <b>K</b> صد</p>
           </div>
           <div class="howto-card">
-            <h3>⌨️ اللاعب 2</h3>
-            <p><b>← →</b> الحركة · <b>↑</b> قفز · <b>Enter</b> هجوم · <b>↓</b> صد</p>
+            <h3>⭐ الطاقة والصناديق</h3>
+            <p>شريط الطاقة يمتلئ بالضربات ويطلق <b>وضع الغضب</b> (أقوى وأسرع). التقط الصناديق:
+              <b>❤️ صحة</b> أو <b>⚔️ سلاح جديد</b>.</p>
           </div>
           <div class="howto-card">
             <h3>🎯 الهدف</h3>
@@ -1736,6 +1738,7 @@ class Stickman {
     this.blocking = false;
     this.wantAttack = false;
     this.hitFlash = 0;
+    this.isLocal = false;      // true for the human player on this device (for the tag)
     this.control = { move: 0, jump: false, attack: false, block: false, dash: false };
     this._lastGrounded = false;
     this._jumpLock = 0;
@@ -1968,27 +1971,46 @@ class Stickman {
 
     if (!this.alive) { this.updateDead(); return; }
 
-    // Face the opponent automatically
+    // Face the opponent automatically — with hysteresis so the weapon arm
+    // doesn't flip (and jitter) when the two fighters are close together.
     if (opponent && opponent.alive) {
-      const dir = Math.sign(opponent.centerX - this.centerX) || this.facing;
-      this.facing = dir;
+      const dx = opponent.centerX - this.centerX;
+      if (Math.abs(dx) > 30) this.facing = Math.sign(dx);
     }
 
     const canAct = this.stun <= 0;
     this.blocking = canAct && this.control.block && this.isGrounded();
 
-    // Movement
+    // Movement — force based so the whole body (incl. feet) moves together.
     const grounded = this.isGrounded();
-    const rageMul = this.rageActive ? 1.35 : 1;
+    const rageMul = this.rageActive ? 1.3 : 1;
     const moveInput = canAct && !this.blocking ? this.control.move : 0;
-    const speed = (grounded ? 0.9 : 0.42) * rageMul;
+    this._moveInput = moveInput;
+    const speed = (grounded ? 0.6 : 0.34) * rageMul;
     if (moveInput !== 0) {
       const push = moveInput * speed;
       this.pelvis.applyForce(push * 6, 0);
       this.chest.applyForce(push * 3, 0);
-      // step legs
       this.footA.applyForce(push * 3, 0);
       this.footB.applyForce(push * 3, 0);
+      // Cap horizontal cruise speed so movement stays controllable
+      const maxV = 6 * rageMul;
+      for (const p of [this.pelvis, this.chest, this.footA, this.footB]) {
+        const vx = p.x - p.px;
+        if (Math.abs(vx) > maxV) p.px = p.x - Math.sign(vx) * maxV;
+      }
+      this._anchorX = null;
+    } else if (grounded && canAct && !this.rageActive) {
+      // Idle position anchor: cancels ANY self-drift (arm pull, leg bias, …)
+      // by gently pulling the body back to where it stopped, without adding
+      // velocity, plus a strong horizontal-velocity damp.
+      if (this._anchorX == null) this._anchorX = this.pelvis.x;
+      const corr = (this._anchorX - this.pelvis.x) * 0.2;
+      this.pelvis.x += corr; this.pelvis.px += corr;
+      const vx = this.pelvis.x - this.pelvis.px;
+      this.pelvis.px = this.pelvis.x - vx * 0.5;
+    } else {
+      this._anchorX = null;
     }
 
     // Reset jumps once actually settled on the ground
@@ -2047,6 +2069,12 @@ class Stickman {
     this.balance(grounded);
     this.poseArms();
     this.poseLegs(moveInput, grounded);
+    // Safety damp: kill any residual horizontal drift of the feet when idle
+    if (grounded && moveInput === 0 && canAct) {
+      for (const p of [this.footA, this.footB]) {
+        const vx = p.x - p.px; p.px = p.x - vx * 0.4;
+      }
+    }
     this.clampVelocities();
   }
 
@@ -2072,46 +2100,45 @@ class Stickman {
     }
   }
 
-  /** Drive the weapon arm (front) for idle guard and attack swing */
+  /** Drive the weapon arm (front) for idle guard and attack swing.
+   *  The elbow and hand are placed at their EXACT rest lengths from the chest
+   *  along the aim direction, so the arm constraints stay satisfied and never
+   *  pull the torso sideways (this is what previously made the body drift). */
   poseArms() {
     const chest = this.chest;
     const f = this.facing;
+    const l1 = this.armLenA1, l2 = this.armLenA2;
 
     // ----- Front (weapon) arm -----
     let aim;
     if (this.attackTimer > 0) {
       const t = 1 - this.attackTimer / this.attackDuration; // 0..1 through swing
-      // Overhead chop or uppercut depending on attackDir
-      if (this.attackDir >= 0) {
-        aim = Utils.lerp(-2.4, 0.5, t); // from raised-back to down-forward
-      } else {
-        aim = Utils.lerp(1.4, -1.2, t); // uppercut
-      }
+      if (this.attackDir >= 0) aim = Utils.lerp(-2.3, 0.6, t);   // overhead chop
+      else aim = Utils.lerp(1.4, -1.2, t);                       // uppercut
       this.attackTimer--;
     } else if (this.blocking) {
-      aim = -0.3; // hold weapon up defensively
+      aim = -0.55; // hold weapon up defensively
     } else {
-      aim = -0.35 + Math.sin(performance.now() * 0.004 + this.id) * 0.08; // idle sway
+      aim = -0.15 + Math.sin(performance.now() * 0.0035 + this.id) * 0.06; // relaxed guard
     }
-    const worldAim = f >= 0 ? aim : Math.PI - aim;
-    const reach = this.armReach;
-    const tHandX = chest.x + Math.cos(worldAim) * reach;
-    const tHandY = chest.y + Math.sin(worldAim) * reach + 6;
-    const tElbowX = chest.x + Math.cos(worldAim) * reach * 0.5;
-    const tElbowY = chest.y + Math.sin(worldAim) * reach * 0.5 + 4;
-    const k = this.attackTimer > 0 ? 0.55 : 0.28;
+    const dir = f >= 0 ? aim : Math.PI - aim;
+    const ex = chest.x + Math.cos(dir) * l1;
+    const ey = chest.y + Math.sin(dir) * l1;
+    const hx = ex + Math.cos(dir) * l2;
+    const hy = ey + Math.sin(dir) * l2;
+    const k = this.attackTimer > 0 ? 0.85 : 0.5;
     const hand = this.frontHand, elbow = this.frontElbow;
-    hand.x += (tHandX - hand.x) * k; hand.y += (tHandY - hand.y) * k;
-    elbow.x += (tElbowX - elbow.x) * k * 0.8; elbow.y += (tElbowY - elbow.y) * k * 0.8;
+    elbow.x += (ex - elbow.x) * k; elbow.y += (ey - elbow.y) * k;
+    hand.x += (hx - hand.x) * k; hand.y += (hy - hand.y) * k;
 
-    // ----- Back arm: relaxed guard pose -----
-    const bAim = f >= 0 ? Math.PI - 0.6 : 0.6;
+    // ----- Back arm: relaxed guard pose (also at rest length) -----
+    const bDir = f >= 0 ? Math.PI - 0.5 : 0.5;
     const bh = this.backHand, be = this.backElbow;
-    const bhx = chest.x + Math.cos(bAim) * reach * 0.9;
-    const bhy = chest.y + Math.sin(bAim) * reach * 0.9 + 12;
-    bh.x += (bhx - bh.x) * 0.12; bh.y += (bhy - bh.y) * 0.12;
-    be.x += ((chest.x + Math.cos(bAim) * reach * 0.5) - be.x) * 0.1;
-    be.y += ((chest.y + Math.sin(bAim) * reach * 0.5 + 6) - be.y) * 0.1;
+    const bex = chest.x + Math.cos(bDir) * l1;
+    const bey = chest.y + Math.sin(bDir) * l1 + 6;
+    be.x += (bex - be.x) * 0.35; be.y += (bey - be.y) * 0.35;
+    bh.x += ((bex + Math.cos(bDir) * l2) - bh.x) * 0.35;
+    bh.y += ((bey + Math.sin(bDir) * l2) - bh.y) * 0.35;
   }
 
   /** Active standing / walking controller: holds the pelvis up over the feet
@@ -2133,21 +2160,26 @@ class Stickman {
     const walk = moving ? Math.sin(phase) * 11 : 0;
     const lift = moving ? Math.max(0, -Math.cos(phase)) * 10 : 0;
 
-    // Hold the pelvis at standing height above the lowest foot
+    // Hold the pelvis at standing height above the lowest foot.
+    // Shift BOTH y and py so we reposition without injecting upward velocity —
+    // otherwise the body micro-hops, loses ground contact and drifts.
     const footY = Math.max(this.footA.y, this.footB.y);
     const targetPelvisY = footY - this.standHeight;
     if (this.pelvis.y > targetPelvisY) {
-      this.pelvis.y += (targetPelvisY - this.pelvis.y) * 0.28;
+      const corr = (targetPelvisY - this.pelvis.y) * 0.28;
+      this.pelvis.y += corr;
+      this.pelvis.py += corr;
     }
 
     const footTargetY = this.pelvis.y + this.standHeight;
+    const kx = moving ? 0.3 : 0.18;   // feet keep up with the pelvis when walking
     // Foot A (front-ish) — steps forward on one half of the cycle
     const taX = this.pelvis.x + stance + walk;
-    this.footA.x += (taX - this.footA.x) * 0.14;
+    this.footA.x += (taX - this.footA.x) * kx;
     this.footA.y += (footTargetY - lift - this.footA.y) * 0.10;
     // Foot B — opposite phase
     const tbX = this.pelvis.x - stance - walk;
-    this.footB.x += (tbX - this.footB.x) * 0.14;
+    this.footB.x += (tbX - this.footB.x) * kx;
     this.footB.y += (footTargetY - (moving ? Math.max(0, Math.cos(phase)) * 10 : 0) - this.footB.y) * 0.10;
 
     // Keep knees between pelvis and feet, bent slightly toward facing
@@ -2227,6 +2259,35 @@ class Stickman {
     ctx.shadowBlur = 0;
     this.drawWeapon(ctx, time);
 
+    ctx.restore();
+
+    // player indicator floating above the head
+    if (this.alive) this.drawIndicator(ctx, time);
+  }
+
+  /** A bobbing chevron above the head so it's clear which fighter is which.
+   *  The local player's tag is brighter and labelled. */
+  drawIndicator(ctx, time) {
+    const bob = Math.sin(time * 0.12 + this.id) * 3;
+    const x = this.head.x;
+    const y = this.head.y - this.head.radius - 18 + bob;
+    ctx.save();
+    ctx.shadowBlur = 8; ctx.shadowColor = this.color;
+    // downward chevron
+    ctx.fillStyle = this.color;
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x - 9, y - 6); ctx.lineTo(x + 9, y - 6); ctx.lineTo(x, y + 5);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    if (this.isLocal) {
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#fff';
+      ctx.font = '900 12px Arial';
+      ctx.textAlign = 'center';
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 3;
+      ctx.strokeText('أنت', x, y - 10);
+      ctx.fillText('أنت', x, y - 10);
+    }
     ctx.restore();
   }
 
@@ -2330,6 +2391,10 @@ class Stickman {
     if (this.weapon.glow && (this.weapon.energy || this.attackTimer > 0)) {
       ctx.shadowBlur = this.weapon.energy ? 16 : 9;
       ctx.shadowColor = this.weapon.glow;
+    } else {
+      // dark drop shadow so the weapon reads clearly against any background
+      ctx.shadowBlur = 5; ctx.shadowColor = 'rgba(0,0,0,0.6)';
+      ctx.shadowOffsetX = 1.5; ctx.shadowOffsetY = 2.5;
     }
     this.weapon.draw(ctx, this.weapon.reach, 8, this.attackTimer > 0, time * 0.06);
     ctx.restore();
@@ -3033,6 +3098,15 @@ class Game {
     });
 
     this.ai = this.config.mode === '1p' ? new AIController(this.f2, this.f1, this.config.difficulty) : null;
+
+    // mark which fighter the human on this device controls (for the "أنت" tag)
+    if (this.online) {
+      this.f1.isLocal = this.online.role === 'host';
+      this.f2.isLocal = this.online.role === 'guest';
+    } else {
+      this.f1.isLocal = this.config.mode === '1p';
+      this.f2.isLocal = false;
+    }
 
     // pickups (health / weapon crates)
     this.pickups = [];
@@ -3944,19 +4018,28 @@ class Game {
       ctx.restore(); return;
     }
 
-    // body with vertical shading
+    // drop shadow under the platform for separation from the background
+    ctx.save();
+    ctx.shadowBlur = 14; ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowOffsetY = 6;
+    // body with vertical shading (brighter for clarity)
     const g = ctx.createLinearGradient(0, p.y, 0, p.y + p.h);
-    g.addColorStop(0, this._shade(base, 0.15));
-    g.addColorStop(0.12, base);
-    g.addColorStop(1, this._shade(base, -0.5));
+    g.addColorStop(0, this._shade(base, 0.28));
+    g.addColorStop(0.14, this._shade(base, 0.08));
+    g.addColorStop(1, this._shade(base, -0.48));
     ctx.fillStyle = g;
     this._roundRect(ctx, p.x, p.y, p.w, p.h, 9);
     ctx.fill();
+    ctx.restore();
 
-    // top accent lip
-    ctx.fillStyle = style === 'tech' ? m.accent : this._shade(base, 0.35);
+    // crisp bright top lip so the standable surface reads clearly
+    ctx.fillStyle = style === 'tech' ? m.accent : this._shade(base, 0.5);
     this._roundRect(ctx, p.x, p.y, p.w, 7, 9);
     ctx.fill();
+
+    // subtle bright outline
+    ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.lineWidth = 2;
+    this._roundRect(ctx, p.x + 1, p.y + 1, p.w - 2, p.h - 2, 8);
+    ctx.stroke();
 
     // texture per style
     ctx.save();

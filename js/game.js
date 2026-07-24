@@ -304,6 +304,15 @@ class Game {
 
     this.ai = this.config.mode === '1p' ? new AIController(this.f2, this.f1, this.config.difficulty) : null;
 
+    // mark which fighter the human on this device controls (for the "أنت" tag)
+    if (this.online) {
+      this.f1.isLocal = this.online.role === 'host';
+      this.f2.isLocal = this.online.role === 'guest';
+    } else {
+      this.f1.isLocal = this.config.mode === '1p';
+      this.f2.isLocal = false;
+    }
+
     // pickups (health / weapon crates)
     this.pickups = [];
     this._pickupTimer = 360;
@@ -1214,19 +1223,28 @@ class Game {
       ctx.restore(); return;
     }
 
-    // body with vertical shading
+    // drop shadow under the platform for separation from the background
+    ctx.save();
+    ctx.shadowBlur = 14; ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowOffsetY = 6;
+    // body with vertical shading (brighter for clarity)
     const g = ctx.createLinearGradient(0, p.y, 0, p.y + p.h);
-    g.addColorStop(0, this._shade(base, 0.15));
-    g.addColorStop(0.12, base);
-    g.addColorStop(1, this._shade(base, -0.5));
+    g.addColorStop(0, this._shade(base, 0.28));
+    g.addColorStop(0.14, this._shade(base, 0.08));
+    g.addColorStop(1, this._shade(base, -0.48));
     ctx.fillStyle = g;
     this._roundRect(ctx, p.x, p.y, p.w, p.h, 9);
     ctx.fill();
+    ctx.restore();
 
-    // top accent lip
-    ctx.fillStyle = style === 'tech' ? m.accent : this._shade(base, 0.35);
+    // crisp bright top lip so the standable surface reads clearly
+    ctx.fillStyle = style === 'tech' ? m.accent : this._shade(base, 0.5);
     this._roundRect(ctx, p.x, p.y, p.w, 7, 9);
     ctx.fill();
+
+    // subtle bright outline
+    ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.lineWidth = 2;
+    this._roundRect(ctx, p.x + 1, p.y + 1, p.w - 2, p.h - 2, 8);
+    ctx.stroke();
 
     // texture per style
     ctx.save();
