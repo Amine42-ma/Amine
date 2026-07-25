@@ -25,8 +25,17 @@
     <section class="panel studio">
       <label class="field">
         <span class="label">الوصف / القصة / الفكرة</span>
-        <textarea id="brief" rows="6" placeholder="اكتب هنا... مثال: في مدينةٍ غارقةٍ في المطر، رجلٌ وحيدٌ يبحث عن ذكرى ضاعت. أريد إحساسًا بالبؤس والوحدة، بألوانٍ باردة وموسيقى حزينة."></textarea>
+        <textarea id="brief" rows="6" placeholder="اكتب هنا... مثال: بطلٌ يمشي في المدينة، يلتقي خصمًا فيتقاتلان، يسقط الخصم ويحتفل البطل بالنصر."></textarea>
       </label>
+
+      <div class="field">
+        <span class="label">نمط الفيلم</span>
+        <div id="style" class="chips">
+          <button data-v="cinematic" class="chip active">🎞 سينمائي (أجواء)</button>
+          <button data-v="stickman" class="chip">🏃 رسوم Stickman</button>
+        </div>
+        <p id="styleHint" class="hint" style="margin-top:8px"></p>
+      </div>
 
       <div class="grid2">
         <label class="field">

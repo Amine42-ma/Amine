@@ -23,7 +23,7 @@ export async function runPipeline(job) {
     });
 
     // 2) Render the film.
-    const result = await renderFilm(plan, job.spec, { dir, aspect: plan.aspect, quality: job.spec.quality, mood: plan.mood }, (stage, frac, message) => {
+    const result = await renderFilm(plan, job.spec, { dir, aspect: plan.aspect, quality: job.spec.quality, mood: plan.mood, style: job.spec.style }, (stage, frac, message) => {
       emit(job, { stage, progress: Math.round(12 + frac * 86), message });
     });
 

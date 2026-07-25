@@ -10,6 +10,7 @@ import { generateShot, activeVideoProvider } from '../providers/video.js';
 import { generateScore } from '../providers/music.js';
 import { synthesizeNarration, activeVoiceProvider } from '../providers/voice.js';
 import { writeAss } from './subtitles.js';
+import { stickSpecForShot } from '../stickman/director.js';
 import { config } from '../config.js';
 import { ensureDir } from '../util/fsx.js';
 
@@ -18,6 +19,7 @@ const END_DUR = 4.2;
 
 export async function renderFilm(plan, spec, ctx, onStage = () => {}) {
   const dir = ctx.dir;
+  const style = ctx.style === 'stickman' ? 'stickman' : 'cinematic';
   const clipsDir = await ensureDir(path.join(dir, 'clips'));
   const [width, height] = resolutionFor(plan.aspect, ctx.quality);
 
@@ -30,16 +32,19 @@ export async function renderFilm(plan, spec, ctx, onStage = () => {}) {
         sceneIndex: si,
         fadeIn: sj === 0,
         fadeOut: sj === scene.shots.length - 1,
+        stick: style === 'stickman' ? stickSpecForShot(scene, shot, plan, 'shot', si) : null,
       });
     });
   });
+
+  const cardCtx = (extra) => ({ aspect: plan.aspect, quality: ctx.quality, mood: plan.mood, style, ...extra });
 
   // ---- 1) Title card + all shots + end card -----------------------------
   const clips = [];
   const titlePath = path.join(clipsDir, 'card_title.mp4');
   await generateShot(
     { duration: TITLE_DUR, camera: 'push-in', mood: plan.mood, description: 'title card' },
-    { aspect: plan.aspect, quality: ctx.quality, mood: plan.mood, outPath: titlePath, fadeIn: true, fadeOut: false }
+    cardCtx({ outPath: titlePath, fadeIn: true, fadeOut: false, stick: style === 'stickman' ? stickSpecForShot(null, {}, plan, 'title') : null })
   );
   clips.push({ path: titlePath, duration: TITLE_DUR, kind: 'title' });
   onStage('shots', 0.05, 'أُنشئت بطاقة العنوان');
@@ -47,10 +52,7 @@ export async function renderFilm(plan, spec, ctx, onStage = () => {}) {
   for (let i = 0; i < shotJobs.length; i++) {
     const job = shotJobs[i];
     const out = path.join(clipsDir, `shot_${String(i).padStart(3, '0')}.mp4`);
-    await generateShot(job.shot, {
-      aspect: plan.aspect, quality: ctx.quality, mood: plan.mood,
-      outPath: out, fadeIn: job.fadeIn, fadeOut: job.fadeOut,
-    });
+    await generateShot(job.shot, cardCtx({ outPath: out, fadeIn: job.fadeIn, fadeOut: job.fadeOut, stick: job.stick }));
     clips.push({ path: out, duration: job.shot.duration, kind: 'shot', sceneIndex: job.sceneIndex });
     onStage('shots', 0.05 + 0.65 * ((i + 1) / shotJobs.length), `لقطة ${i + 1}/${shotJobs.length}`);
   }
@@ -58,7 +60,7 @@ export async function renderFilm(plan, spec, ctx, onStage = () => {}) {
   const endPath = path.join(clipsDir, 'card_end.mp4');
   await generateShot(
     { duration: END_DUR, camera: 'pull-out', mood: plan.mood, description: 'end card' },
-    { aspect: plan.aspect, quality: ctx.quality, mood: plan.mood, outPath: endPath, fadeIn: false, fadeOut: true }
+    cardCtx({ outPath: endPath, fadeIn: false, fadeOut: true, stick: style === 'stickman' ? stickSpecForShot(null, {}, plan, 'end') : null })
   );
   clips.push({ path: endPath, duration: END_DUR, kind: 'end' });
 
@@ -124,9 +126,10 @@ export async function renderFilm(plan, spec, ctx, onStage = () => {}) {
     fileName: outName,
     duration: Number(total.toFixed(1)),
     width, height,
+    style,
     providers: {
       script: plan.engine,
-      video: activeVideoProvider(),
+      video: style === 'stickman' ? 'stickman' : activeVideoProvider(),
       voice: activeVoiceProvider(),
       music: 'procedural',
     },

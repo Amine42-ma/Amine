@@ -1,5 +1,10 @@
 const $ = (s) => document.querySelector(s);
-const state = { aspect: '16:9', quality: 'hd', evtSource: null };
+const state = { aspect: '16:9', quality: 'hd', style: 'cinematic', evtSource: null };
+
+const STYLE_HINTS = {
+  cinematic: 'أجواء سينمائية: حقول لونية متحرّكة حسب المزاج، حركة كاميرا، حبيبات فيلم، وترجمة.',
+  stickman: 'رسوم متحرّكة برمزيّة كاملة: شخصيات تمشي وتركض وتتقاتل وتسقط وتحتفل — مثاليّة لأفلام طويلة من وصفٍ صغير.',
+};
 
 // ---- Boot: load capabilities & options ------------------------------------
 async function boot() {
@@ -21,6 +26,7 @@ async function boot() {
     capChip('الموسيقى', 'مركّبة', true),
   ].join('');
 
+  $('#styleHint').textContent = STYLE_HINTS.cinematic;
   $('#hint').textContent = scriptLive
     ? 'المحرك النصّي: Claude — سيفهم قصتك ويكتب سيناريو إنتاجيًا كاملًا.'
     : 'يعمل بلا مفاتيح عبر المحرّك الداخلي. أضِف ANTHROPIC_API_KEY لكتابة سيناريو أذكى، ومفاتيح فيديو/صوت لواقعية أعلى.';
@@ -38,6 +44,12 @@ $('#aspect').addEventListener('click', (e) => {
   $('#aspect').querySelectorAll('.chip').forEach((x) => x.classList.remove('active'));
   b.classList.add('active'); state.aspect = b.dataset.v;
 });
+$('#style').addEventListener('click', (e) => {
+  const b = e.target.closest('.chip'); if (!b) return;
+  $('#style').querySelectorAll('.chip').forEach((x) => x.classList.remove('active'));
+  b.classList.add('active'); state.style = b.dataset.v;
+  $('#styleHint').textContent = STYLE_HINTS[state.style] || '';
+});
 $('#duration').addEventListener('input', (e) => { $('#durVal').textContent = e.target.value; });
 $('#again').addEventListener('click', resetStudio);
 
@@ -48,6 +60,7 @@ $('#go').addEventListener('click', async () => {
 
   const payload = {
     brief,
+    style: state.style,
     mood: $('#mood').value,
     language: $('#language').value,
     aspect: state.aspect,
@@ -133,6 +146,7 @@ function renderPlan(plan, result) {
     badge(`🎞 ${result.width}×${result.height}`),
     badge(`🎭 ${plan.mood}`),
     badge(`🌐 ${plan.language}`),
+    badge(result.style === 'stickman' ? '🏃 Stickman' : '🎞 سينمائي'),
     badge(plan.engine === 'claude' ? '✍ Claude' : '✍ كاتب داخلي'),
   ].join('');
   const scenes = (plan.scenes || []).map((s, i) => `

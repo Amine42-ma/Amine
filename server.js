@@ -20,6 +20,10 @@ app.get('/api/capabilities', (req, res) => {
   res.json({
     capabilities,
     moods: moodList(),
+    styles: [
+      { key: 'cinematic', ar: 'سينمائي (أجواء)' },
+      { key: 'stickman', ar: 'رسوم Stickman متحركة' },
+    ],
     aspects: ['16:9', '9:16', '2.39:1'],
     qualities: [
       { key: 'draft', ar: 'مسودة سريعة (720p)' },
@@ -43,6 +47,7 @@ app.post('/api/jobs', (req, res) => {
     aspect: ['16:9', '9:16', '2.39:1'].includes(b.aspect) ? b.aspect : '16:9',
     duration: clampNum(b.duration, 12, 180, 60),
     quality: ['draft', 'hd', '4k'].includes(b.quality) ? b.quality : 'hd',
+    style: b.style === 'stickman' ? 'stickman' : 'cinematic',
     genre: typeof b.genre === 'string' ? b.genre.slice(0, 60) : '',
   };
 

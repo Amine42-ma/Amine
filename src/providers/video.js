@@ -8,6 +8,7 @@ import fs from 'node:fs/promises';
 import { config } from '../config.js';
 import { log } from '../util/log.js';
 import { renderShotClip, resolutionFor } from '../render/cinematic.js';
+import { renderStickmanShot } from '../stickman/render.js';
 import { ffmpeg } from '../render/ffmpeg.js';
 
 export function activeVideoProvider() {
@@ -20,8 +21,18 @@ export function activeVideoProvider() {
 // Render a single shot to `outPath`. `sceneMood` overrides the plan mood.
 export async function generateShot(shot, ctx) {
   const [width, height] = resolutionFor(ctx.aspect, ctx.quality);
+  const moodKey = shot.mood || ctx.mood;
+
+  // Stickman is a fully offline animation style — bypass video providers.
+  if (ctx.style === 'stickman' && ctx.stick) {
+    return renderStickmanShot(ctx.stick, {
+      width, height, moodKey, duration: shot.duration,
+      outPath: ctx.outPath, fadeIn: ctx.fadeIn, fadeOut: ctx.fadeOut,
+    });
+  }
+
   const provider = activeVideoProvider();
-  const opts = { moodKey: shot.mood || ctx.mood, width, height, outPath: ctx.outPath, fadeIn: ctx.fadeIn, fadeOut: ctx.fadeOut };
+  const opts = { moodKey, width, height, outPath: ctx.outPath, fadeIn: ctx.fadeIn, fadeOut: ctx.fadeOut };
 
   if (provider === 'cinematic') {
     return renderShotClip(shot, opts);
