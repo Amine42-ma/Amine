@@ -71,6 +71,9 @@ class Stickman {
     this.all = [this.head, this.chest, this.pelvis, this.elbowA, this.handA,
       this.elbowB, this.handB, this.kneeA, this.footA, this.kneeB, this.footB];
 
+    // a little extra grip on the feet so the fighter doesn't slide around
+    this.footA.groundFriction = 0.62; this.footB.groundFriction = 0.62;
+
     const C = (a, b, stiff) => this.world.addConstraint(new Constraint(a, b, stiff));
     // Spine
     C(this.head, this.chest, 1);
@@ -252,6 +255,7 @@ class Stickman {
     if (this.stun > 0) this.stun--;
     if (this.hitFlash > 0) this.hitFlash--;
     if (this._jumpLock > 0) this._jumpLock--;
+    if (this._justJumped > 0) this._justJumped--;
     if (this.dashCooldown > 0) this.dashCooldown--;
     if (this.knockdownTimer > 0) this.knockdownTimer--;
     for (const [k, v] of this._hitParticles) {
@@ -287,7 +291,7 @@ class Stickman {
     const rageMul = this.rageActive ? 1.3 : 1;
     const moveInput = canAct && !this.blocking ? this.control.move : 0;
     this._moveInput = moveInput;
-    const speed = (grounded ? 0.5 : 0.28) * rageMul;
+    const speed = (grounded ? 0.5 : 0.42) * rageMul;   // strong air control to clear gaps
     if (moveInput !== 0) {
       // Gently bleed off opposing momentum on a direction change (soft, so the
       // torso doesn't lurch and trip the legs).
@@ -302,8 +306,8 @@ class Stickman {
       this.chest.applyForce(push * 2.4, 0);
       this.footA.applyForce(push * 3.2, 0);
       this.footB.applyForce(push * 3.2, 0);
-      // Cap horizontal cruise speed so movement stays controllable
-      const maxV = 4.3 * rageMul;
+      // Cap horizontal cruise speed (a bit faster in the air for gap-jumps)
+      const maxV = (grounded ? 4.3 : 5.6) * rageMul;
       for (const p of [this.pelvis, this.chest, this.footA, this.footB]) {
         const vx = p.x - p.px;
         if (Math.abs(vx) > maxV) p.px = p.x - Math.sign(vx) * maxV;
@@ -335,15 +339,18 @@ class Stickman {
     if (jumpPressed && this._jumpLock <= 0 && this.jumpsLeft > 0) {
       const groundJump = grounded || this._coyote > 0;
       const airJump = !groundJump;
-      const j = airJump ? -12 : -14;
+      const j = airJump ? -14 : -16.5;   // higher jump so you can reach ledges & clear gaps
       const footY0 = Math.max(this.footA.y, this.footB.y);
       for (const pt of [this.pelvis, this.chest, this.head, this.kneeA, this.kneeB, this.footA, this.footB]) {
         pt.applyImpulse(0, j);
+        pt.onGround = false;   // launch at FULL velocity — don't let ground
+                                // friction damp the feet (which held the jump down)
       }
       this.frontHand.applyImpulse(0, j * 0.5); this.backHand.applyImpulse(0, j * 0.5);
       this.jumpsLeft--;
       this._coyote = 0;
       this._jumpLock = 12;
+      this._justJumped = 7;   // don't let the legs re-plant & cancel the launch
       if (this.audio) this.audio.jump();
       if (this.fx) {
         this.fx.dust(this.pelvis.x, footY0 + 6, 0, 7);
@@ -415,10 +422,10 @@ class Stickman {
 
   /** Active balance: keep the torso upright above the pelvis */
   balance(grounded) {
-    // firm enough to stay upright while moving/stopping, but eased during a
-    // heavy-hit stagger so recovery still reads as gradual rather than instant.
-    const stagger = this.knockdownTimer > 0 ? 0.4 : 1;
-    const strength = (grounded ? 0.15 : 0.06) * stagger;
+    // moderate upright hold — firm enough to stay standing, low enough to avoid
+    // the oscillation/bounce that too-strong correction causes.
+    const stagger = this.knockdownTimer > 0 ? 0.45 : 1;
+    const strength = (grounded ? 0.16 : 0.06) * stagger;
     // rotate chest & head around pelvis toward vertical
     const cur = Math.atan2(this.chest.y - this.pelvis.y, this.chest.x - this.pelvis.x);
     const target = -Math.PI / 2; // straight up
@@ -476,7 +483,10 @@ class Stickman {
   /** Active standing / walking controller: holds the pelvis up over the feet
    *  (so the knees don't buckle) and drives a simple two-step walk cycle. */
   poseLegs(moveInput, grounded) {
-    if (!grounded) {
+    // Treat "just jumped" like airborne: if we re-planted the feet on the jump
+    // frame (grounded is a frame stale) we'd cancel the launch and the jump
+    // would barely leave the ground.
+    if (!grounded || this._justJumped > 0) {
       // In the air: tuck legs toward the pelvis so they don't dangle awkwardly
       const tuck = (foot, side) => {
         foot.x += (this.pelvis.x + side * 8 - foot.x) * 0.06;
@@ -486,11 +496,11 @@ class Stickman {
       return;
     }
 
-    const stance = 10;                     // tighter stance → less splayed, more planted
-    const phase = performance.now() * 0.014;
+    const stance = 12;                     // planted base for stability
+    const phase = performance.now() * 0.013;
     const moving = moveInput !== 0;
-    const walk = moving ? Math.sin(phase) * 8 : 0;
-    const lift = moving ? Math.max(0, -Math.cos(phase)) * 8 : 0;
+    const walk = moving ? Math.sin(phase) * 7 : 0;
+    const lift = moving ? Math.max(0, -Math.cos(phase)) * 7 : 0;
 
     // Hold the pelvis at standing height above the lowest foot.
     // Shift BOTH y and py so we reposition without injecting upward velocity —
@@ -498,31 +508,31 @@ class Stickman {
     const footY = Math.max(this.footA.y, this.footB.y);
     const targetPelvisY = footY - this.standHeight;
     if (this.pelvis.y > targetPelvisY) {
-      // hold standing height firmly so the legs don't buckle when you stop;
+      // hold standing height firmly so the legs never buckle when you stop;
       // slower only while staggered so a heavy hit still makes it dip first
-      const rise = this.knockdownTimer > 0 ? 0.1 : 0.26;
+      const rise = this.knockdownTimer > 0 ? 0.12 : 0.28;
       const corr = (targetPelvisY - this.pelvis.y) * rise;
       this.pelvis.y += corr;
       this.pelvis.py += corr;
     }
 
     const footTargetY = this.pelvis.y + this.standHeight;
-    const kx = moving ? 0.3 : 0.18;   // feet keep up with the pelvis when walking
+    const kx = moving ? 0.3 : 0.24;   // plant feet under the pelvis
     // Foot A (front-ish) — steps forward on one half of the cycle
     const taX = this.pelvis.x + stance + walk;
     this.footA.x += (taX - this.footA.x) * kx;
-    this.footA.y += (footTargetY - lift - this.footA.y) * 0.10;
+    this.footA.y += (footTargetY - lift - this.footA.y) * 0.11;
     // Foot B — opposite phase
     const tbX = this.pelvis.x - stance - walk;
     this.footB.x += (tbX - this.footB.x) * kx;
-    this.footB.y += (footTargetY - (moving ? Math.max(0, Math.cos(phase)) * 10 : 0) - this.footB.y) * 0.10;
+    this.footB.y += (footTargetY - (moving ? Math.max(0, Math.cos(phase)) * 7 : 0) - this.footB.y) * 0.11;
 
-    // Keep knees between pelvis and feet, bent slightly toward facing
+    // Keep knees between pelvis and feet
     const bendKnee = (knee, foot, side) => {
-      const mx = (this.pelvis.x + foot.x) / 2 + this.facing * 5 + side * 3;
+      const mx = (this.pelvis.x + foot.x) / 2 + this.facing * 4 + side * 3;
       const my = (this.pelvis.y + foot.y) / 2 + 3;
-      knee.x += (mx - knee.x) * 0.3;
-      knee.y += (my - knee.y) * 0.3;
+      knee.x += (mx - knee.x) * 0.35;
+      knee.y += (my - knee.y) * 0.35;
     };
     bendKnee(this.kneeA, this.footA, 1);
     bendKnee(this.kneeB, this.footB, -1);
