@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Stickman Duel — single-file build (2026-07-24). Self-contained; online play loads a P2P library from a CDN at runtime. -->
+<!-- Stickman Duel — single-file build (2026-07-25). Self-contained; online play loads a P2P library from a CDN at runtime. -->
 
 <html lang="ar" dir="rtl">
 <head>
@@ -2073,23 +2073,23 @@ class Stickman {
     const rageMul = this.rageActive ? 1.3 : 1;
     const moveInput = canAct && !this.blocking ? this.control.move : 0;
     this._moveInput = moveInput;
-    const speed = (grounded ? 0.55 : 0.3) * rageMul;
+    const speed = (grounded ? 0.5 : 0.28) * rageMul;
     if (moveInput !== 0) {
-      // Snappy reversal: cancel opposing momentum instantly so turning around
-      // feels tight rather than slippery.
+      // Gently bleed off opposing momentum on a direction change (soft, so the
+      // torso doesn't lurch and trip the legs).
       if (grounded) {
-        for (const p of [this.pelvis, this.chest]) {
-          const vx = p.x - p.px;
-          if (Math.sign(vx) === -Math.sign(moveInput) && Math.abs(vx) > 0.4) p.px = p.x;
+        const vx = this.pelvis.x - this.pelvis.px;
+        if (Math.sign(vx) === -Math.sign(moveInput) && Math.abs(vx) > 0.4) {
+          this.pelvis.px = this.pelvis.x - vx * 0.5;
         }
       }
       const push = moveInput * speed;
-      this.pelvis.applyForce(push * 7, 0);
-      this.chest.applyForce(push * 3, 0);
-      this.footA.applyForce(push * 3, 0);
-      this.footB.applyForce(push * 3, 0);
+      this.pelvis.applyForce(push * 6, 0);
+      this.chest.applyForce(push * 2.4, 0);
+      this.footA.applyForce(push * 3.2, 0);
+      this.footB.applyForce(push * 3.2, 0);
       // Cap horizontal cruise speed so movement stays controllable
-      const maxV = 4.6 * rageMul;
+      const maxV = 4.3 * rageMul;
       for (const p of [this.pelvis, this.chest, this.footA, this.footB]) {
         const vx = p.x - p.px;
         if (Math.abs(vx) > maxV) p.px = p.x - Math.sign(vx) * maxV;
@@ -2108,24 +2108,32 @@ class Stickman {
       this._anchorX = null;
     }
 
-    // Reset jumps once actually settled on the ground
-    if (grounded && this._jumpLock <= 0) this.jumpsLeft = this.maxJumps;
+    // Ground tracking with coyote time so jumping stays reliable even if the
+    // fighter briefly loses foot contact (the cause of "it won't jump").
+    if (grounded) { this._coyote = 8; if (this._jumpLock <= 0) this.jumpsLeft = this.maxJumps; }
+    else if (this._coyote > 0) this._coyote--;
 
-    // Jump — rising edge, with double jump in the air
+    // Jump — rising edge, with a double jump in the air.
+    // Launch the WHOLE body (incl. feet & knees) upward together so the feet
+    // actually leave the ground; impulsing only the pelvis let the grounded
+    // feet + leg constraints hold it down (the "won't jump" bug).
     const jumpPressed = canAct && this.control.jump && !this._jumpHeld;
-    if (jumpPressed && this.jumpsLeft > 0 && this._jumpLock <= 0) {
-      const airJump = !grounded && this.jumpsLeft < this.maxJumps;
-      const j = airJump ? -12 : -12.8;
-      this.pelvis.applyImpulse(0, j);
-      this.chest.applyImpulse(0, j * 0.7);
-      this.footA.applyImpulse(0, j * 0.3);
-      this.footB.applyImpulse(0, j * 0.3);
+    if (jumpPressed && this._jumpLock <= 0 && this.jumpsLeft > 0) {
+      const groundJump = grounded || this._coyote > 0;
+      const airJump = !groundJump;
+      const j = airJump ? -12 : -14;
+      const footY0 = Math.max(this.footA.y, this.footB.y);
+      for (const pt of [this.pelvis, this.chest, this.head, this.kneeA, this.kneeB, this.footA, this.footB]) {
+        pt.applyImpulse(0, j);
+      }
+      this.frontHand.applyImpulse(0, j * 0.5); this.backHand.applyImpulse(0, j * 0.5);
       this.jumpsLeft--;
-      this._jumpLock = 10;
+      this._coyote = 0;
+      this._jumpLock = 12;
       if (this.audio) this.audio.jump();
       if (this.fx) {
-        this.fx.dust(this.pelvis.x, this.footA.y + 6, 0, 6);
-        if (airJump) this.fx.shock(this.pelvis.x, this.footA.y + 10, '#ffffff');
+        this.fx.dust(this.pelvis.x, footY0 + 6, 0, 7);
+        if (airJump) this.fx.shock(this.pelvis.x, this.pelvis.y + 24, '#ffffff');
       }
     }
     this._jumpHeld = this.control.jump;
@@ -2193,11 +2201,10 @@ class Stickman {
 
   /** Active balance: keep the torso upright above the pelvis */
   balance(grounded) {
-    // gentler correction so the fighter rises and rights itself gradually
-    // instead of snapping upright the instant it touches down; while staggered
-    // from a heavy hit the correction is weaker still, so it reels and recovers.
-    const stagger = this.knockdownTimer > 0 ? 0.35 : 1;
-    const strength = (grounded ? 0.1 : 0.045) * stagger;
+    // firm enough to stay upright while moving/stopping, but eased during a
+    // heavy-hit stagger so recovery still reads as gradual rather than instant.
+    const stagger = this.knockdownTimer > 0 ? 0.4 : 1;
+    const strength = (grounded ? 0.15 : 0.06) * stagger;
     // rotate chest & head around pelvis toward vertical
     const cur = Math.atan2(this.chest.y - this.pelvis.y, this.chest.x - this.pelvis.x);
     const target = -Math.PI / 2; // straight up
@@ -2277,8 +2284,9 @@ class Stickman {
     const footY = Math.max(this.footA.y, this.footB.y);
     const targetPelvisY = footY - this.standHeight;
     if (this.pelvis.y > targetPelvisY) {
-      // rise gradually; even slower while staggered so the fighter dips first
-      const rise = this.knockdownTimer > 0 ? 0.08 : 0.18;
+      // hold standing height firmly so the legs don't buckle when you stop;
+      // slower only while staggered so a heavy hit still makes it dip first
+      const rise = this.knockdownTimer > 0 ? 0.1 : 0.26;
       const corr = (targetPelvisY - this.pelvis.y) * rise;
       this.pelvis.y += corr;
       this.pelvis.py += corr;
@@ -2429,7 +2437,10 @@ class Stickman {
 
   drawHead(ctx, color) {
     const h = this.head;
-    const ang = Math.atan2(this.chest.y - h.y, this.chest.x - h.x) + Math.PI / 2;
+    // Orient the head so its "up" follows the spine (head above chest). Using
+    // head→chest here previously added a 180° flip that made the face point at
+    // the sky; head−chest keeps it upright and looking forward.
+    const ang = Math.atan2(h.y - this.chest.y, h.x - this.chest.x) + Math.PI / 2;
     ctx.save();
     ctx.translate(h.x, h.y);
     ctx.rotate(ang);
