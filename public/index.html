@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>استوديو الأفلام الذكي — AI Film Studio</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="grain-overlay"></div>
+
+  <header class="top">
+    <div class="brand">
+      <div class="logo">◈</div>
+      <div>
+        <h1>استوديو الأفلام الذكي</h1>
+        <p class="tag">حوّل وصفك أو قصتك إلى فيلمٍ سينمائيّ بالصوت والصورة والموسيقى والمؤثرات</p>
+      </div>
+    </div>
+    <div id="caps" class="caps"></div>
+  </header>
+
+  <main class="layout">
+    <!-- ========== Studio panel ========== -->
+    <section class="panel studio">
+      <label class="field">
+        <span class="label">الوصف / القصة / الفكرة</span>
+        <textarea id="brief" rows="6" placeholder="اكتب هنا... مثال: في مدينةٍ غارقةٍ في المطر، رجلٌ وحيدٌ يبحث عن ذكرى ضاعت. أريد إحساسًا بالبؤس والوحدة، بألوانٍ باردة وموسيقى حزينة."></textarea>
+      </label>
+
+      <div class="grid2">
+        <label class="field">
+          <span class="label">المزاج / الإحساس</span>
+          <select id="mood"></select>
+        </label>
+        <label class="field">
+          <span class="label">اللغة</span>
+          <select id="language">
+            <option value="">تلقائي (حسب الوصف)</option>
+            <option value="ar">العربية</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="field">
+        <span class="label">نسبة الإطار</span>
+        <div id="aspect" class="chips">
+          <button data-v="16:9" class="chip active">16:9 سينمائي</button>
+          <button data-v="9:16" class="chip">9:16 عمودي</button>
+          <button data-v="2.39:1" class="chip">2.39:1 عريض</button>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <label class="field">
+          <span class="label">المدة: <b id="durVal">60</b> ثانية</span>
+          <input id="duration" type="range" min="15" max="150" step="5" value="60" />
+        </label>
+        <label class="field">
+          <span class="label">الجودة</span>
+          <select id="quality"></select>
+        </label>
+      </div>
+
+      <button id="go" class="generate">🎬 أنشئ الفيلم</button>
+      <p id="hint" class="hint"></p>
+    </section>
+
+    <!-- ========== Stage panel ========== -->
+    <section class="panel stage">
+      <div id="idle" class="idle">
+        <div class="idle-mark">◈</div>
+        <p>سيظهر فيلمك هنا. اكتب وصفًا واضغط «أنشئ الفيلم».</p>
+        <p class="idle-sub">كلما وصفت الإحساس والتفاصيل بدقّة، فهم الاستوديو رؤيتك أكثر.</p>
+      </div>
+
+      <div id="progress" class="progress hidden">
+        <div class="pbar"><div id="pfill" class="pfill"></div></div>
+        <div class="pmeta"><span id="pstage">—</span><span id="ppct">0%</span></div>
+        <ul id="plog" class="plog"></ul>
+      </div>
+
+      <div id="result" class="result hidden">
+        <video id="player" controls playsinline></video>
+        <div class="result-actions">
+          <a id="download" class="btn" download>⬇ تحميل الفيلم (MP4)</a>
+          <button id="again" class="btn ghost">↻ فيلم جديد</button>
+        </div>
+        <div id="plan" class="plan"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>يعمل بالكامل بلا مفاتيح عبر المحرّك السينمائي الداخلي، ويرتقي إلى فيديو ذكاءٍ اصطناعيّ واقعيّ عند إضافة مفاتيح المزوّدين.</span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

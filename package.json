@@ -1,0 +1,23 @@
+{
+  "name": "ai-film-studio",
+  "version": "1.0.0",
+  "description": "AI Film Studio — turn a story into a professional film with visuals, narration, music and effects.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "setup": "node scripts/setup-assets.mjs"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ffmpeg-static": "^5.3.0",
+    "nanoid": "^5.1.6"
+  },
+  "devDependencies": {
+    "@fontsource/amiri": "^5.3.0",
+    "@fontsource/cairo": "^5.3.0"
+  }
+}
