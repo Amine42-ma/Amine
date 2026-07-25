@@ -1,0 +1,1131 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>سينمائي — مولّد الأفلام الاحترافي</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>" />
+<style>
+/* ============================================================
+   سينمائي (CINEMAI) — تصميم الواجهة
+   ============================================================ */
+:root{
+  --bg:#07080d; --bg2:#0c0e16; --panel:#11131d; --panel2:#171a26;
+  --line:#232636; --text:#eef1fb; --muted:#9aa2bd; --dim:#666e88;
+  --gold:#e8c07d; --accent:#7c5cff; --accent2:#00d9c0; --danger:#ff5470;
+  --radius:16px; --shadow:0 20px 60px rgba(0,0,0,.55);
+  --font:"Segoe UI",Tahoma,system-ui,"Noto Kufi Arabic",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:var(--font); background:
+    radial-gradient(1200px 700px at 80% -10%, #1a1330 0%, transparent 55%),
+    radial-gradient(1000px 600px at 0% 110%, #06202a 0%, transparent 50%),
+    var(--bg);
+  color:var(--text); overflow-x:hidden; line-height:1.6;
+}
+.app{display:grid; grid-template-columns:1fr 400px; gap:18px; padding:18px; max-width:1600px; margin:0 auto; min-height:100vh}
+@media(max-width:1080px){.app{grid-template-columns:1fr}}
+
+/* رأس التطبيق */
+header.top{grid-column:1/-1; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap}
+.brand{display:flex; align-items:center; gap:14px}
+.logo{width:52px;height:52px;border-radius:14px;display:grid;place-items:center;font-size:26px;
+  background:linear-gradient(145deg,var(--accent),var(--accent2)); box-shadow:0 10px 30px rgba(124,92,255,.35)}
+.brand h1{font-size:22px; font-weight:800; letter-spacing:.5px}
+.brand h1 span{color:var(--gold)}
+.brand p{font-size:12.5px; color:var(--muted)}
+.top-actions{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+
+/* المسرح / العارض */
+.stage-wrap{background:linear-gradient(180deg,var(--panel),var(--bg2)); border:1px solid var(--line);
+  border-radius:var(--radius); padding:14px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:12px}
+.screen{position:relative; width:100%; aspect-ratio:16/9; background:#000; border-radius:12px; overflow:hidden;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.05), 0 20px 50px rgba(0,0,0,.6)}
+.screen.cine{aspect-ratio:2.39/1}
+.screen.vertical{aspect-ratio:9/16; max-width:340px; margin:0 auto}
+#film{position:absolute; inset:0; width:100%; height:100%; display:block}
+.screen .overlay-msg{position:absolute; inset:0; display:grid; place-items:center; text-align:center; padding:24px;
+  color:var(--muted); pointer-events:none; transition:opacity .4s}
+.overlay-msg .big{font-size:19px; color:var(--text); font-weight:700; margin-bottom:6px}
+.subtitle-live{position:absolute; left:0; right:0; bottom:6%; text-align:center; padding:0 8%;
+  font-size:clamp(15px,2.4vw,26px); font-weight:700; color:#fff; text-shadow:0 2px 14px rgba(0,0,0,.9),0 0 2px #000;
+  pointer-events:none}
+.badge-rec{position:absolute; top:12px; inset-inline-start:14px; display:none; align-items:center; gap:7px;
+  background:rgba(255,84,112,.15); border:1px solid var(--danger); color:#ffd0d8; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:700}
+.badge-rec.on{display:flex}
+.badge-rec i{width:9px;height:9px;border-radius:50%;background:var(--danger); animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.25}}
+
+/* شريط التحكم */
+.controls{display:flex; align-items:center; gap:12px; flex-wrap:wrap}
+.timeline{flex:1; min-width:180px; height:8px; background:#20232f; border-radius:20px; position:relative; cursor:pointer; overflow:hidden}
+.timeline .fill{position:absolute; inset-block:0; inset-inline-start:0; width:0%; background:linear-gradient(90deg,var(--accent),var(--accent2)); border-radius:20px}
+.time{font-variant-numeric:tabular-nums; font-size:12.5px; color:var(--muted); min-width:88px; text-align:center}
+.iconbtn{width:44px;height:44px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);color:var(--text);
+  cursor:pointer;font-size:17px;display:grid;place-items:center;transition:.15s}
+.iconbtn:hover{border-color:var(--accent); background:#1d2130; transform:translateY(-1px)}
+.iconbtn.play{background:linear-gradient(145deg,var(--accent),var(--accent2)); border:none; width:52px;height:52px;font-size:20px}
+
+/* لوحة القصص المصورة */
+.storyboard{display:flex; gap:10px; overflow-x:auto; padding:4px 2px 8px}
+.storyboard::-webkit-scrollbar{height:8px}
+.storyboard::-webkit-scrollbar-thumb{background:#2a2e3f;border-radius:20px}
+.shot{flex:0 0 130px; border:1px solid var(--line); border-radius:12px; overflow:hidden; cursor:pointer;
+  background:var(--panel2); transition:.15s; position:relative}
+.shot:hover{border-color:var(--accent); transform:translateY(-2px)}
+.shot.active{border-color:var(--gold); box-shadow:0 0 0 1px var(--gold)}
+.shot canvas{width:100%; height:74px; display:block; background:#000}
+.shot .lbl{padding:6px 8px; font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.shot .num{position:absolute; top:5px; inset-inline-start:5px; background:rgba(0,0,0,.6); color:#fff; font-size:10px; padding:1px 6px; border-radius:8px}
+
+/* لوحة الإعداد */
+.panel{background:linear-gradient(180deg,var(--panel),var(--bg2)); border:1px solid var(--line); border-radius:var(--radius);
+  padding:16px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:16px; align-self:start; position:sticky; top:18px}
+.panel h2{font-size:14px; color:var(--gold); display:flex; align-items:center; gap:8px; letter-spacing:.3px}
+.field label{display:block; font-size:12.5px; color:var(--muted); margin-bottom:7px; font-weight:600}
+textarea#story{width:100%; min-height:130px; resize:vertical; background:var(--bg); border:1px solid var(--line);
+  border-radius:12px; color:var(--text); padding:12px 13px; font-family:var(--font); font-size:14px; line-height:1.8}
+textarea#story:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(124,92,255,.15)}
+.chips{display:flex; flex-wrap:wrap; gap:7px}
+.chip{border:1px solid var(--line); background:var(--panel2); color:var(--muted); padding:6px 11px; border-radius:20px;
+  font-size:12px; cursor:pointer; transition:.15s; font-weight:600}
+.chip:hover{border-color:var(--accent); color:var(--text)}
+.chip.on{background:linear-gradient(145deg,var(--accent),var(--accent2)); color:#fff; border-color:transparent}
+.row{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+.selectbox{width:100%; background:var(--bg); border:1px solid var(--line); border-radius:10px; color:var(--text); padding:9px 11px; font-family:var(--font); font-size:13px}
+.slider{display:flex; flex-direction:column; gap:6px}
+.slider .rowlbl{display:flex; justify-content:space-between; font-size:12px; color:var(--muted)}
+input[type=range]{-webkit-appearance:none; width:100%; height:6px; border-radius:20px; background:#20232f; outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; width:17px;height:17px;border-radius:50%;
+  background:linear-gradient(145deg,var(--accent),var(--accent2)); cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.5)}
+.toggles{display:flex; flex-direction:column; gap:9px}
+.toggle{display:flex; align-items:center; justify-content:space-between; font-size:13px; color:var(--text)}
+.switch{position:relative; width:44px; height:24px; flex:0 0 auto}
+.switch input{opacity:0; width:0; height:0}
+.switch span{position:absolute; inset:0; background:#2a2e3f; border-radius:20px; transition:.2s; cursor:pointer}
+.switch span::before{content:""; position:absolute; width:18px; height:18px; border-radius:50%; background:#fff; top:3px; inset-inline-end:3px; transition:.2s}
+.switch input:checked + span{background:linear-gradient(145deg,var(--accent),var(--accent2))}
+.switch input:checked + span::before{inset-inline-end:23px}
+.btn{border:none; border-radius:12px; padding:13px 16px; font-size:14.5px; font-weight:800; cursor:pointer; font-family:var(--font);
+  transition:.15s; display:flex; align-items:center; justify-content:center; gap:9px}
+.btn.primary{background:linear-gradient(145deg,var(--accent),var(--accent2)); color:#fff; box-shadow:0 12px 30px rgba(124,92,255,.35)}
+.btn.primary:hover{transform:translateY(-2px); box-shadow:0 16px 40px rgba(124,92,255,.5)}
+.btn.ghost{background:var(--panel2); border:1px solid var(--line); color:var(--text)}
+.btn.ghost:hover{border-color:var(--accent)}
+.btn:disabled{opacity:.5; cursor:not-allowed; transform:none!important}
+.btn-row{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+.hint{font-size:11.5px; color:var(--dim); line-height:1.5}
+.divider{height:1px; background:var(--line); margin:2px 0}
+.status{font-size:12px; color:var(--accent2); min-height:16px; text-align:center; font-weight:600}
+footer{grid-column:1/-1; text-align:center; color:var(--dim); font-size:12px; padding:6px 0 2px}
+footer b{color:var(--muted)}
+.pill{display:inline-block; background:rgba(232,192,125,.12); color:var(--gold); border:1px solid rgba(232,192,125,.3);
+  padding:2px 9px; border-radius:20px; font-size:11px; font-weight:700}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="top">
+    <div class="brand">
+      <div class="logo">🎬</div>
+      <div>
+        <h1>سينمائي <span>CINEMAI</span></h1>
+        <p>مولّد الأفلام الاحترافي — يحوّل كلماتك إلى فيلم بالصوت والصورة والمؤثرات</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span class="pill">يعمل بالكامل داخل متصفحك</span>
+      <button class="btn ghost" id="btnExample" style="padding:9px 14px">✨ قصة تجريبية</button>
+    </div>
+  </header>
+
+  <!-- المسرح -->
+  <section class="stage-wrap">
+    <div class="screen cine" id="screen">
+      <canvas id="film"></canvas>
+      <div class="badge-rec" id="recBadge"><i></i> جارٍ التسجيل</div>
+      <div class="subtitle-live" id="subtitle"></div>
+      <div class="overlay-msg" id="overlay">
+        <div>
+          <div class="big">🎬 مسرحك السينمائي جاهز</div>
+          <div>اكتب قصتك أو وصفك في اللوحة، ثم اضغط «توليد الفيلم»</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="iconbtn play" id="btnPlay" title="تشغيل / إيقاف">▶</button>
+      <button class="iconbtn" id="btnRestart" title="من البداية">⟲</button>
+      <span class="time" id="timeLabel">00:00 / 00:00</span>
+      <div class="timeline" id="timeline"><div class="fill" id="timeFill"></div></div>
+      <button class="iconbtn" id="btnMute" title="كتم">🔊</button>
+    </div>
+
+    <div class="storyboard" id="storyboard"></div>
+  </section>
+
+  <!-- لوحة الإعداد -->
+  <aside class="panel">
+    <div class="field">
+      <h2>📝 اكتب قصتك أو وصف المشهد</h2>
+      <label style="margin-top:8px">صف الفيلم كما تريده تمامًا — الجو، المشاعر، الأحداث</label>
+      <textarea id="story" placeholder="مثال: في مدينة غارقة تحت المطر، يمشي رجل وحيد يحمل ذكرياته. البؤس يملأ الشوارع. ثم يلمع نور الأمل في الأفق فيبدأ الفجر..."></textarea>
+    </div>
+
+    <div class="field">
+      <label>النمط والجو العام</label>
+      <div class="chips" id="genreChips"></div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label>أبعاد الشاشة</label>
+        <select class="selectbox" id="aspect">
+          <option value="cine">سينمائي 2.39:1</option>
+          <option value="wide">عريض 16:9</option>
+          <option value="vertical">عمودي 9:16 (موبايل)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>صوت السرد</label>
+        <select class="selectbox" id="voiceSel"><option>افتراضي</option></select>
+      </div>
+    </div>
+
+    <div class="slider">
+      <div class="rowlbl"><span>مدة كل مشهد</span><span id="durVal">4.5 ث</span></div>
+      <input type="range" id="dur" min="2.5" max="8" step="0.5" value="4.5" />
+    </div>
+    <div class="slider">
+      <div class="rowlbl"><span>شدة المؤثرات البصرية</span><span id="fxVal">قوية</span></div>
+      <input type="range" id="fx" min="0" max="100" step="5" value="80" />
+    </div>
+    <div class="slider">
+      <div class="rowlbl"><span>مستوى الموسيقى</span><span id="musVal">70%</span></div>
+      <input type="range" id="musVol" min="0" max="100" step="5" value="70" />
+    </div>
+
+    <div class="toggles">
+      <div class="toggle"><span>🎙️ سرد صوتي عربي</span>
+        <label class="switch"><input type="checkbox" id="tNarr" checked><span></span></label></div>
+      <div class="toggle"><span>🎞️ حبيبات الفيلم (Grain)</span>
+        <label class="switch"><input type="checkbox" id="tGrain" checked><span></span></label></div>
+      <div class="toggle"><span>💬 ترجمة/تعليق على الشاشة</span>
+        <label class="switch"><input type="checkbox" id="tSubs" checked><span></span></label></div>
+    </div>
+
+    <div class="divider"></div>
+
+    <button class="btn primary" id="btnGenerate">🎬 توليد الفيلم</button>
+    <div class="btn-row">
+      <button class="btn ghost" id="btnDownload">⬇️ تصدير الفيلم</button>
+      <button class="btn ghost" id="btnScript">📜 السيناريو</button>
+    </div>
+    <div class="status" id="status"></div>
+    <div class="hint">💡 التصدير يسجّل الفيلم كملف فيديو (WebM) بالصوت مباشرة من المتصفح. يُنصح بمتصفح Chrome أو Edge للحصول على أفضل النتائج.</div>
+  </aside>
+
+  <footer>
+    صُنع بـ <b>سينمائي</b> — محرك سرد بصري وصوتي يعمل بالكامل في المتصفح · Canvas · Web Audio · Speech Synthesis
+  </footer>
+</div>
+
+<script>
+"use strict";
+/* ==================================================================
+   سينمائي (CINEMAI) — محرك توليد الأفلام
+   الأقسام:
+     1) مكتبة الأنماط والمشاعر (Themes)  — ربط الكلمات العربية بالجو البصري/الصوتي
+     2) محرك الإخراج (Director)          — تحويل النص إلى سيناريو ومشاهد
+     3) محرك الرسم (Renderer)            — رسم المشاهد والمؤثرات على Canvas
+     4) محرك الصوت (Audio)               — موسيقى ومؤثرات صوتية وسرد
+     5) المشغّل (Player)                 — الخط الزمني والتزامن
+     6) التصدير (Export)                 — تسجيل الفيلم كملف فيديو
+     7) الواجهة (UI)                     — ربط عناصر التحكم
+   ================================================================== */
+
+/* ============ أدوات مساعدة عامة ============ */
+const U = {
+  lerp:(a,b,t)=>a+(b-a)*t,
+  clamp:(v,a,b)=>Math.max(a,Math.min(b,v)),
+  ease:t=>t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2,
+  rand:(a,b)=>a+Math.random()*(b-a),
+  hex(h){const n=parseInt(h.slice(1),16);return [n>>16&255,n>>8&255,n&255];},
+  rgba(h,a){const[r,g,b]=U.hex(h);return `rgba(${r},${g},${b},${a})`;},
+  fmt(s){s=Math.max(0,Math.floor(s));const m=String(Math.floor(s/60)).padStart(2,"0");const x=String(s%60).padStart(2,"0");return `${m}:${x}`;}
+};
+
+/* ==================================================================
+   1) مكتبة الأنماط والمشاعر
+   كل نمط يحدد: ألوان، نوع الجسيمات، طبقات المؤثرات، الموسيقى، المؤثر الصوتي
+   ================================================================== */
+const THEMES = {
+  despair:{ // بؤس / حزن
+    name:"البؤس والحزن", sky:["#0b1622","#1c2b3a","#324a5e"], accent:"#6f8fb0",
+    particles:"rain", overlays:["fog","vignetteCold"], grain:.9, camera:"slowIn",
+    music:{scale:[0,3,5,7,10],root:180,wave:"sine",tempo:52,mood:"minor"}, ambient:"rain", shake:0
+  },
+  underwater:{ // سمك / بحر / أعماق
+    name:"أعماق البحر", sky:["#02121c","#053a4d","#0a6b7a"], accent:"#3fe0d0",
+    particles:"bubbles", overlays:["caustics","wobble"], grain:.4, camera:"drift",
+    music:{scale:[0,2,4,7,9],root:150,wave:"sine",tempo:48,mood:"dreamy"}, ambient:"underwater", shake:0
+  },
+  horror:{ // رعب / خوف / موت
+    name:"الرعب", sky:["#000000","#14020a","#2a0410"], accent:"#ff2e4d",
+    particles:"dust", overlays:["flicker","vignetteHard","chroma"], grain:1, camera:"handheld",
+    music:{scale:[0,1,4,6,8],root:98,wave:"sawtooth",tempo:60,mood:"dissonant"}, ambient:"heartbeat", shake:.4
+  },
+  war:{ // حرب / نار / انفجار
+    name:"الحرب والدمار", sky:["#160a04","#3a1c08","#5e3410"], accent:"#ff7a1a",
+    particles:"embers", overlays:["smoke","vignetteHard"], grain:.9, camera:"shake",
+    music:{scale:[0,2,3,7,8],root:82,wave:"sawtooth",tempo:72,mood:"epic"}, ambient:"impacts", shake:.7
+  },
+  romance:{ // حب / رومانسي
+    name:"الحب والرومانسية", sky:["#2a0f24","#5e2447","#a34e7a"], accent:"#ffb3d1",
+    particles:"bokeh", overlays:["glow","softVignette"], grain:.3, camera:"slowIn",
+    music:{scale:[0,2,4,5,7,9,11],root:196,wave:"triangle",tempo:64,mood:"warm"}, ambient:"soft", shake:0
+  },
+  hope:{ // أمل / فجر / نور / انتصار
+    name:"الأمل والفجر", sky:["#241a06","#7a5410","#e8a83c"], accent:"#ffe08a",
+    particles:"dust", overlays:["rays","glow"], grain:.4, camera:"slowOut",
+    music:{scale:[0,2,4,7,9,11],root:220,wave:"triangle",tempo:70,mood:"uplift"}, ambient:"soft", shake:0
+  },
+  city:{ // مدينة / ليل / نيون
+    name:"مدينة الليل", sky:["#05060f","#12102a","#241a4a"], accent:"#33e6ff",
+    particles:"rain", overlays:["neon","reflections","vignetteCold"], grain:.6, camera:"drift",
+    music:{scale:[0,3,5,6,7,10],root:130,wave:"square",tempo:88,mood:"synth"}, ambient:"cityrain", shake:0
+  },
+  desert:{ // صحراء / رمال / شمس
+    name:"الصحراء", sky:["#2a1c08","#7a5222","#d99a4a"], accent:"#ffcf8a",
+    particles:"dust", overlays:["heat","rays"], grain:.5, camera:"slowIn",
+    music:{scale:[0,1,4,5,7,8,11],root:165,wave:"triangle",tempo:60,mood:"eastern"}, ambient:"wind", shake:0
+  },
+  space:{ // فضاء / نجوم / مجرة
+    name:"الفضاء", sky:["#01010a","#0a0a2a","#1a1050"], accent:"#8ab4ff",
+    particles:"stars", overlays:["nebula","glow"], grain:.3, camera:"drift",
+    music:{scale:[0,2,4,7,9],root:110,wave:"sine",tempo:50,mood:"cosmic"}, ambient:"space", shake:0
+  },
+  forest:{ // غابة / طبيعة / أشجار
+    name:"الغابة والطبيعة", sky:["#04140a","#0f3a20","#2a6b3a"], accent:"#7ce89a",
+    particles:"dust", overlays:["fog","rays"], grain:.4, camera:"drift",
+    music:{scale:[0,2,4,7,9],root:174,wave:"triangle",tempo:66,mood:"calm"}, ambient:"forest", shake:0
+  },
+  cinematic:{ // افتراضي
+    name:"سينمائي عام", sky:["#08131a","#123240","#1e5266"], accent:"#f0a860",
+    particles:"dust", overlays:["glow","softVignette"], grain:.5, camera:"slowIn",
+    music:{scale:[0,2,4,7,9],root:160,wave:"triangle",tempo:66,mood:"neutral"}, ambient:"soft", shake:0
+  }
+};
+
+// ربط الكلمات المفتاحية العربية (والإنجليزية) بالأنماط
+const KEYWORDS = {
+  despair:["بؤس","بائس","حزن","حزين","يأس","يائس","وحدة","وحيد","ألم","دموع","بكاء","فقر","فقير","كآبة","ضياع","خذلان","انكسار","معاناة","دمعة","تعب","despair","sad","misery","lonely"],
+  underwater:["سمك","سمكة","بحر","محيط","ماء","مياه","غرق","غريق","أعماق","عمق","سباحة","يسبح","موج","أمواج","شعاب","غواص","تحت الماء","underwater","ocean","sea","fish"],
+  horror:["رعب","مرعب","خوف","خائف","ظلام","مظلم","شبح","أشباح","دم","دماء","موت","ميت","جثة","وحش","كابوس","دموي","قتل","صراخ","مقبرة","horror","scary","ghost","death","blood"],
+  war:["حرب","معركة","قتال","انفجار","نار","حريق","دمار","خراب","جندي","جنود","سلاح","رصاص","دبابة","قنبلة","اشتباك","war","battle","explosion","fire","destruction"],
+  romance:["حب","حبيب","حبيبة","رومانسي","قلب","عشق","عاشق","غرام","دفء","قبلة","لقاء","شوق","حنين","romance","love","heart","kiss"],
+  hope:["أمل","آمال","فجر","شروق","نور","ضوء","إشراق","انتصار","نصر","فرح","سعادة","حلم","بداية جديدة","خلاص","نجاة","hope","dawn","light","victory","joy"],
+  city:["مدينة","مدن","ليل","نيون","شارع","شوارع","ناطحات","زحام","مبنى","مباني","سيارات","أضواء المدينة","city","night","neon","street"],
+  desert:["صحراء","رمال","رمل","شمس حارقة","جفاف","كثبان","سراب","بدو","قافلة","واحة","desert","sand","dune"],
+  space:["فضاء","نجوم","نجم","كوكب","كواكب","مجرة","مجرات","كون","صاروخ","مركبة","سديم","نيزك","space","stars","galaxy","planet"],
+  forest:["غابة","غابات","أشجار","شجرة","طبيعة","أخضر","خضرة","نهر","جبل","جبال","ورق الشجر","forest","trees","nature","jungle"]
+};
+
+function detectTheme(text){
+  const scores={};
+  const t=" "+text+" ";
+  for(const k in KEYWORDS){scores[k]=0;for(const w of KEYWORDS[k]){if(t.includes(w))scores[k]+= (w.length>3?2:1);}}
+  let best="cinematic",bs=0;
+  for(const k in scores){if(scores[k]>bs){bs=scores[k];best=k;}}
+  return {key:bs>0?best:"cinematic", scores};
+}
+
+/* ==================================================================
+   2) محرك الإخراج — تحويل النص إلى سيناريو ومشاهد
+   ================================================================== */
+const Director = {
+  build(text, opts){
+    text = (text||"").trim();
+    if(!text) return null;
+    // تقسيم إلى جمل
+    let parts = text.split(/[\.\!\?،؛\n]+|\.{2,}|…/).map(s=>s.trim()).filter(s=>s.length>0);
+    if(parts.length===0) parts=[text];
+    // دمج الجمل القصيرة جدًا
+    const merged=[]; let buf="";
+    for(const p of parts){ buf = buf? buf+"، "+p : p; if(buf.length>=14){merged.push(buf); buf="";} }
+    if(buf) { if(merged.length) merged[merged.length-1]+="، "+buf; else merged.push(buf); }
+    const sentences = merged.length?merged:parts;
+
+    const overall = opts.forcedTheme || detectTheme(text).key;
+    const title = Director.makeTitle(text, overall);
+
+    const scenes=[];
+    // مشهد الافتتاح (بطاقة العنوان)
+    scenes.push({
+      type:"title", theme:overall, dur:Math.max(3, opts.dur*0.9),
+      title:title, subtitle:"فيلم من إخراج سينمائي", narr: title,
+      camera:"slowIn"
+    });
+    // مشاهد القصة
+    sentences.forEach((s,i)=>{
+      const th = detectTheme(s);
+      const key = th.scores[th.key]>0 ? th.key : overall;
+      scenes.push({
+        type:"scene", theme:key, dur:U.clamp(opts.dur + Math.min(2, s.length/60), 2.5, 9),
+        text:s, narr:s, camera:THEMES[key].camera, index:i
+      });
+    });
+    // مشهد الختام
+    scenes.push({
+      type:"end", theme:overall, dur:Math.max(3, opts.dur*0.8),
+      title:"النهاية", subtitle:"", narr:"النهاية", camera:"slowOut"
+    });
+
+    return {title, theme:overall, scenes, totalDur:scenes.reduce((a,s)=>a+s.dur,0)};
+  },
+  makeTitle(text, theme){
+    const words = text.replace(/[\.\!\?،؛\n]+/g," ").split(/\s+/).filter(w=>w.length>1);
+    if(words.length<=5) return text.length<40?text:words.slice(0,5).join(" ");
+    // خذ أبرز كلمات مؤثرة إن وجدت
+    const strong = words.filter(w=>w.length>=4).slice(0,4);
+    const base = (strong.length>=2?strong:words.slice(0,4)).join(" ");
+    return base.length>2?base:(THEMES[theme]?.name||"فيلم");
+  }
+};
+
+/* ==================================================================
+   3) محرك الرسم — Canvas
+   ================================================================== */
+class Renderer{
+  constructor(canvas){
+    this.c=canvas; this.ctx=canvas.getContext("2d");
+    this.W=1280; this.H=536; // تُحدّث حسب الأبعاد
+    this.particles=[]; this.stars=[]; this.time=0; this.fxLevel=0.8; this.grainOn=true;
+    this.shakeSeed=Math.random()*1000;
+  }
+  setSize(aspect){
+    const base=1280;
+    if(aspect==="vertical"){this.W=720;this.H=1280;}
+    else if(aspect==="wide"){this.W=base;this.H=720;}
+    else {this.W=base;this.H=Math.round(base/2.39);}
+    this.c.width=this.W; this.c.height=this.H;
+  }
+  initParticles(theme){
+    const T=THEMES[theme]; this.particles=[]; this.stars=[];
+    const density=Math.round(120*this.fxLevel)+20;
+    const type=T.particles;
+    for(let i=0;i<density;i++){
+      this.particles.push({
+        x:U.rand(0,this.W), y:U.rand(0,this.H),
+        vx:U.rand(-.3,.3), vy:U.rand(.4,1.6),
+        r:U.rand(1,3.5), a:U.rand(.2,.9), life:U.rand(0,1), sway:U.rand(0,Math.PI*2)
+      });
+    }
+    if(type==="stars"||T.overlays.includes("nebula")){
+      for(let i=0;i<220;i++) this.stars.push({x:U.rand(0,this.W),y:U.rand(0,this.H),r:U.rand(.4,1.8),tw:U.rand(0,Math.PI*2)});
+    }
+    this._ptype=type; this._theme=theme;
+  }
+
+  // رسم إطار كامل لمشهد. progress: 0..1 داخل المشهد. opacity: للانتقال
+  renderScene(scene, progress, dt, opacity=1){
+    const ctx=this.ctx, T=THEMES[scene.theme];
+    this.time+=dt;
+    ctx.save();
+    ctx.globalAlpha=1;
+
+    // اهتزاز الكاميرا
+    let sx=0, sy=0;
+    if(T.shake>0){
+      const s=T.shake*this.fxLevel*( scene.impact?18:6 );
+      sx=(Math.sin(this.time*31+this.shakeSeed)+Math.sin(this.time*17))*s*.5;
+      sy=(Math.cos(this.time*27+this.shakeSeed)+Math.sin(this.time*13))*s*.5;
+    }
+    // حركة كاميرا (Ken Burns)
+    const cam=this._cam(scene.camera, progress);
+    ctx.translate(sx,sy);
+    ctx.translate(this.W/2, this.H/2);
+    ctx.scale(cam.scale, cam.scale);
+    ctx.translate(-this.W/2 + cam.tx, -this.H/2 + cam.ty);
+
+    // 1) خلفية متدرجة
+    this._bg(T, progress);
+    // 2) طبقات المؤثرات (خلفية)
+    this._overlaysBack(scene, T, progress);
+    // 3) الجسيمات
+    this._particles(T, dt);
+    // 4) طبقات المؤثرات (أمامية)
+    this._overlaysFront(scene, T, progress);
+
+    ctx.restore();
+
+    // 5) طبقات ثابتة (لا تتأثر بالكاميرا): فينييت، حبيبات، ليتر بوكس، نصوص
+    this._vignette(T);
+    if(this.grainOn) this._grain(T.grain);
+    this._chroma(T, progress);
+
+    // النصوص (عنوان/بطاقة)
+    if(scene.type==="title"||scene.type==="end") this._titleCard(scene, progress);
+
+    // خفض العتامة للانتقال
+    if(opacity<1){ ctx.save(); ctx.globalAlpha=1-opacity; ctx.fillStyle="#000"; ctx.fillRect(0,0,this.W,this.H); ctx.restore(); }
+  }
+
+  _cam(mode, p){
+    const e=U.ease(p); let scale=1,tx=0,ty=0;
+    const amp=8+18*this.fxLevel;
+    switch(mode){
+      case "slowIn": scale=U.lerp(1.02,1.14,e); tx=U.lerp(amp,-amp,e); break;
+      case "slowOut":scale=U.lerp(1.14,1.02,e); ty=U.lerp(-amp,amp,e); break;
+      case "drift":  scale=1.08; tx=Math.sin(p*Math.PI)*amp; ty=Math.cos(p*Math.PI*.7)*amp*.6; break;
+      case "handheld":scale=1.06; tx=Math.sin(this.time*2)*3; ty=Math.cos(this.time*2.3)*3; break;
+      case "shake":  scale=U.lerp(1.05,1.12,e); break;
+      default: scale=U.lerp(1.03,1.10,e);
+    }
+    return {scale,tx,ty};
+  }
+
+  _bg(T, p){
+    const ctx=this.ctx;
+    const shift=Math.sin(p*Math.PI)*0.15;
+    const g=ctx.createLinearGradient(0,0,this.W*0.3,this.H);
+    g.addColorStop(0,T.sky[0]);
+    g.addColorStop(U.clamp(0.5+shift,0.2,0.8),T.sky[1]);
+    g.addColorStop(1,T.sky[2]);
+    ctx.fillStyle=g; ctx.fillRect(-100,-100,this.W+200,this.H+200);
+    // توهج مصدر ضوء
+    const gx=this.W*(0.7-shift), gy=this.H*0.3;
+    const rg=ctx.createRadialGradient(gx,gy,10,gx,gy,this.W*0.6);
+    rg.addColorStop(0,U.rgba(T.accent,0.28*this.fxLevel));
+    rg.addColorStop(1,"rgba(0,0,0,0)");
+    ctx.fillStyle=rg; ctx.fillRect(-100,-100,this.W+200,this.H+200);
+  }
+
+  _particles(T, dt){
+    const ctx=this.ctx, type=this._ptype;
+    // النجوم
+    if(this.stars.length){
+      for(const s of this.stars){ s.tw+=dt*3; const a=0.4+0.6*Math.abs(Math.sin(s.tw));
+        ctx.fillStyle=`rgba(255,255,255,${a*0.9})`; ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,7); ctx.fill(); }
+    }
+    for(const pt of this.particles){
+      pt.life+=dt*0.4;
+      if(type==="rain"){
+        pt.x+=pt.vx*4+2; pt.y+=pt.vy*12+8;
+        if(pt.y>this.H){pt.y=-10;pt.x=U.rand(0,this.W);}
+        ctx.strokeStyle=U.rgba("#bcd4ff",pt.a*0.5); ctx.lineWidth=1.2;
+        ctx.beginPath(); ctx.moveTo(pt.x,pt.y); ctx.lineTo(pt.x-3,pt.y+14); ctx.stroke();
+      } else if(type==="bubbles"){
+        pt.sway+=dt*2; pt.x+=Math.sin(pt.sway)*0.6; pt.y-=pt.vy*3+1;
+        if(pt.y<-10){pt.y=this.H+10;pt.x=U.rand(0,this.W);}
+        ctx.strokeStyle=U.rgba("#bfffff",pt.a*0.5); ctx.lineWidth=1;
+        ctx.beginPath(); ctx.arc(pt.x,pt.y,pt.r*1.4,0,7); ctx.stroke();
+        ctx.fillStyle=U.rgba("#ffffff",pt.a*0.15); ctx.beginPath(); ctx.arc(pt.x,pt.y,pt.r*1.4,0,7); ctx.fill();
+      } else if(type==="embers"){
+        pt.sway+=dt*3; pt.x+=Math.sin(pt.sway)*0.8+pt.vx; pt.y-=pt.vy*4+2;
+        if(pt.y<-10){pt.y=this.H+10;pt.x=U.rand(0,this.W);}
+        const fl=0.6+0.4*Math.sin(pt.life*10);
+        ctx.fillStyle=U.rgba("#ff8a1a",pt.a*fl); ctx.beginPath(); ctx.arc(pt.x,pt.y,pt.r*.9,0,7); ctx.fill();
+      } else if(type==="snow"){
+        pt.sway+=dt; pt.x+=Math.sin(pt.sway)*0.8; pt.y+=pt.vy*2;
+        if(pt.y>this.H){pt.y=-10;pt.x=U.rand(0,this.W);}
+        ctx.fillStyle=U.rgba("#ffffff",pt.a*0.7); ctx.beginPath(); ctx.arc(pt.x,pt.y,pt.r,0,7); ctx.fill();
+      } else if(type==="bokeh"){
+        pt.sway+=dt*0.5; pt.x+=Math.sin(pt.sway)*0.3; pt.y-=0.2;
+        if(pt.y<-20){pt.y=this.H+20;pt.x=U.rand(0,this.W);}
+        const a=pt.a*(0.3+0.3*Math.sin(pt.life*2));
+        ctx.fillStyle=U.rgba(THEMES[this._theme].accent,a*0.4);
+        ctx.beginPath(); ctx.arc(pt.x,pt.y,pt.r*6,0,7); ctx.fill();
+      } else { // dust
+        pt.sway+=dt; pt.x+=Math.sin(pt.sway)*0.3+pt.vx*0.3; pt.y+=pt.vy*0.4;
+        if(pt.y>this.H){pt.y=-10;pt.x=U.rand(0,this.W);}
+        ctx.fillStyle=U.rgba("#ffffff",pt.a*0.25); ctx.beginPath(); ctx.arc(pt.x,pt.y,pt.r*0.7,0,7); ctx.fill();
+      }
+    }
+  }
+
+  _overlaysBack(scene, T, p){
+    const ctx=this.ctx;
+    for(const o of T.overlays){
+      if(o==="rays"||o==="neon"){
+        ctx.save(); ctx.globalCompositeOperation="screen";
+        const cx=this.W*0.72, cy=this.H*0.25;
+        for(let i=0;i<9;i++){
+          const ang=-0.6+i*0.16+Math.sin(this.time*0.2+i)*0.02;
+          ctx.strokeStyle=U.rgba(o==="neon"?T.accent:"#ffe6b0", (0.05+0.05*Math.sin(this.time+i))*this.fxLevel);
+          ctx.lineWidth=40; ctx.beginPath(); ctx.moveTo(cx,cy);
+          ctx.lineTo(cx+Math.cos(ang)*this.W, cy+Math.sin(ang)*this.W); ctx.stroke();
+        }
+        ctx.restore();
+      }
+      if(o==="nebula"){
+        ctx.save(); ctx.globalCompositeOperation="screen";
+        for(let i=0;i<4;i++){
+          const x=this.W*(0.2+i*0.22), y=this.H*(0.3+0.15*Math.sin(i+this.time*0.1));
+          const rg=ctx.createRadialGradient(x,y,10,x,y,this.W*0.3);
+          rg.addColorStop(0,U.rgba(i%2?T.accent:"#c060ff",0.10*this.fxLevel)); rg.addColorStop(1,"rgba(0,0,0,0)");
+          ctx.fillStyle=rg; ctx.fillRect(0,0,this.W,this.H);
+        }
+        ctx.restore();
+      }
+      if(o==="caustics"){
+        ctx.save(); ctx.globalCompositeOperation="screen"; ctx.globalAlpha=0.5*this.fxLevel;
+        for(let i=0;i<14;i++){
+          const y=(i/14)*this.H + Math.sin(this.time*1.5+i)*20;
+          const x=this.W*0.5 + Math.sin(this.time+i*1.3)*this.W*0.4;
+          const rg=ctx.createRadialGradient(x,y,2,x,y,90);
+          rg.addColorStop(0,U.rgba("#9ffff0",0.25)); rg.addColorStop(1,"rgba(0,0,0,0)");
+          ctx.fillStyle=rg; ctx.beginPath(); ctx.ellipse(x,y,90,30,0,0,7); ctx.fill();
+        }
+        ctx.restore();
+      }
+      if(o==="smoke"||o==="fog"){
+        ctx.save(); ctx.globalAlpha=(o==="smoke"?0.5:0.35)*this.fxLevel;
+        for(let i=0;i<5;i++){
+          const x=(this.time*10*(o==="smoke"?1:0.4)+i*this.W/5)%(this.W+300)-150;
+          const y=this.H*(o==="smoke"?0.7:0.5)+Math.sin(this.time*0.3+i)*30;
+          const rg=ctx.createRadialGradient(x,y,10,x,y,220);
+          rg.addColorStop(0,U.rgba(o==="smoke"?"#3a3026":"#8090a0",0.4)); rg.addColorStop(1,"rgba(0,0,0,0)");
+          ctx.fillStyle=rg; ctx.beginPath(); ctx.arc(x,y,220,0,7); ctx.fill();
+        }
+        ctx.restore();
+      }
+      if(o==="heat"){
+        ctx.save(); ctx.globalAlpha=0.15*this.fxLevel;
+        for(let i=0;i<this.H;i+=4){
+          const off=Math.sin(this.time*3+i*0.1)*3;
+          ctx.fillStyle="rgba(255,220,150,0.03)"; ctx.fillRect(off,i,this.W,2);
+        }
+        ctx.restore();
+      }
+    }
+  }
+
+  _overlaysFront(scene, T, p){
+    const ctx=this.ctx;
+    for(const o of T.overlays){
+      if(o==="reflections"){
+        ctx.save(); ctx.globalAlpha=0.25; ctx.globalCompositeOperation="screen";
+        const g=ctx.createLinearGradient(0,this.H*0.7,0,this.H);
+        g.addColorStop(0,"rgba(0,0,0,0)"); g.addColorStop(1,U.rgba(T.accent,0.4));
+        ctx.fillStyle=g; ctx.fillRect(0,this.H*0.7,this.W,this.H*0.3); ctx.restore();
+      }
+      if(o==="glow"){
+        ctx.save(); ctx.globalCompositeOperation="screen"; ctx.globalAlpha=0.12*this.fxLevel;
+        const rg=ctx.createRadialGradient(this.W/2,this.H/2,10,this.W/2,this.H/2,this.W*0.7);
+        rg.addColorStop(0,U.rgba(T.accent,0.5)); rg.addColorStop(1,"rgba(0,0,0,0)");
+        ctx.fillStyle=rg; ctx.fillRect(0,0,this.W,this.H); ctx.restore();
+      }
+    }
+  }
+
+  _vignette(T){
+    const ctx=this.ctx;
+    let strength=0.6, hard=T.overlays.includes("vignetteHard");
+    if(hard) strength=0.9; if(T.overlays.includes("softVignette")) strength=0.4;
+    const rg=ctx.createRadialGradient(this.W/2,this.H/2,this.H*0.3,this.W/2,this.H/2,this.H*0.85);
+    rg.addColorStop(0,"rgba(0,0,0,0)"); rg.addColorStop(1,`rgba(0,0,0,${strength})`);
+    ctx.fillStyle=rg; ctx.fillRect(0,0,this.W,this.H);
+    // فليكر للرعب
+    if(T.overlays.includes("flicker")){
+      const f=Math.random()<0.06?U.rand(0.1,0.35):0;
+      if(f>0){ctx.fillStyle=`rgba(0,0,0,${f})`; ctx.fillRect(0,0,this.W,this.H);}
+    }
+  }
+
+  _grain(amount){
+    const ctx=this.ctx;
+    ctx.save(); ctx.globalAlpha=0.06*amount;
+    const n=Math.round(this.W*this.H/900);
+    ctx.fillStyle="#fff";
+    for(let i=0;i<n;i++){ ctx.fillRect(Math.random()*this.W, Math.random()*this.H, 1, 1); }
+    ctx.globalAlpha=0.05*amount; ctx.fillStyle="#000";
+    for(let i=0;i<n;i++){ ctx.fillRect(Math.random()*this.W, Math.random()*this.H, 1, 1); }
+    ctx.restore();
+  }
+
+  _chroma(T,p){
+    if(!T.overlays.includes("chroma")) return;
+    // انزياح لوني بسيط عبر خطوط حمراء/زرقاء على الحواف
+    const ctx=this.ctx, o=2+2*Math.sin(this.time*5);
+    ctx.save(); ctx.globalCompositeOperation="screen"; ctx.globalAlpha=0.06;
+    ctx.fillStyle="#ff0033"; ctx.fillRect(-o,0,4,this.H);
+    ctx.fillStyle="#0033ff"; ctx.fillRect(this.W-4+o,0,4,this.H);
+    ctx.restore();
+  }
+
+  _titleCard(scene, p){
+    const ctx=this.ctx;
+    // ظهور/اختفاء
+    let a=1;
+    if(p<0.18) a=U.ease(p/0.18);
+    else if(p>0.82) a=U.ease((1-p)/0.18);
+    ctx.save(); ctx.globalAlpha=a;
+    ctx.textAlign="center"; ctx.textBaseline="middle";
+    // خط تحت العنوان
+    const cx=this.W/2, cy=this.H/2;
+    ctx.shadowColor="rgba(0,0,0,0.8)"; ctx.shadowBlur=20;
+    const size=Math.min(this.W,this.H)* (scene.type==="end"?0.11:0.09);
+    ctx.font=`800 ${size}px ${'"Segoe UI",Tahoma,sans-serif'}`;
+    ctx.fillStyle=THEMES[scene.theme].accent;
+    ctx.fillText(scene.title||"", cx, cy-size*0.2);
+    if(scene.subtitle){
+      ctx.shadowBlur=8; ctx.font=`600 ${size*0.32}px ${'"Segoe UI",Tahoma,sans-serif'}`;
+      ctx.fillStyle="rgba(255,255,255,0.75)";
+      ctx.fillText(scene.subtitle, cx, cy+size*0.55);
+    }
+    // خط زخرفي
+    ctx.shadowBlur=0; ctx.strokeStyle=U.rgba(THEMES[scene.theme].accent,0.6); ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(cx-size*1.4,cy+size*0.18); ctx.lineTo(cx+size*1.4,cy+size*0.18); ctx.stroke();
+    ctx.restore();
+  }
+
+  // صورة مصغّرة لمشهد (للـ storyboard)
+  thumbnail(scene, targetCanvas){
+    const tc=targetCanvas, tctx=tc.getContext("2d");
+    const T=THEMES[scene.theme];
+    const g=tctx.createLinearGradient(0,0,tc.width,tc.height);
+    g.addColorStop(0,T.sky[0]); g.addColorStop(0.5,T.sky[1]); g.addColorStop(1,T.sky[2]);
+    tctx.fillStyle=g; tctx.fillRect(0,0,tc.width,tc.height);
+    const rg=tctx.createRadialGradient(tc.width*0.7,tc.height*0.3,2,tc.width*0.7,tc.height*0.3,tc.width*0.6);
+    rg.addColorStop(0,U.rgba(T.accent,0.5)); rg.addColorStop(1,"rgba(0,0,0,0)");
+    tctx.fillStyle=rg; tctx.fillRect(0,0,tc.width,tc.height);
+    // فينييت
+    const vg=tctx.createRadialGradient(tc.width/2,tc.height/2,4,tc.width/2,tc.height/2,tc.width*0.6);
+    vg.addColorStop(0,"rgba(0,0,0,0)"); vg.addColorStop(1,"rgba(0,0,0,0.55)");
+    tctx.fillStyle=vg; tctx.fillRect(0,0,tc.width,tc.height);
+  }
+}
+
+/* ==================================================================
+   4) محرك الصوت — موسيقى + مؤثرات + سرد
+   ================================================================== */
+class AudioEngine{
+  constructor(){ this.ctx=null; this.master=null; this.musicGain=null; this.sfxGain=null;
+    this.nodes=[]; this.musVol=0.7; this.muted=false; this.currentTheme=null; this._ambient=null; }
+  ensure(){
+    if(this.ctx) { if(this.ctx.state==="suspended") this.ctx.resume(); return; }
+    const AC=window.AudioContext||window.webkitAudioContext; this.ctx=new AC();
+    this.master=this.ctx.createGain(); this.master.gain.value=this.muted?0:0.9; this.master.connect(this.ctx.destination);
+    // ريفيرب بسيط
+    this.reverb=this.ctx.createConvolver(); this.reverb.buffer=this._impulse(2.4,2.2);
+    this.revGain=this.ctx.createGain(); this.revGain.gain.value=0.25; this.revGain.connect(this.master);
+    this.reverb.connect(this.revGain);
+    this.musicGain=this.ctx.createGain(); this.musicGain.gain.value=this.musVol; this.musicGain.connect(this.master); this.musicGain.connect(this.reverb);
+    this.sfxGain=this.ctx.createGain(); this.sfxGain.gain.value=0.8; this.sfxGain.connect(this.master); this.sfxGain.connect(this.reverb);
+    // وجهة للتسجيل
+    this.dest=this.ctx.createMediaStreamDestination(); this.master.connect(this.dest);
+  }
+  _impulse(dur,decay){
+    const rate=this.ctx.sampleRate, len=rate*dur, buf=this.ctx.createBuffer(2,len,rate);
+    for(let ch=0;ch<2;ch++){const d=buf.getChannelData(ch);
+      for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,decay);}
+    return buf;
+  }
+  setMusicVol(v){ this.musVol=v; if(this.musicGain) this.musicGain.gain.setTargetAtTime(this.muted?0:v,this.ctx.currentTime,0.2); }
+  setMuted(m){ this.muted=m; if(this.master) this.master.gain.setTargetAtTime(m?0:0.9,this.ctx.currentTime,0.1); }
+
+  midi(root, semis){ return root*Math.pow(2,semis/12); }
+
+  // تشغيل جو موسيقي لمشهد
+  playTheme(theme){
+    this.ensure();
+    if(this.currentTheme===theme) return;
+    this.currentTheme=theme;
+    this._stopMusic();
+    const T=THEMES[theme], M=T.music, now=this.ctx.currentTime;
+    const grp=this.ctx.createGain(); grp.gain.value=0; grp.connect(this.musicGain);
+    grp.gain.setTargetAtTime(0.5,now,0.8);
+    this._musicGrp=grp;
+
+    // طبقة باد (Pad) — عدة موجات
+    const chord=[0,7,12].map(i=>M.scale[(i)%M.scale.length]);
+    [0, M.scale[2], M.scale[4]||7, 12].forEach((semi,idx)=>{
+      const osc=this.ctx.createOscillator(); osc.type=M.wave;
+      osc.frequency.value=this.midi(M.root, semi)/ (idx===3?1:1);
+      const g=this.ctx.createGain(); g.gain.value=0.0;
+      const flt=this.ctx.createBiquadFilter(); flt.type="lowpass"; flt.frequency.value=800;
+      // LFO على الفلتر
+      const lfo=this.ctx.createOscillator(); lfo.frequency.value=0.06+idx*0.03;
+      const lfoG=this.ctx.createGain(); lfoG.gain.value=400; lfo.connect(lfoG); lfoG.connect(flt.frequency);
+      osc.connect(flt); flt.connect(g); g.connect(grp);
+      g.gain.setTargetAtTime(0.12/ (idx+1),now,1.2);
+      osc.start(); lfo.start();
+      this._musNodes=this._musNodes||[]; this._musNodes.push(osc,lfo);
+    });
+    // باص عميق
+    const bass=this.ctx.createOscillator(); bass.type="sine"; bass.frequency.value=this.midi(M.root,-12);
+    const bg=this.ctx.createGain(); bg.gain.value=0; bass.connect(bg); bg.connect(grp);
+    bg.gain.setTargetAtTime(0.18,now,1.0); bass.start();
+    this._musNodes.push(bass);
+
+    // أربيجيو خفيف حسب الإيقاع
+    this._startArp(theme, grp);
+    // مؤثر بيئي
+    this._startAmbient(T.ambient);
+  }
+  _startArp(theme, grp){
+    const M=THEMES[theme].music;
+    if(["neutral","calm"].includes(M.mood)&&Math.random()<0.5) return;
+    const interval=60/M.tempo/2;
+    let step=0;
+    this._arpTimer=setInterval(()=>{
+      if(!this.ctx) return;
+      const semi=M.scale[step%M.scale.length]+ (step%(M.scale.length*2)>=M.scale.length?12:0);
+      const now=this.ctx.currentTime;
+      const osc=this.ctx.createOscillator(); osc.type=M.wave==="sawtooth"?"triangle":M.wave;
+      osc.frequency.value=this.midi(M.root,semi+12);
+      const g=this.ctx.createGain(); g.gain.value=0; osc.connect(g); g.connect(grp);
+      g.gain.setValueAtTime(0,now); g.gain.linearRampToValueAtTime(0.06,now+0.02);
+      g.gain.exponentialRampToValueAtTime(0.001,now+interval*1.8);
+      osc.start(now); osc.stop(now+interval*2);
+      step++;
+    }, interval*1000);
+  }
+  _startAmbient(kind){
+    this._stopAmbient();
+    if(!kind||kind==="soft") return;
+    const now=this.ctx.currentTime;
+    if(kind==="rain"||kind==="cityrain"){
+      const src=this._noise(); const flt=this.ctx.createBiquadFilter(); flt.type="highpass"; flt.frequency.value=1200;
+      const g=this.ctx.createGain(); g.gain.value=0.0; src.connect(flt); flt.connect(g); g.connect(this.sfxGain);
+      g.gain.setTargetAtTime(0.12,now,1.5); src.start(); this._ambientNodes=[src,g];
+    } else if(kind==="wind"||kind==="space"||kind==="forest"){
+      const src=this._noise(); const flt=this.ctx.createBiquadFilter(); flt.type="lowpass"; flt.frequency.value=500;
+      const g=this.ctx.createGain(); g.gain.value=0; src.connect(flt); flt.connect(g); g.connect(this.sfxGain);
+      const lfo=this.ctx.createOscillator(); lfo.frequency.value=0.2; const lg=this.ctx.createGain(); lg.gain.value=0.05;
+      lfo.connect(lg); lg.connect(g.gain); g.gain.setTargetAtTime(0.08,now,2); src.start(); lfo.start();
+      this._ambientNodes=[src,g,lfo];
+    } else if(kind==="underwater"){
+      const src=this._noise(); const flt=this.ctx.createBiquadFilter(); flt.type="lowpass"; flt.frequency.value=280;
+      const g=this.ctx.createGain(); g.gain.value=0; src.connect(flt); flt.connect(g); g.connect(this.sfxGain);
+      g.gain.setTargetAtTime(0.14,now,2); src.start(); this._ambientNodes=[src,g];
+    } else if(kind==="heartbeat"){
+      this._heartTimer=setInterval(()=>this._thump(),820); this._ambientNodes=[];
+    } else if(kind==="impacts"){
+      this._impactTimer=setInterval(()=>{ if(Math.random()<0.5)this._impact(); },1400); this._ambientNodes=[];
+    }
+    this._ambient=kind;
+  }
+  _thump(){ if(!this.ctx)return; const now=this.ctx.currentTime;
+    for(const d of [0,0.18]){ const o=this.ctx.createOscillator(); o.type="sine"; o.frequency.setValueAtTime(70,now+d);
+      o.frequency.exponentialRampToValueAtTime(35,now+d+0.12); const g=this.ctx.createGain(); g.gain.setValueAtTime(0,now+d);
+      g.gain.linearRampToValueAtTime(0.5,now+d+0.02); g.gain.exponentialRampToValueAtTime(0.001,now+d+0.3);
+      o.connect(g); g.connect(this.sfxGain); o.start(now+d); o.stop(now+d+0.32);} }
+  _impact(){ if(!this.ctx)return; const now=this.ctx.currentTime;
+    const src=this._noise(0.4); const flt=this.ctx.createBiquadFilter(); flt.type="lowpass"; flt.frequency.value=400;
+    const g=this.ctx.createGain(); g.gain.setValueAtTime(0.5,now); g.gain.exponentialRampToValueAtTime(0.001,now+0.6);
+    src.connect(flt); flt.connect(g); g.connect(this.sfxGain); src.start(now); src.stop(now+0.6);
+    const o=this.ctx.createOscillator(); o.type="sine"; o.frequency.setValueAtTime(60,now); o.frequency.exponentialRampToValueAtTime(28,now+0.5);
+    const og=this.ctx.createGain(); og.gain.setValueAtTime(0.6,now); og.gain.exponentialRampToValueAtTime(0.001,now+0.5);
+    o.connect(og); og.connect(this.sfxGain); o.start(now); o.stop(now+0.5); }
+  _noise(dur){ const len=this.ctx.sampleRate*(dur||2); const buf=this.ctx.createBuffer(1,len,this.ctx.sampleRate);
+    const d=buf.getChannelData(0); for(let i=0;i<len;i++)d[i]=Math.random()*2-1;
+    const src=this.ctx.createBufferSource(); src.buffer=buf; src.loop=!dur; return src; }
+
+  _stopAmbient(){
+    clearInterval(this._heartTimer); clearInterval(this._impactTimer); this._heartTimer=this._impactTimer=null;
+    if(this._ambientNodes){ for(const n of this._ambientNodes){ try{ if(n.stop)n.stop(); }catch(e){} try{n.disconnect&&n.disconnect();}catch(e){} } }
+    this._ambientNodes=null; this._ambient=null;
+  }
+  _stopMusic(){
+    clearInterval(this._arpTimer); this._arpTimer=null;
+    if(this._musicGrp&&this.ctx){ const now=this.ctx.currentTime; this._musicGrp.gain.setTargetAtTime(0,now,0.4); }
+    if(this._musNodes){ const arr=this._musNodes; setTimeout(()=>{for(const n of arr){try{n.stop&&n.stop();}catch(e){}}},900); }
+    this._musNodes=[]; this._stopAmbient();
+  }
+  stopAll(){ this._stopMusic(); this.currentTheme=null; if(window.speechSynthesis) speechSynthesis.cancel(); }
+
+  // سرد صوتي
+  narrate(text, theme){
+    if(!window.speechSynthesis||!text) return;
+    try{
+      const u=new SpeechSynthesisUtterance(text);
+      const v=AudioEngine.pickVoice();
+      if(v) u.voice=v; u.lang=(v&&v.lang)||"ar-SA";
+      const M=THEMES[theme].music;
+      u.rate = M.tempo>70?1.02:0.9; u.pitch = M.mood==="horror"||theme==="horror"?0.7: (theme==="hope"||theme==="romance"?1.05:0.95);
+      u.volume=1;
+      speechSynthesis.speak(u);
+    }catch(e){}
+  }
+  static voices=[]; static preferredVoiceURI=null;
+  static loadVoices(){ if(window.speechSynthesis) AudioEngine.voices=speechSynthesis.getVoices()||[]; }
+  static pickVoice(){
+    const vs=AudioEngine.voices;
+    if(AudioEngine.preferredVoiceURI){ const f=vs.find(v=>v.voiceURI===AudioEngine.preferredVoiceURI); if(f)return f; }
+    return vs.find(v=>/ar(-|_|$)/i.test(v.lang)) || vs.find(v=>/arabic/i.test(v.name)) || null;
+  }
+}
+
+/* ==================================================================
+   5) المشغّل — الخط الزمني والتزامن
+   ================================================================== */
+class Player{
+  constructor(renderer, audio, ui){
+    this.r=renderer; this.a=audio; this.ui=ui;
+    this.film=null; this.playing=false; this.t=0; this.last=0; this.raf=null;
+    this.curScene=-1; this.narrateOn=true;
+  }
+  load(film){
+    this.film=film; this.t=0; this.curScene=-1;
+    this.r.setSize(this.ui.aspect);
+    if(film.scenes[0]) this.r.initParticles(film.scenes[0].theme);
+    this._drawStatic(0);
+  }
+  _sceneAt(t){
+    let acc=0;
+    for(let i=0;i<this.film.scenes.length;i++){
+      const s=this.film.scenes[i]; if(t<acc+s.dur) return {i, s, local:(t-acc)/s.dur, start:acc};
+      acc+=s.dur;
+    }
+    const last=this.film.scenes.length-1;
+    return {i:last, s:this.film.scenes[last], local:1, start:acc-this.film.scenes[last].dur};
+  }
+  play(){
+    if(!this.film) return;
+    if(this.t>=this.film.totalDur-0.05) this.t=0;
+    this.a.ensure();
+    this.playing=true; this.last=performance.now(); this.ui.setPlaying(true);
+    this.ui.overlay.style.opacity=0;
+    const info=this._sceneAt(this.t); this._enterScene(info.i, true);
+    this._loop();
+  }
+  pause(){ this.playing=false; cancelAnimationFrame(this.raf); this.ui.setPlaying(false);
+    if(window.speechSynthesis) speechSynthesis.pause?.(); this.a.stopAll(); }
+  restart(){ this.t=0; this.curScene=-1; if(this.playing){this.a.stopAll(); const i=this._sceneAt(0); this._enterScene(i.i,true);} else this._drawStatic(0); this._updateUI(); }
+  seek(frac){
+    if(!this.film) return;
+    this.t=U.clamp(frac,0,1)*this.film.totalDur;
+    const info=this._sceneAt(this.t);
+    if(this.playing){ this.a.stopAll(); this.curScene=-1; this._enterScene(info.i,false); }
+    else this._drawStatic(this.t);
+    this._updateUI();
+  }
+  _enterScene(i, narrate){
+    if(i===this.curScene) return;
+    this.curScene=i; const s=this.film.scenes[i];
+    this.r.initParticles(s.theme);
+    this.a.playTheme(s.theme);
+    this.ui.setActiveShot(i);
+    if(narrate && this.narrateOn && s.narr) { setTimeout(()=>{ if(this.playing) this.a.narrate(s.narr, s.theme); }, 350); }
+    // نص الترجمة
+    this.ui.setSubtitle(this.ui.subsOn ? (s.text||s.title||"") : "");
+  }
+  _loop=()=>{
+    if(!this.playing) return;
+    const now=performance.now(); let dt=(now-this.last)/1000; this.last=now; dt=Math.min(dt,0.05);
+    this.t+=dt;
+    if(this.t>=this.film.totalDur){ this.t=this.film.totalDur; this._drawStatic(this.t); this.pause(); this._updateUI(); return; }
+    const info=this._sceneAt(this.t);
+    this._enterScene(info.i, true);
+    // انتقال بين المشاهد (كروس فيد بسيط في أول 0.5ث)
+    let op=1; const fadeT=0.6;
+    if(info.local < fadeT/info.s.dur) op=U.ease(info.local*info.s.dur/fadeT);
+    this.r.renderScene(info.s, info.local, dt, op);
+    this._updateUI();
+    this.raf=requestAnimationFrame(this._loop);
+  }
+  _drawStatic(t){
+    if(!this.film) return;
+    const info=this._sceneAt(t); this.r.initParticles(info.s.theme);
+    this.r.renderScene(info.s, info.local, 0.016, 1);
+    this.ui.setActiveShot(info.i);
+    this.ui.setSubtitle(this.ui.subsOn?(info.s.text||info.s.title||""):"");
+  }
+  _updateUI(){
+    const frac=this.film? this.t/this.film.totalDur:0;
+    this.ui.setProgress(frac, this.t, this.film?this.film.totalDur:0);
+  }
+}
+
+/* ==================================================================
+   6) التصدير — تسجيل الفيلم كملف فيديو
+   ================================================================== */
+async function exportFilm(player, renderer, audio, ui){
+  if(!player.film){ ui.status("لا يوجد فيلم للتصدير — ولّد فيلمًا أولًا."); return; }
+  if(!renderer.c.captureStream){ ui.status("متصفحك لا يدعم تسجيل الفيديو. جرّب Chrome/Edge."); return; }
+  audio.ensure();
+  ui.status("⏺️ يبدأ التسجيل… سيتم تشغيل الفيلم كاملًا مرة واحدة.");
+  ui.recBadge.classList.add("on");
+
+  const vStream=renderer.c.captureStream(30);
+  const tracks=[...vStream.getVideoTracks()];
+  if(audio.dest && audio.dest.stream.getAudioTracks().length) tracks.push(...audio.dest.stream.getAudioTracks());
+  const stream=new MediaStream(tracks);
+
+  let mime="video/webm;codecs=vp9,opus";
+  if(!MediaRecorder.isTypeSupported(mime)) mime="video/webm;codecs=vp8,opus";
+  if(!MediaRecorder.isTypeSupported(mime)) mime="video/webm";
+  const rec=new MediaRecorder(stream,{mimeType:mime, videoBitsPerSecond:6_000_000});
+  const chunks=[];
+  rec.ondataavailable=e=>{ if(e.data.size)chunks.push(e.data); };
+  const done=new Promise(res=>rec.onstop=res);
+
+  rec.start(100);
+  player.restart(); player.t=0; player.play();
+
+  // انتظر انتهاء الفيلم
+  await new Promise(res=>{
+    const chk=setInterval(()=>{ if(!player.playing || player.t>=player.film.totalDur-0.02){ clearInterval(chk); res(); } }, 200);
+  });
+  await new Promise(r=>setTimeout(r,400));
+  rec.stop(); await done;
+  ui.recBadge.classList.remove("on");
+
+  const blob=new Blob(chunks,{type:"video/webm"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url; a.download=(player.film.title||"سينمائي").replace(/\s+/g,"_")+".webm";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),4000);
+  ui.status("✅ تم تصدير الفيلم بنجاح (صيغة WebM).");
+}
+
+/* ==================================================================
+   7) الواجهة — الربط
+   ================================================================== */
+const genres=[
+  {k:"",label:"تلقائي 🎯"},{k:"despair",label:"بؤس 💧"},{k:"underwater",label:"أعماق 🐟"},
+  {k:"horror",label:"رعب 👻"},{k:"war",label:"حرب 🔥"},{k:"romance",label:"حب 💗"},
+  {k:"hope",label:"أمل 🌅"},{k:"city",label:"مدينة 🌃"},{k:"desert",label:"صحراء 🏜️"},
+  {k:"space",label:"فضاء 🌌"},{k:"forest",label:"غابة 🌲"}
+];
+
+const el=id=>document.getElementById(id);
+const canvas=el("film");
+const renderer=new Renderer(canvas);
+const audio=new AudioEngine();
+
+const ui={
+  aspect:"cine", subsOn:true, forcedTheme:"",
+  overlay:el("overlay"), subtitle:el("subtitle"), recBadge:el("recBadge"),
+  setPlaying(p){ el("btnPlay").textContent=p?"⏸":"▶"; },
+  setProgress(frac,t,total){ el("timeFill").style.width=(frac*100)+"%"; el("timeLabel").textContent=`${U.fmt(t)} / ${U.fmt(total)}`; },
+  setSubtitle(s){ this.subtitle.textContent=s||""; },
+  status(m){ el("status").textContent=m||""; },
+  setActiveShot(i){ document.querySelectorAll(".shot").forEach(n=>n.classList.toggle("active", +n.dataset.i===i));
+    const act=document.querySelector(`.shot[data-i="${i}"]`); if(act) act.scrollIntoView({inline:"center",block:"nearest",behavior:"smooth"}); }
+};
+const player=new Player(renderer, audio, ui);
+
+// بناء رقائق الأنماط
+const chipWrap=el("genreChips");
+genres.forEach((g,idx)=>{ const c=document.createElement("div"); c.className="chip"+(idx===0?" on":""); c.textContent=g.label; c.dataset.k=g.k;
+  c.onclick=()=>{ document.querySelectorAll("#genreChips .chip").forEach(x=>x.classList.remove("on")); c.classList.add("on"); ui.forcedTheme=g.k; };
+  chipWrap.appendChild(c); });
+
+// أبعاد الشاشة
+el("aspect").onchange=e=>{ ui.aspect=e.target.value; const sc=el("screen");
+  sc.className="screen "+(ui.aspect==="cine"?"cine":ui.aspect==="vertical"?"vertical":"");
+  renderer.setSize(ui.aspect); if(player.film) player._drawStatic(player.t); };
+
+// المنزلقات
+el("dur").oninput=e=>el("durVal").textContent=(+e.target.value).toFixed(1)+" ث";
+el("fx").oninput=e=>{ const v=+e.target.value; renderer.fxLevel=v/100;
+  el("fxVal").textContent= v<30?"خفيفة":v<70?"متوسطة":"قوية"; };
+el("musVol").oninput=e=>{ const v=+e.target.value; el("musVal").textContent=v+"%"; audio.setMusicVol(v/100); };
+renderer.fxLevel=0.8;
+
+// المفاتيح
+el("tNarr").onchange=e=>player.narrateOn=e.target.checked;
+el("tGrain").onchange=e=>renderer.grainOn=e.target.checked;
+el("tSubs").onchange=e=>{ ui.subsOn=e.target.checked; if(!ui.subsOn)ui.setSubtitle(""); else if(player.film)player._drawStatic(player.t); };
+player.narrateOn=true; renderer.grainOn=true;
+
+// أصوات السرد
+function fillVoices(){
+  AudioEngine.loadVoices();
+  const sel=el("voiceSel"); sel.innerHTML="";
+  const arVoices=AudioEngine.voices.filter(v=>/ar(-|_|$)|arabic/i.test(v.lang+" "+v.name));
+  const list=arVoices.length?arVoices:AudioEngine.voices.slice(0,8);
+  if(!list.length){ const o=document.createElement("option"); o.textContent="افتراضي (متصفح)"; sel.appendChild(o); return; }
+  list.forEach(v=>{ const o=document.createElement("option"); o.value=v.voiceURI; o.textContent=v.name+" — "+v.lang; sel.appendChild(o); });
+  sel.onchange=e=>AudioEngine.preferredVoiceURI=e.target.value;
+  AudioEngine.preferredVoiceURI=list[0].voiceURI;
+}
+if(window.speechSynthesis){ speechSynthesis.onvoiceschanged=fillVoices; setTimeout(fillVoices,300); }
+
+// الأزرار
+el("btnGenerate").onclick=()=>{
+  const text=el("story").value.trim();
+  if(!text){ ui.status("✍️ اكتب قصة أو وصفًا أولًا."); el("story").focus(); return; }
+  ui.status("🎬 جارٍ بناء السيناريو والمشاهد…");
+  const opts={ dur:+el("dur").value, forcedTheme:ui.forcedTheme };
+  const film=Director.build(text, opts);
+  if(!film){ ui.status("تعذّر بناء الفيلم."); return; }
+  player.load(film);
+  buildStoryboard(film);
+  ui.status(`✅ فيلم «${film.title}» جاهز — ${film.scenes.length} مشهد · ${U.fmt(film.totalDur)} دقيقة. اضغط ▶ للتشغيل.`);
+  ui.overlay.style.opacity=0;
+  setTimeout(()=>player.play(), 200);
+};
+el("btnPlay").onclick=()=> player.playing?player.pause():player.play();
+el("btnRestart").onclick=()=>player.restart();
+el("btnMute").onclick=()=>{ audio.setMuted(!audio.muted); el("btnMute").textContent=audio.muted?"🔇":"🔊"; };
+el("timeline").onclick=e=>{ const r=e.currentTarget.getBoundingClientRect(); const frac=(r.right-e.clientX)/r.width; player.seek(frac); };
+el("btnDownload").onclick=()=>exportFilm(player,renderer,audio,ui);
+el("btnScript").onclick=()=>showScript();
+
+el("btnExample").onclick=()=>{
+  const samples=[
+    "في مدينة غارقة تحت المطر، يمشي رجل وحيد يحمل ذكرياته الثقيلة. البؤس يملأ الشوارع الباردة والدموع تختلط بالمطر. لكن في الأفق يلمع نور خافت، ثم يشرق الفجر ويولد الأمل من جديد.",
+    "غاص الغواص في أعماق البحر المظلمة، تحيط به الأسماك وأشعة الضوء ترقص على الرمال. اكتشف مدينة غارقة قديمة تنبض بالأسرار.",
+    "اشتعلت المعركة عند الفجر، انفجارات ونيران تلتهم المدينة، الجنود يركضون وسط الدمار. وبعد الحرب، وقف طفل وحيد يبحث عن أمل بين الركام."
+  ];
+  el("story").value=samples[Math.floor(Math.random()*samples.length)];
+  ui.status("تم تحميل قصة تجريبية — اضغط «توليد الفيلم».");
+};
+
+// لوحة القصص المصورة
+function buildStoryboard(film){
+  const wrap=el("storyboard"); wrap.innerHTML="";
+  film.scenes.forEach((s,i)=>{
+    const d=document.createElement("div"); d.className="shot"; d.dataset.i=i;
+    const cv=document.createElement("canvas"); cv.width=200; cv.height=110; renderer.thumbnail(s,cv);
+    const num=document.createElement("div"); num.className="num"; num.textContent=(i+1);
+    const lbl=document.createElement("div"); lbl.className="lbl";
+    lbl.textContent = s.type==="title"?"🎬 "+(s.title||"العنوان") : s.type==="end"?"🏁 النهاية" : (THEMES[s.theme].name);
+    d.appendChild(cv); d.appendChild(num); d.appendChild(lbl);
+    d.onclick=()=>{ let acc=0; for(let j=0;j<i;j++)acc+=film.scenes[j].dur; player.seek(acc/film.totalDur); };
+    wrap.appendChild(d);
+  });
+}
+
+// عرض السيناريو
+function showScript(){
+  if(!player.film){ ui.status("ولّد فيلمًا أولًا لعرض السيناريو."); return; }
+  const f=player.film;
+  let txt=`🎬 «${f.title}»\nالنمط: ${THEMES[f.theme].name} · ${f.scenes.length} مشهد · المدة ${U.fmt(f.totalDur)}\n${"—".repeat(30)}\n`;
+  f.scenes.forEach((s,i)=>{
+    txt+=`\nمشهد ${i+1} [${THEMES[s.theme].name}] (${s.dur.toFixed(1)}ث)\n`;
+    txt+=`  الكاميرا: ${s.camera}\n`;
+    if(s.title) txt+=`  العنوان: ${s.title}\n`;
+    if(s.text) txt+=`  المشهد: ${s.text}\n`;
+    txt+=`  الصوت: موسيقى ${THEMES[s.theme].music.mood} + ${THEMES[s.theme].ambient}\n`;
+  });
+  const w=window.open("","_script","width=560,height=680");
+  if(w){ w.document.write(`<pre dir="rtl" style="font-family:Tahoma;white-space:pre-wrap;padding:20px;background:#0c0e16;color:#eef1fb;line-height:1.9">${txt.replace(/</g,"&lt;")}</pre>`); w.document.title="السيناريو"; }
+  else { ui.status("اسمح بالنوافذ المنبثقة لعرض السيناريو."); }
+}
+
+// تهيئة أولى
+renderer.setSize(ui.aspect);
+(function idle(){
+  // خلفية متحركة خفيفة قبل التوليد
+  renderer.initParticles("cinematic");
+  let last=performance.now();
+  function frame(now){
+    if(player.film){ return; } // توقف عند تحميل فيلم
+    const dt=Math.min((now-last)/1000,0.05); last=now;
+    renderer.renderScene({type:"scene",theme:"cinematic",camera:"drift"}, (now/9000)%1, dt, 1);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
