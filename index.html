@@ -66,8 +66,14 @@
           <h1 class="game-title"><span>ستيكمان</span> <span class="accent">ديويل</span></h1>
           <p class="game-sub">Stickman Duel — قتال فيزيائي احترافي</p>
         </div>
+        <div class="stats-bar">
+          <span>🪙 <b id="coinCount">0</b></span>
+          <span>🏆 أفضل موجة <b id="bestSurvival">0</b></span>
+          <span>⚔️ انتصارات <b id="winCount">0</b></span>
+        </div>
         <div class="menu-buttons">
           <button id="btnPlay1p" class="btn btn-primary">🎮 لاعب واحد <small>ضد الكمبيوتر</small></button>
+          <button id="btnPlaySurvival" class="btn btn-fire">🔥 وضع البقاء <small>موجات لا تنتهي — سجّل أعلى رقم</small></button>
           <button id="btnPlayOnline" class="btn">🌐 أونلاين <small>العب مع أصدقائك على أجهزة مختلفة</small></button>
           <button id="btnHowto" class="btn btn-ghost">📖 كيف تلعب</button>
         </div>
@@ -143,7 +149,7 @@
 
       <!-- Setup / Character select -->
       <section id="screenSetup" class="screen hidden">
-        <h2 class="screen-title">إعداد المباراة • Match Setup</h2>
+        <h2 class="screen-title" id="setupTitle">إعداد المباراة • Match Setup</h2>
         <div class="setup-grid">
           <!-- Player 1 -->
           <div class="setup-col">
@@ -164,7 +170,7 @@
           </div>
 
           <!-- Player 2 -->
-          <div class="setup-col">
+          <div class="setup-col" id="p2Col">
             <h3 class="col-title p2c" id="p2Title">الخصم (كمبيوتر) • CPU</h3>
             <div class="field"><label>اللون</label>
               <div class="colors" id="p2Colors">
@@ -195,7 +201,7 @@
                 <button data-value="insane">جنوني</button>
               </div>
             </div>
-            <div class="field"><label>عدد الجولات</label>
+            <div class="field" id="roundsWrap"><label>عدد الجولات</label>
               <div class="segment" id="roundsGroup">
                 <button data-value="1">1</button>
                 <button data-value="3" class="active">3</button>

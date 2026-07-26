@@ -98,6 +98,19 @@ html, body {
 }
 .game-sub { color: var(--muted); margin: 0.4rem 0 0; font-size: clamp(0.85rem, 2.5vw, 1.05rem); }
 
+.stats-bar {
+  display: flex; justify-content: center; gap: 18px; flex-wrap: wrap;
+  margin: 0 auto 16px; padding: 8px 14px; max-width: 420px;
+  background: rgba(0, 0, 0, 0.28); border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.82rem; color: var(--muted);
+}
+.stats-bar b { color: var(--text); font-size: 1rem; }
+.btn-fire {
+  background: linear-gradient(145deg, #ff8a00, #ff3b3b);
+  border-color: rgba(255, 200, 120, 0.35);
+  box-shadow: 0 8px 24px rgba(255, 90, 40, 0.4);
+}
 .menu-buttons { display: flex; flex-direction: column; gap: 12px; max-width: 380px; margin: 0 auto; }
 .menu-footer { display: flex; justify-content: center; gap: 22px; margin-top: 1.6rem; }
 

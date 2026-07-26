@@ -44,6 +44,8 @@ class Stickman {
     this.special = 0;          // rage meter 0..1
     this.rageActive = false;
     this.rageTimer = 0;
+    this.combo = 0;            // consecutive hits landed
+    this._comboTimer = 0;     // frames left before the combo resets
     this._hitParticles = new Map(); // opponent particle -> cooldown frames
     this.deathTimer = 0;
 
@@ -234,17 +236,36 @@ class Stickman {
         if (this.rageActive) dmg *= 1.6;               // rage boosts damage
         const dirX = w.dx, dirY = w.dy;
         const dealt = opponent.takeHit(dmg, dirX, dirY, power * (this.rageActive ? 1.3 : 1), this);
-        if (dealt > 0) {
-          this.special = Utils.clamp(this.special + dealt * 0.011, 0, 1); // build meter on hits dealt
+        if (dealt > 0 && !opponent.blocking) {
+          // ----- Combo: consecutive hits build a counter & extra meter -----
+          this.combo++;
+          this._comboTimer = 100; // ~1.6s window
+          this.special = Utils.clamp(this.special + dealt * 0.011 + this.combo * 0.006, 0, 1);
           if (this.fx) {
-            this.fx.damageText(seg.qx, seg.qy - 10, dealt,
-              opponent.blocking ? '#8ce0ff' : (this.rageActive ? '#ff5a6e' : '#ffe36e'));
-            if (!cont) this.fx.sparks(seg.qx, seg.qy, this.rageActive ? 12 : 6);
+            this.fx.damageText(seg.qx, seg.qy - 10, dealt, this.rageActive ? '#ff5a6e' : '#ffe36e');
+            this.fx.sparks(seg.qx, seg.qy, this.rageActive ? 12 : 6);
+            if (this.combo >= 2) this._comboCallout(seg.qx, seg.qy);
           }
+        } else if (dealt > 0) {
+          this.special = Utils.clamp(this.special + dealt * 0.011, 0, 1);
+          if (this.fx) { this.fx.damageText(seg.qx, seg.qy - 10, dealt, '#8ce0ff'); if (!cont) this.fx.sparks(seg.qx, seg.qy, 6); }
         }
         this._hitParticles.set(key, cont ? 8 : 999); // one hit per swing (or ticking for chainsaw)
         if (!cont) break; // one target per swing for non-continuous
       }
+    }
+  }
+
+  /** Floating combo callout with escalating praise & flair */
+  _comboCallout(x, y) {
+    const c = this.combo;
+    const praise = c >= 12 ? 'وحشي! SAVAGE!' : c >= 8 ? 'مذهل! AMAZING!'
+      : c >= 5 ? 'رائع! GREAT!' : c >= 3 ? 'كومبو! COMBO!' : null;
+    const col = c >= 8 ? '#ff5a6e' : c >= 5 ? '#ffb703' : '#ffe36e';
+    this.fx.floatText(x, y - 34, 'x' + c, col, 24 + Math.min(28, c * 2));
+    if (praise && c % (c >= 8 ? 4 : 1) === 0) {
+      this.fx.floatText(x, y - 64, praise, col, 22);
+      this.fx.sparks(x, y - 20, 6 + Math.min(14, c));
     }
   }
 
@@ -256,11 +277,15 @@ class Stickman {
     if (this.hitFlash > 0) this.hitFlash--;
     if (this._jumpLock > 0) this._jumpLock--;
     if (this._justJumped > 0) this._justJumped--;
+    if (this._jumpUpright > 0) this._jumpUpright--;
     if (this.dashCooldown > 0) this.dashCooldown--;
     if (this.knockdownTimer > 0) this.knockdownTimer--;
     for (const [k, v] of this._hitParticles) {
       if (v < 999) { const nv = v - 1; if (nv <= 0) this._hitParticles.delete(k); else this._hitParticles.set(k, nv); }
     }
+
+    // Combo decay: reset the counter if you stop landing hits
+    if (this._comboTimer > 0) { this._comboTimer--; if (this._comboTimer === 0) this.combo = 0; }
 
     // Rage / special meter
     if (this.rageActive) {
@@ -339,14 +364,19 @@ class Stickman {
     if (jumpPressed && this._jumpLock <= 0 && this.jumpsLeft > 0) {
       const groundJump = grounded || this._coyote > 0;
       const airJump = !groundJump;
-      const j = airJump ? -14 : -16.5;   // higher jump so you can reach ledges & clear gaps
+      const j = airJump ? -18 : -20;   // big, tall jump
       const footY0 = Math.max(this.footA.y, this.footB.y);
+      // Horizontal boost in the direction you're holding → a long running jump
+      // (and, importantly, never a backward shove).
+      const hb = moveInput !== 0 ? Math.sign(moveInput) * (airJump ? 3.2 : 4) : 0;
       for (const pt of [this.pelvis, this.chest, this.head, this.kneeA, this.kneeB, this.footA, this.footB]) {
-        pt.applyImpulse(0, j);
+        pt.applyImpulse(hb, j);
         pt.onGround = false;   // launch at FULL velocity — don't let ground
                                 // friction damp the feet (which held the jump down)
       }
-      this.frontHand.applyImpulse(0, j * 0.5); this.backHand.applyImpulse(0, j * 0.5);
+      this.frontHand.applyImpulse(hb, j * 0.5); this.backHand.applyImpulse(hb, j * 0.5);
+      // brief upright boost so the body launches straight and doesn't tip back
+      this._jumpUpright = 8;
       this.jumpsLeft--;
       this._coyote = 0;
       this._jumpLock = 12;
@@ -354,7 +384,7 @@ class Stickman {
       if (this.audio) this.audio.jump();
       if (this.fx) {
         this.fx.dust(this.pelvis.x, footY0 + 6, 0, 7);
-        if (airJump) this.fx.shock(this.pelvis.x, this.pelvis.y + 24, '#ffffff');
+        if (airJump) { this.fx.shock(this.pelvis.x, this.pelvis.y + 24, '#ffffff'); this.fx.sparks(this.pelvis.x, this.pelvis.y + 20, 8); }
       }
     }
     this._jumpHeld = this.control.jump;
@@ -423,9 +453,12 @@ class Stickman {
   /** Active balance: keep the torso upright above the pelvis */
   balance(grounded) {
     // moderate upright hold — firm enough to stay standing, low enough to avoid
-    // the oscillation/bounce that too-strong correction causes.
+    // the oscillation/bounce that too-strong correction causes. Right after a
+    // jump we hold upright firmly in the air too, so the body launches straight
+    // up instead of tipping backward.
     const stagger = this.knockdownTimer > 0 ? 0.45 : 1;
-    const strength = (grounded ? 0.16 : 0.06) * stagger;
+    const air = this._jumpUpright > 0 ? 0.16 : 0.06;
+    const strength = (grounded ? 0.16 : air) * stagger;
     // rotate chest & head around pelvis toward vertical
     const cur = Math.atan2(this.chest.y - this.pelvis.y, this.chest.x - this.pelvis.x);
     const target = -Math.PI / 2; // straight up

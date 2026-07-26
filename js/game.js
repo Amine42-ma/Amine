@@ -40,6 +40,11 @@ class Game {
     this.roundTime = 0;
     this.countdown = 0;
     this._lastWinner = null;
+    this._waveBanner = 0;
+
+    // Persistent progression (coins, best scores, stats)
+    this.save = Object.assign({ coins: 0, bestSurvival: 0, wins: 0, games: 0, bestCombo: 0 }, this._loadSave());
+    this.survival = null;
 
     // Online multiplayer
     this.net = new NetworkManager();
@@ -54,6 +59,7 @@ class Game {
 
     this.buildSetupUI();
     this.bindUI();
+    this._updateMenuStats();
     this.input.bindTouch(document);
     this.input.onPause(() => this.togglePause());
 
@@ -73,6 +79,20 @@ class Game {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.viewW = w;
     this.viewH = h;
+  }
+
+  /* ===================== Persistent save ===================== */
+  _loadSave() {
+    try { return JSON.parse(localStorage.getItem('stickmanDuelSave')) || {}; } catch (e) { return {}; }
+  }
+  _save() {
+    try { localStorage.setItem('stickmanDuelSave', JSON.stringify(this.save)); } catch (e) {}
+    this._updateMenuStats();
+  }
+  _updateMenuStats() {
+    const c = document.getElementById('coinCount'); if (c) c.textContent = this.save.coins | 0;
+    const bs = document.getElementById('bestSurvival'); if (bs) bs.textContent = this.save.bestSurvival | 0;
+    const w = document.getElementById('winCount'); if (w) w.textContent = this.save.wins | 0;
   }
 
   /* =====================================================================
@@ -170,12 +190,12 @@ class Game {
     };
 
     click('btnPlay1p', () => { this.config.mode = '1p'; this.openSetup(); });
-    click('btnPlay2p', () => { this.config.mode = '2p'; this.openSetup(); });
+    click('btnPlaySurvival', () => { this.config.mode = 'survival'; this.openSetup(); });
     click('btnPlayOnline', () => this.openOnline());
     click('btnHowto', () => this.showScreen('howto'));
     click('btnHowtoBack', () => this.showScreen('menu'));
     click('btnSetupBack', () => this.showScreen('menu'));
-    click('btnStart', () => this.startMatch());
+    click('btnStart', () => { if (this.config.mode === 'survival') this.startSurvival(); else this.startMatch(); });
 
     // Online screen
     click('btnNetCreate', () => this.netCreate());
@@ -239,11 +259,21 @@ class Game {
   }
 
   openSetup() {
-    // Toggle 1p-only controls (difficulty) & second-player labels
+    const survival = this.config.mode === 'survival';
+    // Difficulty applies to 1p only; rounds don't apply to survival.
     const diffWrap = document.getElementById('difficultyWrap');
     if (diffWrap) diffWrap.style.display = this.config.mode === '1p' ? '' : 'none';
+    const roundsWrap = document.getElementById('roundsWrap');
+    if (roundsWrap) roundsWrap.style.display = survival ? 'none' : '';
+    // Hide the opponent loadout column in survival (enemies are random)
+    const p2col = document.getElementById('p2Col');
+    if (p2col) p2col.style.display = survival ? 'none' : '';
     const p2title = document.getElementById('p2Title');
     if (p2title) p2title.textContent = this.config.mode === '1p' ? 'الخصم (كمبيوتر) • CPU' : 'اللاعب 2 • Player 2';
+    const startBtn = document.getElementById('btnStart');
+    if (startBtn) startBtn.textContent = survival ? 'ابدأ البقاء! 🔥' : 'ابدأ القتال! ⚔️';
+    const stitle = document.getElementById('setupTitle');
+    if (stitle) stitle.textContent = survival ? 'وضع البقاء • Survival' : 'إعداد المباراة • Match Setup';
     this.showScreen('setup');
   }
 
@@ -272,11 +302,83 @@ class Game {
     this.audio.init(); this.audio.resume();
     const musT = document.getElementById('toggleMusic');
     if (!musT || musT.checked) this.audio.toggleMusic(true);
+    this.survival = null;
     this.scores = [0, 0];
     this.round = 0;
     document.querySelectorAll('.screen').forEach((s) => s.classList.add('hidden'));
     document.getElementById('overlay').classList.remove('active');
     this.startRound();
+  }
+
+  /* ===================== Survival (endless) mode ===================== */
+  startSurvival() {
+    this.audio.init(); this.audio.resume();
+    const musT = document.getElementById('toggleMusic');
+    if (!musT || musT.checked) this.audio.toggleMusic(true);
+    this.config.mode = 'survival';
+    this.survival = { wave: 1, kills: 0 };
+    this.scores = [0, 0];
+    this.round = 0;
+    document.querySelectorAll('.screen').forEach((s) => s.classList.add('hidden'));
+    document.getElementById('overlay').classList.remove('active');
+    this.startRound();
+  }
+
+  _survivalDifficulty() {
+    const w = this.survival.wave;
+    return w < 3 ? 'easy' : w < 6 ? 'normal' : w < 10 ? 'hard' : 'insane';
+  }
+
+  _spawnSurvivalEnemy() {
+    const colors = ['#ff3b57', '#f97316', '#a855f7', '#10b981', '#eab308', '#ec4899', '#06b6d4'];
+    const col = colors[this.survival.wave % colors.length];
+    const s = this.map.spawns[1];
+    this.f2 = new Stickman(this.world, {
+      x: s.x, y: s.y, id: 1, facing: -1, color: col, outline: this._darken(col),
+      weaponId: Utils.pick(WEAPONS).id, name: 'CPU', fx: this.fx, audio: this.audio,
+    });
+    this.f2.maxHealth = 100 + Math.min(150, (this.survival.wave - 1) * 12);
+    this.f2.health = this.f2.maxHealth;
+    this.f2.isLocal = false;
+    this.ai = new AIController(this.f2, this.f1, this._survivalDifficulty(),
+      { platforms: this.map.platforms, hazard: this.map.hazard });
+  }
+
+  _survivalNextWave() {
+    this.survival.kills++;
+    this.survival.wave++;
+    this.save.coins = (this.save.coins | 0) + 8 + this.survival.wave;
+    this._save();
+    // reward the player: heal + a chunk of rage meter
+    this.f1.health = Utils.clamp(this.f1.health + 30, 0, this.f1.maxHealth);
+    this.f1.special = Utils.clamp(this.f1.special + 0.35, 0, 1);
+    this.fx.confetti(this.f1.centerX, this.f1.centerY - 40);
+    // remove the fallen enemy and spawn a tougher one
+    this.world.removeParticles(this.f2.all);
+    this._spawnSurvivalEnemy();
+    this.slowmo = 26; this.shake = 8;
+    this._waveBanner = 70;
+    if (this.audio) this.audio.win();
+  }
+
+  _survivalGameOver() {
+    this.state = 'matchover';
+    const reached = this.survival.wave - 1;
+    this.save.games = (this.save.games | 0) + 1;
+    this.save.coins = (this.save.coins | 0) + this.survival.kills * 4;
+    const isBest = reached > (this.save.bestSurvival | 0);
+    if (isBest) this.save.bestSurvival = reached;
+    if (this.f1.combo > (this.save.bestCombo | 0)) this.save.bestCombo = this.f1.combo;
+    this._save();
+    const title = document.getElementById('resultTitle');
+    const sub = document.getElementById('resultSub');
+    title.textContent = isBest ? 'رقم قياسي! • NEW BEST!' : 'انتهت اللعبة • GAME OVER';
+    title.className = 'result-title ' + (isBest ? 'win' : 'lose');
+    sub.innerHTML = `نجوت حتى الموجة <b>${reached}</b> • القتلى ${this.survival.kills}<br>` +
+      `<span style="font-size:.8em;color:var(--muted)">الأفضل: موجة ${this.save.bestSurvival} • 🪙 ${this.save.coins}</span>`;
+    if (isBest) { this.audio.win(); this.fx.confetti(this.viewW / 2, this.viewH * 0.3); } else this.audio.lose();
+    document.getElementById('screenResult').classList.remove('hidden');
+    document.getElementById('overlay').classList.add('active');
   }
 
   startRound() {
@@ -295,25 +397,28 @@ class Game {
       color: this.config.p1Color, outline: this._darken(this.config.p1Color),
       weaponId: this.config.p1Weapon, name: 'P1', fx: this.fx, audio: this.audio,
     });
-    this.f2 = new Stickman(this.world, {
-      x: s[1].x, y: s[1].y, id: 1, facing: -1,
-      color: this.config.p2Color, outline: this._darken(this.config.p2Color),
-      weaponId: this.config.p2Weapon, name: this.config.mode === '1p' ? 'CPU' : 'P2',
-      fx: this.fx, audio: this.audio,
-    });
-
-    this.ai = this.config.mode === '1p'
-      ? new AIController(this.f2, this.f1, this.config.difficulty,
-          { platforms: this.map.platforms, hazard: this.map.hazard })
-      : null;
-
-    // mark which fighter the human on this device controls (for the "أنت" tag)
-    if (this.online) {
-      this.f1.isLocal = this.online.role === 'host';
-      this.f2.isLocal = this.online.role === 'guest';
+    if (this.config.mode === 'survival') {
+      this.f1.isLocal = true;
+      this._spawnSurvivalEnemy();   // creates this.f2 + this.ai, scaled by wave
     } else {
-      this.f1.isLocal = this.config.mode === '1p';
-      this.f2.isLocal = false;
+      this.f2 = new Stickman(this.world, {
+        x: s[1].x, y: s[1].y, id: 1, facing: -1,
+        color: this.config.p2Color, outline: this._darken(this.config.p2Color),
+        weaponId: this.config.p2Weapon, name: this.config.mode === '1p' ? 'CPU' : 'P2',
+        fx: this.fx, audio: this.audio,
+      });
+      this.ai = this.config.mode === '1p'
+        ? new AIController(this.f2, this.f1, this.config.difficulty,
+            { platforms: this.map.platforms, hazard: this.map.hazard })
+        : null;
+      // mark which fighter the human on this device controls (for the "أنت" tag)
+      if (this.online) {
+        this.f1.isLocal = this.online.role === 'host';
+        this.f2.isLocal = this.online.role === 'guest';
+      } else {
+        this.f1.isLocal = this.config.mode === '1p';
+        this.f2.isLocal = false;
+      }
     }
 
     // pickups (health / weapon crates)
@@ -373,6 +478,14 @@ class Game {
       title.className = 'result-title ' + (p1Won ? 'win' : 'lose2');
     }
     sub.textContent = `النتيجة ${this.scores[0]} - ${this.scores[1]}`;
+    // progression: coins + win/game stats
+    if (this.config.mode === '1p') {
+      this.save.games = (this.save.games | 0) + 1;
+      if (p1Won) { this.save.wins = (this.save.wins | 0) + 1; this.save.coins = (this.save.coins | 0) + 15; }
+      else this.save.coins = (this.save.coins | 0) + 4;
+      if (this.f1.combo > (this.save.bestCombo | 0)) this.save.bestCombo = this.f1.combo;
+      this._save();
+    }
     if (p1Won) { this.audio.win(); this.fx.confetti(this.viewW / 2, this.viewH * 0.3); }
     else this.config.mode === '1p' ? this.audio.lose() : this.audio.win();
     document.getElementById('screenResult').classList.remove('hidden');
@@ -549,7 +662,9 @@ class Game {
       }
       return;
     }
-    this.hideScreen('result'); this.startMatch();
+    this.hideScreen('result');
+    if (this.config.mode === 'survival') this.startSurvival();
+    else this.startMatch();
   }
 
   netStart() {
@@ -702,11 +817,13 @@ class Game {
       else if (this.config.mode === '2p') this.f2.setControl(this.input.p2());
       else if (this.ai) this.ai.update();
 
-      // Round timer
-      this.roundTime -= dt / 60;
-      if (this.roundTime <= 0) {
-        this.roundTime = 0;
-        this._timeoutResolve();
+      // Round timer (survival has no per-round clock)
+      if (this.config.mode !== 'survival') {
+        this.roundTime -= dt / 60;
+        if (this.roundTime <= 0) {
+          this.roundTime = 0;
+          this._timeoutResolve();
+        }
       }
     }
 
@@ -735,7 +852,10 @@ class Game {
       this._updatePickups();
 
       // Win check
-      if (!this.f1.alive || !this.f2.alive) {
+      if (this.config.mode === 'survival') {
+        if (!this.f1.alive) { this.slowmo = 50; this.shake = 16; this._survivalGameOver(); }
+        else if (!this.f2.alive) { this._survivalNextWave(); }
+      } else if (!this.f1.alive || !this.f2.alive) {
         const winner = !this.f1.alive && !this.f2.alive ? -1 : (this.f1.alive ? 0 : 1);
         this.slowmo = 50;
         this.shake = 16;
@@ -746,6 +866,7 @@ class Game {
     // Host streams the authoritative world to the guest
     if (this.online && this.online.role === 'host') this.net.sendState(this._packSnapshot());
 
+    if (this._waveBanner > 0) this._waveBanner--;
     this.fx.update();
     this.updateCamera();
     this.updateHUD();
@@ -926,8 +1047,32 @@ class Game {
     // screen-space vignette for depth
     this._renderVignette(ctx);
 
+    // combo counters
+    this._renderCombo(ctx, this.f1, 'left');
+    if (this.config.mode === '2p') this._renderCombo(ctx, this.f2, 'right');
+
     // world-space UI drawn in screen space
     this.renderOverlayText(ctx);
+  }
+
+  _renderCombo(ctx, f, side) {
+    if (!f || f.combo < 2) return;
+    const fresh = f._comboTimer > 92;                 // pop when a hit just landed
+    const scale = 1 + Math.min(0.6, f.combo * 0.04) + (fresh ? 0.35 : 0);
+    const col = f.combo >= 8 ? '#ff5a6e' : f.combo >= 5 ? '#ffb703' : '#ffe36e';
+    const x = side === 'left' ? 26 : this.viewW - 26;
+    const y = this.viewH * 0.34;
+    ctx.save();
+    ctx.textAlign = side === 'left' ? 'left' : 'right';
+    ctx.globalAlpha = Utils.clamp(f._comboTimer / 40, 0, 1);
+    ctx.font = `900 ${34 * scale}px Arial`;
+    ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.strokeText(f.combo + 'x', x, y);
+    ctx.fillStyle = col; ctx.fillText(f.combo + 'x', x, y);
+    ctx.font = `800 ${13}px Arial`;
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.fillText('COMBO', x, y + 16);
+    ctx.restore();
   }
 
   _renderVignette(ctx) {
@@ -1311,6 +1456,16 @@ class Game {
   renderOverlayText(ctx) {
     ctx.save();
     ctx.textAlign = 'center';
+    if (this._waveBanner > 0 && this.survival) {
+      const a = Utils.clamp(this._waveBanner / 30, 0, 1);
+      ctx.globalAlpha = a;
+      ctx.font = '900 72px Arial'; ctx.fillStyle = '#ffb703';
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 8;
+      const txt = 'الموجة ' + this.survival.wave;
+      ctx.strokeText(txt, this.viewW / 2, this.viewH * 0.3);
+      ctx.fillText(txt, this.viewW / 2, this.viewH * 0.3);
+      ctx.globalAlpha = 1;
+    }
     if (this.state === 'countdown') {
       const n = Math.ceil(this.countdown);
       const frac = this.countdown - Math.floor(this.countdown);
@@ -1356,17 +1511,20 @@ class Game {
     const se1 = document.getElementById('p1Special'), se2 = document.getElementById('p2Special');
     if (se1) se1.classList.toggle('rage', this.f1.rageActive);
     if (se2) se2.classList.toggle('rage', this.f2.rageActive);
+    const survival = this.config.mode === 'survival';
     const t = document.getElementById('matchTimer');
-    if (t) t.textContent = Math.ceil(this.roundTime);
-    this._renderPips('p1Pips', this.scores[0]);
-    this._renderPips('p2Pips', this.scores[1]);
+    if (t) t.textContent = survival ? (this.survival ? this.survival.wave : 1) : Math.ceil(this.roundTime);
+    const rb = document.getElementById('roundBanner');
+    if (rb && survival && this.survival) rb.textContent = `الموجة ${this.survival.wave} • القتلى ${this.survival.kills}`;
+    if (!survival) { this._renderPips('p1Pips', this.scores[0]); this._renderPips('p2Pips', this.scores[1]); }
+    else { const e1 = document.getElementById('p1Pips'); if (e1) e1.innerHTML = ''; const e2 = document.getElementById('p2Pips'); if (e2) e2.innerHTML = ''; }
     const n1 = document.getElementById('p1Name'), n2 = document.getElementById('p2Name');
     const youIsP1 = !this.online || this.online.role === 'host';
     if (n1) n1.textContent = 'لاعب 1' + (this.online && youIsP1 ? ' (أنت)' : '');
-    if (n2) n2.textContent = this.config.mode === '1p' ? 'كمبيوتر' : ('لاعب 2' + (this.online && !youIsP1 ? ' (أنت)' : ''));
+    if (n2) n2.textContent = survival ? '🔥 موجة ' + this.survival.wave : (this.config.mode === '1p' ? 'كمبيوتر' : ('لاعب 2' + (this.online && !youIsP1 ? ' (أنت)' : '')));
     const w1 = document.getElementById('p1WeaponName'), w2 = document.getElementById('p2WeaponName');
     if (w1) w1.textContent = getWeapon(this.config.p1Weapon).name.split('•')[0].trim();
-    if (w2) w2.textContent = getWeapon(this.config.p2Weapon).name.split('•')[0].trim();
+    if (w2) w2.textContent = survival ? this.f2.weapon.name.split('•')[0].trim() : getWeapon(this.config.p2Weapon).name.split('•')[0].trim();
   }
 
   _renderPips(id, score) {
