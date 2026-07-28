@@ -7,6 +7,9 @@
 *.ndjson
 *.ndjson.tmp
 
+# Tunnel binary downloaded on demand by tools/online.js
+/.cloudflared/
+
 # Node
 node_modules/
 npm-debug.log*
