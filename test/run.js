@@ -1058,6 +1058,7 @@ group('Bots');
 {
   const { Match } = require('../server/lib/match.js');
   const Content = require('../server/lib/content.js');
+  const Protocol = require('../server/lib/protocol.js');
 
   test('bots fill a lobby and are ordinary players', () => {
     const m = new Match({ id: 'bots', mode: 'solo', seed: 777 });
@@ -1128,6 +1129,92 @@ group('Bots');
       m._botShoot(shooter, victim, def, { spread: 0 });
     }
     assertEqual(victim.health, 100, 'no damage passed through the ground');
+  });
+
+  /**
+   * Bots used to spawn bare-handed and had no way to ever pick a weapon up, so
+   * the only attack in the game was a bot walking into you and punching. No
+   * shot, no tracer, no sound, no direction to turn towards - which is what
+   * "I just suddenly die with no warning" actually was. Across three simulated
+   * matches every elimination was melee and not one shot was fired.
+   */
+  test('bots spawn armed and fight with guns, not fists', () => {
+    const m = new Match({ id: 'armed', mode: 'solo', seed: 4242 });
+    const bots = m.addBots(6, 'normal');
+    assert(bots.length === 6, 'bots added');
+    for (const b of bots) {
+      const w = b.inv.weapons[0];
+      assert(w, `${b.name} has no primary weapon`);
+      const def = Content.WEAPON_BY_ID[w.id];
+      assert(def && def.fireMode !== 'melee', `${b.name} spawned with a melee weapon`);
+      assert((b.inv.ammo[def.ammo] || 0) > 0, `${b.name} has no ammunition`);
+      assertEqual(b.inv.slot, 0, 'the gun is the selected slot');
+    }
+  });
+
+  test('an armed bot actually fires at a target it can see', () => {
+    const m = new Match({ id: 'fire', mode: 'solo', seed: 7 });
+    const shooter = m.addBots(1, 'hard')[0];
+    const victim = m.addPlayer({ id: 'v', name: 'Victim', level: 1, cosmetics: {} },
+      { send() {}, sendBinary() {} }, {});
+    m.start();
+    shooter.inPlane = false;
+    victim.inPlane = false;
+    // Face to face in the open, ten metres apart and well clear of the ground.
+    const spawn = m.world.safeSpawn(m.arena.cx, m.arena.cz);
+    shooter.s.x = spawn.x; shooter.s.z = spawn.z; shooter.s.y = spawn.y + 2;
+    victim.s.x = spawn.x + 10; victim.s.z = spawn.z; victim.s.y = spawn.y + 2;
+    victim.health = 100;
+
+    const def = Content.WEAPON_BY_ID[shooter.inv.weapons[shooter.inv.slot].id];
+    let shots = 0;
+    const before = m.events.length;
+    for (let i = 0; i < 60; i++) { m._botShoot(shooter, victim, def, { spread: 0 }); shots++; }
+    const fired = m.events.slice(before).filter((e) => e.type === Protocol.EV.SHOT).length;
+    assert(fired > 0, `${shots} attempts produced no SHOT event - nothing to see or hear`);
+    assert(victim.health < 100, 'a perfectly aimed bot at ten metres did no damage');
+  });
+
+  /**
+   * Every death has to be explainable. The storm, a fall and a bullet in the
+   * back all used to arrive as an identical "you lost health" event.
+   */
+  test('damage says what caused it', () => {
+    const m = new Match({ id: 'cause', mode: 'solo', seed: 5 });
+    const p = m.addPlayer({ id: 'p', name: 'P', level: 1, cosmetics: {} },
+      { send() {}, sendBinary() {} }, {});
+    m.start();
+    m.state = 'active';
+    p.inPlane = false;
+
+    for (const [cause, amount] of [[Protocol.CAUSE.STORM, 7], [Protocol.CAUSE.FALL, 12],
+      [Protocol.CAUSE.SAURIAN, 9]]) {
+      p.health = 100;
+      p.shield = 0;
+      const before = m.events.length;
+      m._damagePlayer(p, amount, null, { cause });
+      const ev = m.events.slice(before).find((e) => e.type === Protocol.EV.DAMAGE_TAKEN);
+      assert(ev, 'no damage event emitted');
+      assertEqual((ev.a >> 8) & 0xff, cause, 'cause survives the wire packing');
+      assertEqual(ev.a & 0xff, amount, 'amount survives the wire packing');
+    }
+  });
+
+  test('the death message names a cause when nobody killed you', () => {
+    const m = new Match({ id: 'died', mode: 'solo', seed: 6 });
+    const sent = [];
+    const p = m.addPlayer({ id: 'p', name: 'P', level: 1, cosmetics: {} },
+      { send(msg) { sent.push(typeof msg === 'string' ? JSON.parse(msg) : msg); }, sendBinary() {} }, {});
+    m.start();
+    m.state = 'active';
+    p.inPlane = false;
+    p.health = 4;
+    p.shield = 0;
+    m._damagePlayer(p, 50, null, { weapon: 'storm', cause: Protocol.CAUSE.STORM });
+    const died = sent.find((x) => x.t === 'match.died');
+    assert(died, 'no match.died sent to the victim');
+    assertEqual(died.by, null, 'no killer for a storm death');
+    assertEqual(died.cause, Protocol.CAUSE.STORM, 'the storm is named as the cause');
   });
 }
 

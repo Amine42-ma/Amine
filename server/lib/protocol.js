@@ -23,7 +23,7 @@
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.Protocol = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  const PROTOCOL_VERSION = 8;
+  const PROTOCOL_VERSION = 9;
 
   // --- binary opcodes --------------------------------------------------------
   const OP = {
@@ -79,6 +79,25 @@
     STORM_TICK: 21,
     SPLASH: 22,
     LAND: 23,
+  };
+
+  /**
+   * What hurt you. Rides in the high byte of a DAMAGE_TAKEN event's `a` field,
+   * with the amount in the low byte.
+   *
+   * Without it the client knows only "you lost health", which is how a player
+   * ends up dying with no idea what happened: the storm, a fall and a bullet
+   * in the back all looked identical.
+   */
+  const CAUSE = {
+    UNKNOWN: 0,
+    BULLET: 1,
+    MELEE: 2,
+    EXPLOSION: 3,
+    FALL: 4,
+    STORM: 5,
+    SAURIAN: 6,
+    DROWNING: 7,
   };
 
   // --- input bit flags -------------------------------------------------------
@@ -421,6 +440,7 @@
     PROTOCOL_VERSION,
     OP,
     EV,
+    CAUSE,
     IN,
     MOVE,
     EF,

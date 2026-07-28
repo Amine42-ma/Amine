@@ -54,7 +54,7 @@ function randomId(bytes = 6) {
 }
 
 const { WORLD, B, isSolid, isLiquid, isBreakable, BIOME_INFO } = WorldGen;
-const { OP, EV, EF, IN, MOVE, PHYS, COMBAT, ZONE, Writer, Reader, TICK_RATE } = Protocol;
+const { OP, EV, CAUSE, EF, IN, MOVE, PHYS, COMBAT, ZONE, Writer, Reader, TICK_RATE } = Protocol;
 
 /** Shortest signed angle between two headings. */
 function wrapAngle(a) {
@@ -1072,7 +1072,7 @@ class Match {
       const falloff = clamp(1 - (closest / def.range) * 0.35, 0.55, 1);
       const dmg = weapon.damage * mult * falloff;
       if (targetPart === 'head') shooter.headshots++;
-      this._damagePlayer(target, dmg, shooter, { part: targetPart, distance: closest, weapon: def.key });
+      this._damagePlayer(target, dmg, shooter, { part: targetPart, distance: closest, weapon: def.key, cause: def.fireMode === 'melee' ? CAUSE.MELEE : CAUSE.BULLET });
       this._pushEvent(EV.HIT, {
         x: ox + dx * closest,
         y: oy + dy * closest,
@@ -1188,7 +1188,7 @@ class Match {
 
     if (victim) {
       const mult = victim.part === 'head' ? COMBAT.HEADSHOT_MULT * 0.8 : 1;
-      this._damagePlayer(victim.player, weapon.damage * mult, player, { part: victim.part, distance: bestT, weapon: def.key });
+      this._damagePlayer(victim.player, weapon.damage * mult, player, { part: victim.part, distance: bestT, weapon: def.key, cause: CAUSE.MELEE });
       this._pushEvent(EV.HIT, { x: eye.x + dir.x * bestT, y: eye.y + dir.y * bestT, z: eye.z + dir.z * bestT, kind: 0, entityId: player.entityId });
     } else if (dinoVictim) {
       this._damageDino(dinoVictim, weapon.damage, player, def);
@@ -1534,10 +1534,14 @@ class Match {
       target.recentDamagers.set(attacker.userId, { amount: (target.recentDamagers.get(attacker.userId)?.amount || 0) + amount, at: Date.now() });
     }
 
+    target.lastHurtBy = meta.weapon || 'unknown';
+    target.lastHurtCause = meta.cause || CAUSE.UNKNOWN;
+
     this._pushEvent(EV.DAMAGE_TAKEN, {
       entityId: target.entityId,
       by: attacker ? attacker.entityId : 0,
       amount: Math.round(amount),
+      cause: meta.cause || CAUSE.UNKNOWN,
       part: meta.part === 'head' ? 2 : meta.part === 'limb' ? 1 : 0,
     });
 
@@ -1641,6 +1645,10 @@ class Match {
     this._sendJson(victim, {
       t: 'match.died',
       by: killer ? killer.name : null,
+      // What finished you, so the death screen can say more than "you died".
+      weapon: weaponKey,
+      cause: victim.lastHurtCause || 0,
+      distance: Math.round(distance),
       spectating: victim.spectating,
       placement: victim.placement,
     });
@@ -1805,6 +1813,7 @@ class Match {
       if (!player) break;
       player.isBot = true;
       player.connected = true;
+      this._armBot(player, skill);
       player.bot = {
         skill: Match.BOT_SKILLS[skill] ? skill : 'normal',
         target: null,
@@ -1818,6 +1827,67 @@ class Match {
       added.push(player);
     }
     return added;
+  }
+
+  /**
+   * Gives a bot something to fight with.
+   *
+   * Bots used to spawn with the same bare hands a player lands with, and
+   * nothing ever put a gun in their hands - they cannot path to loot, so they
+   * stayed empty-handed for the whole match. The only way a bot could hurt you
+   * was to walk up and punch you: no shot, no tracer, no sound, no direction
+   * to turn towards. Across three simulated matches, every single elimination
+   * was melee and not one shot was fired. That is what "I just die, with no
+   * warning" is.
+   *
+   * A landed player has looted a weapon within the first minute, so a bot
+   * starts with one too. Better skill, better gun.
+   */
+  _armBot(player, skillKey) {
+    const tier = skillKey === 'hard' ? 2 : skillKey === 'easy' ? 0 : 1;
+    const pool = Content.WEAPONS.filter((w) => w.lootWeight && w.fireMode !== 'melee' && w.ammo);
+    if (!pool.length) return;
+    // Easy bots get something short-ranged and forgiving; hard bots get reach.
+    const ranked = pool.slice().sort((a, b) => (a.range || 0) - (b.range || 0));
+    const lo = Math.floor((ranked.length - 1) * (tier === 0 ? 0 : tier === 1 ? 0.25 : 0.55));
+    const hi = Math.floor((ranked.length - 1) * (tier === 0 ? 0.45 : tier === 1 ? 0.8 : 1));
+    const def = ranked[lo + Math.floor(this.rng.next() * Math.max(1, hi - lo + 1))] || ranked[0];
+    player.inv.weapons[0] = weaponInstance(def, Math.min(3, tier + Math.floor(this.rng.next() * 2)));
+    player.inv.ammo[def.ammo] = (player.inv.ammo[def.ammo] || 0) + (def.mag || 30) * 6;
+    player.inv.slot = 0;
+  }
+
+  /**
+   * Bots take loot they happen to walk over. They do not seek it out - that
+   * needs pathfinding they do not have - but a bot standing in a village ought
+   * to leave better armed than it arrived.
+   */
+  _botScavenge(bot) {
+    const s = bot.s;
+    for (const [id, l] of this.loot) {
+      if (Math.abs(l.x - s.x) > 2.5 || Math.abs(l.z - s.z) > 2.5) continue;
+      if (Math.abs(l.y - s.y) > 3) continue;
+      if (l.kind === 'weapon') {
+        const def = Content.WEAPON_BY_KEY[l.key];
+        if (!def || def.fireMode === 'melee') continue;
+        const held = bot.inv.weapons[0];
+        const heldDef = held ? Content.WEAPON_BY_ID[held.id] : null;
+        // Only trade up, so a bot cannot downgrade itself into a peashooter.
+        if (heldDef && (held.rarity || 0) >= (l.rarity || 0) && (heldDef.damage || 0) >= (def.damage || 0)) continue;
+        bot.inv.weapons[0] = weaponInstance(def, l.rarity || 0);
+        bot.inv.ammo[def.ammo] = (bot.inv.ammo[def.ammo] || 0) + (def.mag || 30) * 4;
+        bot.inv.slot = 0;
+      } else if (l.kind === 'ammo') {
+        bot.inv.ammo[l.key] = Math.min(600, (bot.inv.ammo[l.key] || 0) + (l.count || 30));
+      } else if (l.kind === 'item') {
+        bot.inv.items[l.key] = Math.min(9, (bot.inv.items[l.key] || 0) + (l.count || 1));
+      } else {
+        continue;
+      }
+      this.loot.delete(id);
+      this._pushEvent(EV.PICKUP, { entityId: bot.entityId, lootId: id });
+      return;
+    }
   }
 
   get botsPresent() {
@@ -1920,6 +1990,7 @@ class Match {
       });
 
       // --- shooting -------------------------------------------------------
+      if ((this.tick + bot.entityId) % 20 === 0) this._botScavenge(bot);
       b.fireCooldown -= dt;
       if (target && b.fireCooldown <= 0 && !bot.downed) {
         const weapon = bot.inv.weapons[bot.inv.slot];
@@ -1930,7 +2001,7 @@ class Match {
         } else {
           b.fireCooldown = 0.6;
           const d = Math.sqrt(dist2(target.s.x, target.s.y, target.s.z, s.x, s.y, s.z));
-          if (d < 3.2) this._damagePlayer(target, 24, bot, { weapon: 'melee', distance: d });
+          if (d < 3.2) this._damagePlayer(target, 24, bot, { weapon: 'melee', distance: d, cause: CAUSE.MELEE });
         }
       }
     }
@@ -1969,7 +2040,7 @@ class Match {
 
     const falloff = def.falloff ? Math.max(0.45, 1 - (dist / range) * def.falloff) : 1;
     this._damagePlayer(target, (def.damage || 18) * falloff, bot,
-      { part: 'body', distance: dist, weapon: def.key });
+      { part: 'body', distance: dist, weapon: def.key, cause: CAUSE.BULLET });
   }
 
   _updatePlane(dt) {
@@ -2040,9 +2111,9 @@ class Match {
         if (player.s.y > player.maxAltitude) player.maxAltitude = player.s.y;
         if (player.s.inWater) player.waterTime += input.dt;
         if (ev.vaulted) player.vaults++;
-        if (ev.fallDamage > 0) this._damagePlayer(player, ev.fallDamage, null, { weapon: 'fall' });
-        if (ev.drowning > 0) this._damagePlayer(player, ev.drowning, null, { weapon: 'drown' });
-        if (ev.lavaDamage > 0) this._damagePlayer(player, ev.lavaDamage, null, { weapon: 'lava' });
+        if (ev.fallDamage > 0) this._damagePlayer(player, ev.fallDamage, null, { weapon: 'fall', cause: CAUSE.FALL });
+        if (ev.drowning > 0) this._damagePlayer(player, ev.drowning, null, { weapon: 'drown', cause: CAUSE.DROWNING });
+        if (ev.lavaDamage > 0) this._damagePlayer(player, ev.lavaDamage, null, { weapon: 'lava', cause: CAUSE.EXPLOSION });
         if (ev.footstep) {
           this._pushEvent(EV.FOOTSTEP, {
             entityId: player.entityId,
@@ -2314,7 +2385,7 @@ class Match {
 
     if (directHit && !p.splash) {
       if (directHit.def) this._damageDino(directHit, p.damage, owner, { tranq: p.tranq });
-      else this._damagePlayer(directHit, p.damage, owner, { part: 'body', weapon: p.key });
+      else this._damagePlayer(directHit, p.damage, owner, { part: 'body', weapon: p.key, cause: CAUSE.EXPLOSION });
       return;
     }
 
@@ -2331,7 +2402,7 @@ class Match {
         const los = Movement.raycast(this.getBlock, other.s.x, other.s.y + other.s.height * 0.5, other.s.z, dx, dy, dz, d - 0.4);
         if (los) continue;
         const falloff = 1 - d / p.splash;
-        this._damagePlayer(other, p.damage * falloff * falloff, owner, { part: 'body', weapon: p.key });
+        this._damagePlayer(other, p.damage * falloff * falloff, owner, { part: 'body', weapon: p.key, cause: CAUSE.EXPLOSION });
       }
       for (const dino of this.dinos.values()) {
         if (dino.state === Content.DINO_STATE.DEAD) continue;
@@ -2360,7 +2431,7 @@ class Match {
     } else if (p.damage) {
       if (directHit) {
         if (directHit.def) this._damageDino(directHit, p.damage, owner, { tranq: p.tranq });
-        else this._damagePlayer(directHit, p.damage, owner, { part: 'body', weapon: p.key });
+        else this._damagePlayer(directHit, p.damage, owner, { part: 'body', weapon: p.key, cause: CAUSE.EXPLOSION });
       }
     }
   }
@@ -2471,7 +2542,7 @@ class Match {
             dino.stateTime = 0;
           } else if (now - dino.lastAttack > def.attackCd * 1000) {
             dino.lastAttack = now;
-            this._damagePlayer(target, def.damage, null, { weapon: def.key, part: 'body' });
+            this._damagePlayer(target, def.damage, null, { weapon: def.key, part: 'body', cause: CAUSE.SAURIAN });
             this._pushEvent(EV.DINO_ATTACK, { entityId: dino.id, target: target.entityId });
           }
           break;
@@ -2678,7 +2749,7 @@ class Match {
         if (!p.alive || p.inPlane) continue;
         const d = Math.hypot(p.s.x - z.cx, p.s.z - z.cz);
         if (d > z.radius) {
-          this._damagePlayer(p, z.dps * interval, null, { weapon: 'storm' });
+          this._damagePlayer(p, z.dps * interval, null, { weapon: 'storm', cause: CAUSE.STORM });
           this._pushEvent(EV.STORM_TICK, { entityId: p.entityId });
         }
       }
@@ -2899,7 +2970,9 @@ class Match {
         b = data.kind || 0;
         break;
       case EV.DAMAGE_TAKEN:
-        a = data.amount || 0;
+        // Cause in the high byte, amount in the low: the client has to be able
+        // to tell a bullet from the storm, and no damage number needs 16 bits.
+        a = (((data.cause || 0) & 0xff) << 8) | Math.min(255, Math.round(data.amount || 0));
         b = (data.by || 0) & 0xffff;
         break;
       case EV.HEAL:
