@@ -271,6 +271,52 @@ group('Character physics');
   // other touches nothing at either end, so an endpoint-only collision test
   // lets the body straight through. That is how players walked through
   // buildings. The step is split so a test always lands inside the wall.
+  // Strafing has to agree with what the camera puts on screen, or "right"
+  // slides you left. The view matrix is a right-handed lookAt, so the axis it
+  // maps to screen-right is cross(forward, up) - derived here rather than
+  // assumed, so the two can never drift apart again.
+  test('strafing right moves toward the camera\'s right, not away from it', () => {
+    for (const yaw of [0, 0.7, Math.PI / 2, 2.4, Math.PI, -1.1, -Math.PI / 2]) {
+      const forward = { x: Math.sin(yaw), y: 0, z: Math.cos(yaw) };
+      const up = { x: 0, y: 1, z: 0 };
+      // cross(forward, up)
+      const right = {
+        x: forward.y * up.z - forward.z * up.y,
+        z: forward.x * up.y - forward.y * up.x,
+      };
+
+      const s = Movement.createState(0.5, 64, 0.5, yaw);
+      s.onGround = true;
+      for (let i = 0; i < 10; i++) {
+        Movement.step(s, { keys: IN.RIGHT, yaw, pitch: 0, dt: 1 / 30 }, flat);
+      }
+      const dot = s.vx * right.x + s.vz * right.z;
+      assert(dot > 0.5,
+        `at yaw ${yaw.toFixed(2)} the body moved toward screen-right (dot ${dot.toFixed(2)})`);
+
+      // And the analog stick has to agree with the key.
+      const t = Movement.createState(0.5, 64, 0.5, yaw);
+      t.onGround = true;
+      for (let i = 0; i < 10; i++) {
+        Movement.step(t, { keys: 0, moveX: 1, moveY: 0, yaw, pitch: 0, dt: 1 / 30 }, flat);
+      }
+      assertClose(t.vx, s.vx, 1e-6, 'stick right matches key right (x)');
+      assertClose(t.vz, s.vz, 1e-6, 'stick right matches key right (z)');
+    }
+  });
+
+  test('walking forward moves along the look direction', () => {
+    for (const yaw of [0, 1.2, -2.0, Math.PI]) {
+      const s = Movement.createState(0.5, 64, 0.5, yaw);
+      s.onGround = true;
+      for (let i = 0; i < 10; i++) {
+        Movement.step(s, { keys: IN.FWD, yaw, pitch: 0, dt: 1 / 30 }, flat);
+      }
+      const dot = s.vx * Math.sin(yaw) + s.vz * Math.cos(yaw);
+      assert(dot > 0.5, `at yaw ${yaw.toFixed(2)} forward is forward (dot ${dot.toFixed(2)})`);
+    }
+  });
+
   test('a fast move cannot tunnel through a wall', () => {
     // Ground below 64, plus a solid wall one block thick at x = 10.
     const walled = (x, y, z) => {

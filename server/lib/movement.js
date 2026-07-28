@@ -429,8 +429,12 @@
       inZ /= inLen;
     }
     // yaw 0 faces +Z; right vector is (cos, -sin) in the XZ plane.
-    const wishX = inZ * sinY + inX * cosY;
-    const wishZ = inZ * cosY - inX * sinY;
+    // Forward is (sin yaw, cos yaw). Screen-right is cross(forward, up),
+    // which is (-cos yaw, sin yaw) - NOT (cos yaw, -sin yaw). Using the
+    // latter strafed the player toward what the camera shows on the left,
+    // so pressing right slid you left and the stick felt mirrored.
+    const wishX = inZ * sinY - inX * cosY;
+    const wishZ = inZ * cosY + inX * sinY;
     const hasInput = inLen > 0.01;
     // How hard the stick is pushed, used to scale the target speed.
     const inputMagnitude = Math.min(1, inLen);

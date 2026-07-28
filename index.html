@@ -4848,8 +4848,12 @@ body.touch-on .zone-timer{top:56px;}
       inZ /= inLen;
     }
     // yaw 0 faces +Z; right vector is (cos, -sin) in the XZ plane.
-    const wishX = inZ * sinY + inX * cosY;
-    const wishZ = inZ * cosY - inX * sinY;
+    // Forward is (sin yaw, cos yaw). Screen-right is cross(forward, up),
+    // which is (-cos yaw, sin yaw) - NOT (cos yaw, -sin yaw). Using the
+    // latter strafed the player toward what the camera shows on the left,
+    // so pressing right slid you left and the stick felt mirrored.
+    const wishX = inZ * sinY - inX * cosY;
+    const wishZ = inZ * cosY + inX * sinY;
     const hasInput = inLen > 0.01;
     // How hard the stick is pushed, used to scale the target speed.
     const inputMagnitude = Math.min(1, inLen);
@@ -14723,31 +14727,82 @@ class TouchControls {
     knob.style.height = `${stickSize * 0.42}px`;
     this._resetKnob();
 
-    const place = (id, x, y, sizeOverride) => {
+    /**
+     * Buttons sit on arcs around the thumb's pivot rather than at hand-picked
+     * offsets. Offsets were guesswork that collided the moment the screen
+     * changed shape - which is why the corner looked like a heap. On an arc,
+     * spacing follows from the radius, so nothing can overlap and the reach
+     * stays natural: everything is the same swing of one thumb.
+     *
+     * `deg` is measured from "straight inward" (toward the screen centre),
+     * rising toward the top of the screen.
+     */
+    const placePolar = (id, deg, radius, size) => {
       const entry = this._buttons.get(id);
       if (!entry) return;
-      const size = (sizeOverride || entry.size) * k;
-      entry.node.style.width = `${size}px`;
-      entry.node.style.height = `${size}px`;
+      const s = size * k;
+      const a = (deg * Math.PI) / 180;
+      const cx = pivotX + Math.cos(a) * radius * k;
+      const cy = pivotY + Math.sin(a) * radius * k;
+      entry.node.style.width = `${s}px`;
+      entry.node.style.height = `${s}px`;
+      entry.node.style.bottom = `${cy - s / 2}px`;
+      const inset = cx - s / 2;
+      if (mirror) { entry.node.style.left = `${inset}px`; entry.node.style.right = ''; }
+      else { entry.node.style.right = `${inset}px`; entry.node.style.left = ''; }
+    };
+
+    const place = (id, x, y, size) => {
+      const entry = this._buttons.get(id);
+      if (!entry) return;
+      const s = size * k;
+      entry.node.style.width = `${s}px`;
+      entry.node.style.height = `${s}px`;
       entry.node.style.bottom = `${y}px`;
       if (mirror) { entry.node.style.left = `${x}px`; entry.node.style.right = ''; }
       else { entry.node.style.right = `${x}px`; entry.node.style.left = ''; }
     };
 
-    // Action cluster in the opposite bottom corner.
-    place('fire', pad, pad + 18 * k);
-    place('aim', pad + 92 * k, pad + 74 * k);
-    place('jump', pad + 96 * k, pad);
-    place('crouch', pad + 160 * k, pad + 6 * k);
-    place('reload', pad + 8 * k, pad + 116 * k);
-    place('use', pad + 76 * k, pad + 146 * k);
-    place('melee', pad + 152 * k, pad + 84 * k);
-    place('build', pad + 210 * k, pad + 62 * k);
-    place('heal', pad + 210 * k, pad + 124 * k);
-    place('sprint', pad + stickSize * 0.92, pad + 96 * k);
+    // The pivot is where the thumb rests: just inside the action corner.
+    const fireSize = 76;
+    const pivotX = pad + (fireSize / 2) * k;
+    const pivotY = pad + (fireSize / 2) * k;
+
+    place('fire', pivotX - (fireSize / 2) * k, pivotY - (fireSize / 2) * k, fireSize);
+
+    // Angles stay inside 0..100 degrees. Past that the arc curls back over the
+    // screen edge and buttons leave the display entirely.
+    // Inner arc: the three reached for constantly.
+    placePolar('jump',    8, 96, 54);
+    placePolar('aim',    50, 96, 54);
+    placePolar('reload', 92, 96, 50);
+
+    // Outer arc: the rest, smaller and a full button further out.
+    placePolar('crouch', 18, 164, 46);
+    placePolar('melee',  56, 164, 46);
+    placePolar('use',    94, 164, 48);
+
+    // Build and heal belong to the movement thumb: they are not combat
+    // reflexes, and the aiming corner is already as full as it should be.
+    const strip = (id, size, up) => {
+      const entry = this._buttons.get(id);
+      if (!entry) return;
+      const sz = size * k;
+      entry.node.style.width = `${sz}px`;
+      entry.node.style.height = `${sz}px`;
+      entry.node.style.bottom = `${pad + up}px`;
+      if (mirror) { entry.node.style.right = `${pad}px`; entry.node.style.left = ''; }
+      else { entry.node.style.left = `${pad}px`; entry.node.style.right = ''; }
+    };
+    strip('sprint', 46, stickSize + 10 * k);
+    strip('heal',   44, stickSize + 62 * k);
+    strip('build',  44, stickSize + 112 * k);
 
     const slots = $('#tc-slots');
-    slots.style.bottom = `${pad + 210 * k}px`;
+    // Anchored to the top, below the utility strip: bottom-anchored they
+    // drifted into the outer action arc on short screens.
+    slots.style.bottom = '';
+    slots.style.top = `${pad + 92 * k}px`;
     slots.style[mirror ? 'left' : 'right'] = `${pad}px`;
     slots.style[mirror ? 'right' : 'left'] = '';
 
@@ -16590,7 +16645,8 @@ class Game {
     cam.forward.x = sy * cp; cam.forward.y = sp; cam.forward.z = cy * cp;
     // Right vector including roll.
     const cr = Math.cos(cam.roll), sr = Math.sin(cam.roll);
-    const rx = cy, ry = 0, rz = -sy;
+    // cross(forward, up) - the axis the view matrix maps to screen-right.
+    const rx = -cy, ry = 0, rz = sy;
     const ux0 = -sy * sp, uy0 = cp, uz0 = -cy * sp;
     cam.right.x = rx * cr + ux0 * sr;
     cam.right.y = ry * cr + uy0 * sr;
