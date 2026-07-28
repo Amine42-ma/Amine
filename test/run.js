@@ -850,6 +850,30 @@ group('Match simulation');
     assertEqual(results.players.length, 2);
     assert(results.players.every((p) => typeof p.kills === 'number'), 'stats present');
   });
+
+  // The client seeds its storm state from the full state and nothing else
+  // until the first shrink event, which is most of a minute away. If these
+  // fields go missing the countdown reads 0:00 and both maps draw a circle
+  // the size of the whole world instead of the arena.
+  test('the full state carries the storm schedule the HUD needs', () => {
+    const fresh = new Match({ id: 'zone', mode: 'squad', seed: 4242 });
+    let payload = null;
+    const player = fresh.addPlayer(mkUser('z1', 'Zed'), {
+      send: (obj) => { if (obj.t === 'match.full') payload = obj; },
+      sendBinary: () => {},
+    }, {});
+    fresh.start();
+    fresh.sendFullState(player);
+
+    assert(payload, 'a full state was sent');
+    assert(payload.zone, 'the full state includes the zone');
+    for (const field of ['cx', 'cz', 'radius', 'targetRadius', 'nextEventAt', 'phase']) {
+      assert(payload.zone[field] !== undefined, `zone.${field} is present`);
+    }
+    assert(payload.zone.nextEventAt > Date.now(), 'the next storm event is scheduled in the future');
+    assert(payload.arena && payload.zone.radius <= payload.arena.radius + 1,
+      `the storm starts no larger than the arena (zone ${payload.zone.radius}, arena ${payload.arena?.radius})`);
+  });
 }
 
 // ===========================================================================

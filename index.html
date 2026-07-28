@@ -406,15 +406,31 @@ html[dir="ltr"] .switch input:checked ~ .thumb{transform:translateX(20px);}
   grid-template-columns:1fr;
   height:100%;
 }
+/* A grid or flex child defaults to min-width:auto, meaning it refuses to
+   shrink below its content. The top bar holds a brand, seven nav buttons, a
+   coin counter and a user chip - together about 1000px - so without this it
+   pushes past the viewport at any window narrower than that and the overflow
+   is clipped, not scrolled, taking the navigation with it. */
+#screen-lobby > *{min-width:0;}
+.lobby-main, .page, .page-inner{min-width:0;}
+
 .topbar{
   display:flex;align-items:center;gap:18px;
   padding:12px 22px;
   background:linear-gradient(180deg,rgba(8,11,17,.95),rgba(8,11,17,.55));
   border-bottom:1px solid var(--stroke);
   backdrop-filter:blur(18px);
+  min-width:0;
+  flex-wrap:wrap;
 }
-.topbar .brand{font-size:22px;}
-.nav{display:flex;gap:2px;background:rgba(0,0,0,.3);padding:4px;border-radius:var(--r-md);}
+.topbar > *{min-width:0;}
+.topbar .brand{font-size:22px;white-space:nowrap;}
+.nav{
+  display:flex;gap:2px;background:rgba(0,0,0,.3);padding:4px;border-radius:var(--r-md);
+  min-width:0;overflow-x:auto;scrollbar-width:none;
+}
+.nav::-webkit-scrollbar{display:none;}
+.nav button{flex:0 0 auto;}
 .nav button{
   padding:9px 16px;border:0;background:transparent;color:var(--text-dim);
   border-radius:10px;cursor:pointer;font-weight:600;font-size:13.5px;transition:.16s;
@@ -425,7 +441,10 @@ html[dir="ltr"] .switch input:checked ~ .thumb{transform:translateX(20px);}
 .nav .dot{position:absolute;top:5px;inset-inline-end:6px;width:7px;height:7px;border-radius:50%;background:var(--crimson);}
 
 .userchip{display:flex;align-items:center;gap:11px;cursor:pointer;padding:5px 12px 5px 5px;border-radius:999px;
-  background:rgba(255,255,255,.05);border:1px solid var(--stroke);transition:.18s;}
+  background:rgba(255,255,255,.05);border:1px solid var(--stroke);transition:.18s;min-width:0;flex:0 1 auto;}
+.userchip .lvl-chip{min-width:0;}
+.userchip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.currency{flex:0 0 auto;}
 .userchip:hover{background:rgba(255,255,255,.09);border-color:var(--stroke-2);}
 .avatar{width:38px;height:38px;border-radius:11px;flex:none;overflow:hidden;background:#111;
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);}
@@ -797,6 +816,35 @@ html[dir="ltr"] .toast{animation-name:toastInL;}
 }
 .scoreboard.show{display:flex;}
 
+/* --- Full-screen world map ------------------------------------------- */
+.worldmap{
+  position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+  background:rgba(3,5,8,.86);backdrop-filter:blur(8px);padding:16px;z-index:70;
+}
+.worldmap.show{display:flex;}
+.wm-frame{
+  position:relative;
+  width:min(78vh,94vw);height:min(78vh,94vw);
+  border-radius:var(--r-lg);overflow:hidden;
+  border:1px solid var(--stroke-2);
+  box-shadow:0 24px 70px rgba(0,0,0,.6);
+  background:#0a0d12;
+}
+.wm-frame canvas{width:100%;height:100%;display:block;image-rendering:auto;}
+.wm-close{
+  position:absolute;top:8px;inset-inline-end:8px;
+  width:38px;height:38px;padding:0;font-size:17px;
+  background:rgba(8,11,17,.8);border:1px solid var(--stroke-2);
+}
+.wm-legend{
+  position:absolute;left:0;right:0;bottom:0;
+  display:flex;flex-wrap:wrap;gap:6px 14px;justify-content:center;
+  padding:8px 12px;font-size:11.5px;font-weight:600;
+  background:linear-gradient(180deg,transparent,rgba(3,5,8,.92));
+  color:var(--text-dim);
+}
+.wm-legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-inline-end:5px;vertical-align:middle;}
+
 .death-screen{
   position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:18px;
   background:radial-gradient(ellipse at center,rgba(60,5,10,.55),rgba(3,5,8,.93));
@@ -836,6 +884,42 @@ html[dir="ltr"] .toast{animation-name:toastInL;}
    Only mounted on touch devices. Laid out for landscape, with every control
    inside comfortable thumb reach and nothing overlapping the crosshair.
    ========================================================================== */
+/* ==========================================================================
+   HUD layout when the touch pad is up
+   --------------------------------------------------------------------------
+   The vitals use `inset-inline-start`, which in Arabic resolves to the RIGHT
+   edge - precisely where the fire/aim/jump cluster lives. On a phone the
+   health and shield bars ended up underneath the buttons. With the pad up the
+   HUD moves to the middle of the screen, where no thumb ever goes, and
+   shrinks so it does not crowd the view.
+   ========================================================================== */
+body.touch-on .vitals{
+  inset-inline-start:auto;
+  left:50%;
+  transform:translateX(-50%);
+  bottom:8px;
+  width:min(300px,42vw);
+  gap:4px;
+}
+body.touch-on .bar{height:10px;}
+body.touch-on .bar.thin{height:6px;}
+body.touch-on .bar .lbl{font-size:9px;}
+
+body.touch-on .weapon-hud{
+  inset-inline-end:auto;
+  left:50%;
+  transform:translateX(-50%);
+  bottom:calc(8px + 46px);
+  text-align:center;
+}
+body.touch-on .weapon-hud .wname{font-size:12.5px;}
+
+body.touch-on .minimap-wrap{width:104px;top:12px;}
+body.touch-on .minimap{width:104px;height:104px;}
+body.touch-on .killfeed{max-width:44vw;font-size:11px;top:12px;}
+/* The pause/chat/emote strip owns the top-right corner. */
+body.touch-on .zone-timer{top:56px;}
+
 /* The one string a player has to read out to a friend. */
 .room-code{
   font-size:44px;font-weight:900;letter-spacing:.22em;
@@ -915,12 +999,85 @@ html[dir="ltr"] .toast{animation-name:toastInL;}
 .mic-meter{width:36px;height:5px;border-radius:99px;background:rgba(255,255,255,.15);overflow:hidden;}
 .mic-meter > i{display:block;height:100%;width:0;background:var(--jade);transition:width .08s;}
 
-@media(max-width:760px){
-  .nav button span{display:none;}
+/* ==========================================================================
+   Phones
+   --------------------------------------------------------------------------
+   The lobby is laid out for a desktop window: a single-row top bar with a
+   brand, seven nav buttons, a coin counter and a user chip. On a 412px phone
+   that row needs about 690px, and because the shell is a fixed overlay the
+   surplus is not scrolled - it is simply cut off, taking the whole navigation
+   with it. So on narrow screens the bar becomes two rows and the nav scrolls
+   sideways on its own.
+
+   (The previous rule here hid `.nav button span`, which is the button's only
+   content - there are no icons - so it emptied the navigation instead of
+   compacting it.)
+   ========================================================================== */
+@media(max-width:820px){
+  .topbar{
+    flex-wrap:wrap;
+    gap:8px 12px;
+    padding:9px 12px;
+    align-items:center;
+  }
+  .topbar .brand{font-size:17px;letter-spacing:.14em;}
+  .topbar > .grow{display:none;}
+
+  /* Brand and identity share the first row; the nav takes the second. */
+  .nav{
+    order:10;
+    flex:1 0 100%;
+    overflow-x:auto;
+    overflow-y:hidden;
+    scrollbar-width:none;
+    -webkit-overflow-scrolling:touch;
+    padding:3px;
+    gap:3px;
+  }
+  .nav::-webkit-scrollbar{display:none;}
+  .nav button{
+    flex:0 0 auto;
+    padding:8px 12px;
+    font-size:12.5px;
+    white-space:nowrap;
+  }
+
+  .userchip{margin-inline-start:auto;padding:3px 9px 3px 3px;gap:8px;min-width:0;}
+  .userchip .avatar{width:30px;height:30px;border-radius:9px;}
+  .lvl-chip{min-width:0;}
+  .lvl-chip .nm{font-size:12.5px;max-width:15ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .lvl-chip .lv{font-size:10px;}
+  .currency{font-size:12.5px;}
+
+  .page{padding:14px 12px 18px;}
+  .play-grid{grid-template-columns:1fr;gap:14px;}
+  .hero{min-height:210px;padding:18px;border-radius:var(--r-lg);}
+  .settings-grid{grid-template-columns:1fr;}
+
+  .statusbar{padding:7px 12px;font-size:11px;gap:10px;flex-wrap:wrap;}
+
+  /* Dialogs are full-bleed on a phone rather than a floating card. */
+  #modal{width:calc(100vw - 20px)!important;max-width:none;max-height:86vh;}
+  .room-code{font-size:34px;letter-spacing:.16em;}
+
   .vitals{width:52vw;}
-  .minimap-wrap{width:130px;}
-  .minimap{width:130px;height:130px;}
-  .play-grid{grid-template-columns:1fr;}
+  .minimap-wrap{width:112px;}
+  .minimap{width:112px;height:112px;}
+}
+
+@media(max-width:430px){
+  .topbar .brand{font-size:15px;}
+  .nav button{padding:7px 10px;font-size:12px;}
+  .hero{min-height:184px;padding:15px;}
+  .page{padding:12px 10px 16px;}
+  .room-code{font-size:28px;}
+}
+
+/* Landscape phones are short, not narrow: reclaim vertical space. */
+@media(max-height:460px) and (orientation:landscape){
+  .topbar{padding:6px 12px;}
+  .page{padding:10px 12px;}
+  .hero{min-height:150px;padding:14px;}
 }
 </style>
 </head>
@@ -1469,6 +1626,18 @@ html[dir="ltr"] .toast{animation-name:toastInL;}
      its own stacking context guarantees every tap reaches the pad.
      Buttons are built at runtime and mounted only on touch devices.
      ======================================================================= -->
+<!-- Full-screen world map. The minimap only shows the ground under your feet;
+     this is the one that answers "where is the circle, and where am I
+     relative to it". A sibling of #hud for the same reason the pad is: it is
+     a full-screen overlay and must not inherit the HUD's visibility. -->
+<div class="worldmap" id="worldmap">
+  <div class="wm-frame">
+    <canvas id="wm-canvas"></canvas>
+    <div class="wm-legend" id="wm-legend"></div>
+    <button class="btn btn-ghost wm-close" id="wm-close" type="button">✕</button>
+  </div>
+</div>
+
 <div id="touch-controls">
   <div id="touch-look"></div>
   <div id="tc-stick"><div class="ring"></div><div class="knob"></div></div>
@@ -13812,6 +13981,8 @@ class TouchControls {
     this.enabled = true;
     const host = $('#touch-controls');
     host.classList.add('on');
+    // Lets the HUD move itself out from under the thumb clusters.
+    document.body.classList.add('touch-on');
     if (!this.mounted) this._build(host);
     this.layout();
   }
@@ -13860,6 +14031,7 @@ class TouchControls {
     for (const { node } of this._buttons.values()) node.classList.remove('pressed', 'toggled');
     this._resetKnob();
     $('#touch-controls')?.classList.remove('on');
+    document.body.classList.remove('touch-on');
     $('#rotate-hint')?.classList.remove('show');
   }
 
@@ -13932,7 +14104,7 @@ class TouchControls {
     // small utility row
     const top = el('div', { class: 'tc-top', id: 'tc-top' });
     for (const [id, icon, action] of [
-      ['map', '🗺', 'scoreboard'], ['ping', '📍', 'ping'],
+      ['map', '🗺', 'map'], ['score', '🏆', 'scoreboard'], ['ping', '📍', 'ping'],
       ['emote', '😀', 'emote'], ['chat', '💬', 'chat'], ['menu', '⏸', 'menu'],
     ]) {
       const b = el('div', { class: 'tc-mini', id: `tc-mini-${id}` }, icon);
@@ -15710,6 +15882,25 @@ class Game {
       this.state.arena = msg.arena;
       this.state.roster.clear();
       for (const p of msg.players || []) this.state.roster.set(p.entityId, p);
+
+      // The zone was being dropped on the floor here. Until the first shrink
+      // event fired - the better part of a minute into the match - the client
+      // still held its defaults, so the countdown read 0:00 and both maps drew
+      // a 3000 m circle around a 900 m arena. The server field is
+      // `nextEventAt`; the client tracks it as `nextAt`.
+      if (msg.zone) {
+        const z = msg.zone;
+        Object.assign(this.state.zone, {
+          cx: z.cx, cz: z.cz, radius: z.radius,
+          tcx: z.targetCx ?? z.cx, tcz: z.targetCz ?? z.cz,
+          tradius: z.targetRadius ?? z.radius,
+          shrinking: !!z.shrinking,
+          phase: z.phase ?? -1,
+          nextAt: z.nextEventAt ?? 0,
+          dps: z.dps ?? 0,
+        });
+      }
+
       if (this.chunks && msg.edits) {
         for (const [x, y, z, id] of msg.edits) this.chunks.applyEdit(x, y, z, id);
       }
@@ -16001,6 +16192,10 @@ class Game {
       }
       if (touch.wasTapped('ping')) this.confirmPing(0);
       if (touch.wasTapped('emote')) this.state.sendEmote(0);
+      if (touch.wasTapped('map')) this.app.hud.toggleWorldMap(!this.app.hud.worldMapOpen);
+      if (touch.wasTapped('scoreboard')) this.app.hud.toggleScoreboard(!this.app.hud.scoreboardOpen);
+      if (touch.wasTapped('menu')) this.app.openPauseMenu();
+      if (touch.wasTapped('chat')) this.app.hud.openChat('match');
       touch.syncSlots(this.state.inventory);
     }
 
@@ -18549,6 +18744,13 @@ class HUD {
     const bus = DRE.bus;
     const app = this.app;
 
+    $('#wm-close').onclick = () => this.toggleWorldMap(false);
+    // Tapping the dimmed area outside the map closes it too, which is what a
+    // thumb reaches for first on a phone.
+    $('#worldmap').addEventListener('pointerdown', (e) => {
+      if (e.target === $('#worldmap')) this.toggleWorldMap(false);
+    });
+
     bus.on('hud.inventory', (inv) => this.renderInventory(inv));
     bus.on('hud.killfeed', (feed) => this.renderKillfeed(feed));
     bus.on('hud.chat', (log) => this.renderMatchChat(log));
@@ -18587,6 +18789,7 @@ class HUD {
       else if (code === 'Escape') this.app.openPauseMenu();
       else if (code === 'F4') this.app.touch.enabled ? this.app.touch.unmount() : this.app.touch.mount();
       else if (code === 'KeyN') this.app.toggleMic();
+      else if (code === 'KeyM') this.toggleWorldMap(!this.worldMapOpen);
     });
 
     bus.on('key.up', (code) => {
@@ -19060,6 +19263,157 @@ class HUD {
     ctx.restore();
   }
 
+  /* ---------------------------------------------------------- world map -- */
+  /**
+   * The whole arena at once, rather than the patch of ground under your feet.
+   *
+   * It is drawn on demand instead of every frame: a full-arena sample is
+   * thousands of terrain evaluations, which is fine once when the map opens
+   * and ruinous at 60 Hz. Only the overlay - you, the circle, your squad - is
+   * cheap enough to repaint while it is open.
+   */
+  toggleWorldMap(open) {
+    this.worldMapOpen = open;
+    $('#worldmap').classList.toggle('show', open);
+    if (!open) return;
+    this.app.input.exitLock();
+    this._wmTerrain = null;              // re-sample; the circle has moved
+    this._drawWorldMap();
+  }
+
+  _drawWorldMap() {
+    const game = this.game;
+    const canvas = $('#wm-canvas');
+    if (!game || !canvas) return;
+    const world = game.chunks?.world;
+    const st = game.state;
+    if (!world || !st) return;
+
+    // Frame the arena with a margin so the edge of the play area is visible.
+    const arena = st.arena || { cx: 0, cz: 0, radius: 900 };
+    const span = arena.radius * 2.3;
+    const size = 512;
+    if (canvas.width !== size) { canvas.width = size; canvas.height = size; }
+    const ctx = canvas.getContext('2d');
+    const scale = span / size;                       // world metres per pixel
+    const toMap = (wx, wz) => ({
+      x: size / 2 + (wx - arena.cx) / scale,
+      y: size / 2 + (wz - arena.cz) / scale,
+    });
+
+    if (!this._wmTerrain) {
+      const step = 2;
+      const img = ctx.createImageData(size, size);
+      for (let py = 0; py < size; py += step) {
+        for (let px = 0; px < size; px += step) {
+          const wx = Math.round(arena.cx + (px - size / 2) * scale);
+          const wz = Math.round(arena.cz + (py - size / 2) * scale);
+          const raw = world.columnRaw(wx, wz);
+          const biome = WorldGen.BIOME_INFO[world.biomeAt(wx, wz, raw)];
+          const sea = raw.height <= WorldGen.WORLD.SEA_LEVEL;
+          // Height shading gives the map a sense of relief rather than flat
+          // biome blocks, which is what makes it readable at a glance.
+          const shade = M.clamp(0.42 + (raw.height - 58) / 95, 0.22, 1.3);
+          let r, g, b;
+          if (sea) {
+            const depth = M.clamp((WorldGen.WORLD.SEA_LEVEL - raw.height) / 26, 0, 1);
+            r = 26 + 18 * (1 - depth); g = 62 + 40 * (1 - depth); b = 108 + 46 * (1 - depth);
+          } else {
+            r = biome.grass[0] * 255 * shade;
+            g = biome.grass[1] * 255 * shade;
+            b = biome.grass[2] * 255 * shade;
+          }
+          for (let dy = 0; dy < step && py + dy < size; dy++) {
+            for (let dx = 0; dx < step && px + dx < size; dx++) {
+              const o = ((py + dy) * size + px + dx) * 4;
+              img.data[o] = r; img.data[o + 1] = g; img.data[o + 2] = b; img.data[o + 3] = 255;
+            }
+          }
+        }
+      }
+      this._wmTerrain = img;
+    }
+    ctx.putImageData(this._wmTerrain, 0, 0);
+
+    // --- everything outside the closing circle, dimmed -------------------
+    const zc = toMap(st.zone.cx, st.zone.cz);
+    const zr = st.zone.radius / scale;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, size, size);
+    ctx.arc(zc.x, zc.y, Math.max(0, zr), 0, Math.PI * 2, true);
+    ctx.fillStyle = 'rgba(120,20,40,.34)';
+    ctx.fill('evenodd');
+    ctx.restore();
+
+    ctx.strokeStyle = 'rgba(255,255,255,.9)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(zc.x, zc.y, Math.max(0, zr), 0, Math.PI * 2); ctx.stroke();
+
+    const zt = toMap(st.zone.tcx, st.zone.tcz);
+    ctx.strokeStyle = 'rgba(180,110,255,.95)';
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath(); ctx.arc(zt.x, zt.y, Math.max(0, st.zone.tradius / scale), 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // --- landmarks -------------------------------------------------------
+    ctx.font = '600 10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    for (const lm of st.landmarks || []) {
+      const p = toMap(lm.x, lm.z);
+      ctx.fillStyle = 'rgba(255,214,140,.95)';
+      ctx.fillRect(p.x - 2.5, p.y - 2.5, 5, 5);
+      if (lm.name) {
+        ctx.fillStyle = 'rgba(255,236,200,.8)';
+        ctx.fillText(lm.name, p.x, p.y - 6);
+      }
+    }
+
+    // --- pings and squad -------------------------------------------------
+    for (const mk of st.markers || []) {
+      if (Date.now() > mk.expires) continue;
+      const p = toMap(mk.x, mk.z);
+      const ping = Content.PINGS[mk.type] || Content.PINGS[0];
+      ctx.fillStyle = ping.colour || '#ffb238';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
+    }
+
+    const me = st.self;
+    for (const other of st.players?.values?.() || []) {
+      if (!other || other === me || !other.alive) continue;
+      if (me && other.teamId !== me.teamId) continue;      // never reveal enemies
+      const p = toMap(other.x, other.z);
+      ctx.fillStyle = '#4aa8ff';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // --- you, pointing where you are looking -----------------------------
+    if (me) {
+      const p = toMap(me.x, me.z);
+      const yaw = game.camera?.yaw ?? 0;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(yaw);
+      ctx.fillStyle = '#ffb238';
+      ctx.strokeStyle = 'rgba(0,0,0,.75)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(0, -8); ctx.lineTo(6, 7); ctx.lineTo(0, 3.5); ctx.lineTo(-6, 7);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
+
+    const legend = $('#wm-legend');
+    if (legend && !legend.childElementCount) {
+      legend.innerHTML =
+        '<span><i style="background:#ffb238"></i>أنت</span>' +
+        '<span><i style="background:#4aa8ff"></i>فريقك</span>' +
+        '<span><i style="background:#fff"></i>الدائرة الحالية</span>' +
+        '<span><i style="background:#b46eff"></i>الدائرة التالية</span>' +
+        '<span><i style="background:#ffd68c"></i>معالم</span>';
+    }
+  }
+
   /* -------------------------------------------------------- scoreboard -- */
   toggleScoreboard(open) {
     this.scoreboardOpen = open;
@@ -19469,15 +19823,22 @@ class App {
     this.net.send({ t: 'match.ready' });
     this.net.send({ t: 'voice.join' });
 
-    // Wait until the terrain around the spawn exists so the first frame is
-    // never an empty void.
+    // Wait until there is a real horizon before handing the player the
+    // controls. Two chunks is thirty-two metres - barely past your own feet -
+    // so the first thing you saw was a shattered landscape of half-built
+    // terrain with sky showing through the gaps. Four chunks costs a few more
+    // seconds of loading bar and buys a world that looks finished.
+    const NEED = 4;
     const started = performance.now();
-    while (performance.now() - started < 20000) {
+    while (performance.now() - started < 25000) {
       const self = this.game.state.self;
       this.game.chunks.update(self.x, self.z, null);
-      const p = M.clamp(this.game.chunks.chunks.size / 60, 0, 1);
+      // Progress against the chunks actually needed, so the bar means
+      // something instead of creeping toward an arbitrary 60.
+      const need = (NEED * 2 + 1) ** 2 * 0.8;
+      const p = M.clamp(this.game.chunks.chunks.size / need, 0, 1);
       this._loadingTip('توليد العالم حولك…', 0.1 + p * 0.85);
-      if (this.game.chunks.isReadyAround(self.x, self.z, 2)) break;
+      if (this.game.chunks.isReadyAround(self.x, self.z, NEED)) break;
       await this._frame();
     }
 
