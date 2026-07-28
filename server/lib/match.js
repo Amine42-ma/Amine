@@ -23,11 +23,35 @@
  * ============================================================================
  */
 
-const crypto = require('node:crypto');
-const WorldGen = require('./worldgen.js');
-const Protocol = require('./protocol.js');
-const Movement = require('./movement.js');
-const Content = require('./content.js');
+/*
+ * Wrapped the same way as the other shared modules so one file can be the
+ * authority in both places it runs: a Node server, and - when players connect
+ * directly to each other with no server at all - the browser of whoever is
+ * hosting the room. The simulation is identical either way; only the
+ * transport underneath it changes.
+ */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) {
+    module.exports = factory(
+      require('./worldgen.js'), require('./protocol.js'),
+      require('./movement.js'), require('./content.js'));
+  } else {
+    root.MatchSim = factory(root.WorldGen, root.Protocol, root.Movement, root.Content);
+  }
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (WorldGen, Protocol, Movement, Content) {
+
+/**
+ * Short unguessable id. Browsers and Node both expose WebCrypto, so this
+ * needs no platform-specific branch - and base64url keeps it safe to drop
+ * into a URL or a JSON key.
+ */
+function randomId(bytes = 6) {
+  const buf = new Uint8Array(bytes);
+  globalThis.crypto.getRandomValues(buf);
+  let bin = '';
+  for (const b of buf) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
 
 const { WORLD, B, isSolid, isLiquid, isBreakable, BIOME_INFO } = WorldGen;
 const { OP, EV, EF, MOVE, PHYS, COMBAT, ZONE, Writer, Reader, TICK_RATE } = Protocol;
@@ -2745,7 +2769,7 @@ class Match {
     const clean = String(text || '').slice(0, 240).trim();
     if (!clean) return;
     const msg = {
-      id: crypto.randomBytes(6).toString('base64url'),
+      id: randomId(6),
       scope,
       from: player.userId,
       fromName: player.name,
@@ -2803,4 +2827,6 @@ class Match {
   }
 }
 
-module.exports = { Match, Rng, createInventory, weaponInstance };
+return { Match, Rng, createInventory, weaponInstance, randomId };
+
+});

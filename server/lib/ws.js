@@ -313,9 +313,13 @@ class WSConnection extends EventEmitter {
  * Attaches a WebSocket endpoint to an existing http.Server.
  */
 class WSServer extends EventEmitter {
-  constructor(httpServer, { path = '/ws', heartbeatMs = 15000 } = {}) {
+  constructor(httpServer, { path = '/ws', heartbeatMs = 15000, protocols = null } = {}) {
     super();
     this.path = path;
+    // Subprotocols this endpoint is willing to speak. Some clients - MQTT
+    // over WebSocket among them - refuse a handshake that does not echo the
+    // one they asked for.
+    this.protocols = protocols;
     this.clients = new Set();
 
     httpServer.on('upgrade', (req, socket, head) => this._onUpgrade(req, socket, head));
@@ -356,8 +360,16 @@ class WSServer extends EventEmitter {
       'Upgrade: websocket',
       'Connection: Upgrade',
       `Sec-WebSocket-Accept: ${acceptKey(key)}`,
-      '\r\n',
     ];
+
+    if (this.protocols) {
+      const offered = String(req.headers['sec-websocket-protocol'] || '')
+        .split(',').map((p) => p.trim()).filter(Boolean);
+      const agreed = offered.find((p) => this.protocols.includes(p));
+      if (agreed) headers.push(`Sec-WebSocket-Protocol: ${agreed}`);
+    }
+
+    headers.push('\r\n');
     socket.write(headers.join('\r\n'));
 
     const conn = new WSConnection(socket, req);
