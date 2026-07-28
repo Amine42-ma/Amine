@@ -1764,6 +1764,29 @@ class Match {
         if (ev.landed > 2.5) this._pushEvent(EV.LAND, { entityId: player.entityId, force: Math.min(255, Math.round(ev.landed * 8)) });
       }
 
+      // --- unstick safety
+      // A player can end up embedded in geometry: parachuting into a tree
+      // canopy, a teammate building around them, or an explosion collapsing
+      // terrain onto them. Left alone they would be trapped for the rest of
+      // the match, so lift them to the nearest free space.
+      if (!player.inPlane && Movement.collides(this.getBlock, player.s.x, player.s.y, player.s.z, player.s.height, PHYS.PLAYER_RADIUS)) {
+        player.stuckTicks = (player.stuckTicks || 0) + 1;
+        if (player.stuckTicks > 15) {
+          for (let lift = 1; lift <= 6; lift++) {
+            const y = player.s.y + lift;
+            if (y >= WORLD.HEIGHT) break;
+            if (!Movement.collides(this.getBlock, player.s.x, y, player.s.z, player.s.height, PHYS.PLAYER_RADIUS)) {
+              player.s.y = y;
+              player.s.vy = 0;
+              break;
+            }
+          }
+          player.stuckTicks = 0;
+        }
+      } else {
+        player.stuckTicks = 0;
+      }
+
       // Keep a rewind buffer for lag compensation.
       player.history.push({
         x: player.s.x,

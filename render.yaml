@@ -1,0 +1,42 @@
+# ---------------------------------------------------------------------------
+#  One-click deploy to Render (free tier works).
+#
+#  1. Push this repository to GitHub
+#  2. Open https://render.com  ->  New  ->  Blueprint
+#  3. Point it at the repository and confirm
+#
+#  Render gives you an address such as https://dino-royale.onrender.com -
+#  open that on any phone or computer and the game just works, including
+#  quick play, matchmaking and voice chat.
+# ---------------------------------------------------------------------------
+services:
+  - type: web
+    name: dino-royale-evolution
+    runtime: node
+    plan: free
+    # No dependencies to install.
+    buildCommand: "echo 'nothing to build'"
+    startCommand: "node server/server.js"
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: HOST
+        value: "0.0.0.0"
+      - key: DATA_DIR
+        # The free tier has an ephemeral disk: accounts reset on redeploy.
+        # Attach a paid disk and point this at it to keep them.
+        value: "/tmp/dino-data"
+      - key: SESSION_SECRET
+        generateValue: true
+      # Uncomment and fill in to enable the Google / Facebook buttons.
+      # - key: PUBLIC_URL
+      #   value: "https://your-app.onrender.com"
+      # - key: GOOGLE_CLIENT_ID
+      #   sync: false
+      # - key: GOOGLE_CLIENT_SECRET
+      #   sync: false
+      # - key: FACEBOOK_APP_ID
+      #   sync: false
+      # - key: FACEBOOK_APP_SECRET
+      #   sync: false

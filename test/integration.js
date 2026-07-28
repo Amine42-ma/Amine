@@ -343,16 +343,25 @@ class TestClient {
       `hp=${alpha.self?.health} y=${alpha.self?.y?.toFixed(1)} state=${alpha.self?.moveState}`);
 
     // --------------------------------------------------------------- input
+    // Landing spots are random, so a single heading can end up facing a cliff
+    // or a tree trunk. Try a few bearings before concluding the player is not
+    // being simulated.
     const startPos = alpha.self ? { ...alpha.self } : null;
-    for (let i = 0; i < 60; i++) {
-      alpha.input(IN.FWD | IN.SPRINT, 0, 0);
-      bravo.input(IN.FWD, Math.PI / 2, 0);
-      await sleep(33);
+    let travelled = 0;
+    for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+      const from = { ...alpha.self };
+      for (let i = 0; i < 45; i++) {
+        alpha.input(IN.FWD | IN.SPRINT, yaw, 0);
+        bravo.input(IN.FWD, yaw + Math.PI / 2, 0);
+        await sleep(33);
+      }
+      await sleep(400);
+      travelled = Math.max(travelled, Math.hypot(alpha.self.x - from.x, alpha.self.z - from.z));
+      if (travelled > 1) break;
     }
-    await sleep(600);
     check('server acknowledges input sequence numbers', alpha.lastAck > 0, `ack=${alpha.lastAck}`);
-    const moved = startPos && alpha.self && Math.hypot(alpha.self.x - startPos.x, alpha.self.y - startPos.y, alpha.self.z - startPos.z) > 1;
-    check('authoritative movement advances the player', moved);
+    check('authoritative movement advances the player', travelled > 1,
+      `moved ${travelled.toFixed(2)} m from ${startPos ? `${startPos.x.toFixed(0)},${startPos.z.toFixed(0)}` : '?'}`);
 
     check('world contains saurians near the players',
       (alpha.maxDinos || 0) + (bravo.maxDinos || 0) > 0,

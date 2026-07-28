@@ -12197,6 +12197,15 @@ class UI {
     };
     $('#cb-change').onclick = () => this.promptServerAddress();
 
+    // Opened from disk on a phone, entering a server address is the only way
+    // forward, so make that the primary action.
+    if (this.app.openedFromDisk) {
+      const change = $('#cb-change');
+      change.classList.remove('btn-ghost');
+      change.classList.add('btn-primary');
+      change.textContent = I18N.lang === 'ar' ? 'إدخال عنوان الخادم' : 'Enter server address';
+    }
+
     setInterval(() => {
       $('#stat-ping').textContent = this.net.ping ? `${this.net.ping} ms` : '—';
       if (this.queueStart) {
@@ -12335,7 +12344,24 @@ class UI {
         banner.classList.add('show', 'error');
         this._setAuthEnabled(false);
 
-        if (this.app.openedFromDisk) {
+        if (this.app.openedFromDisk && this.app.isMobile) {
+          // A phone cannot run the server itself; it has to connect to one.
+          title.textContent = ar ? 'هذا الملف وحده لا يكفي على الهاتف' : 'This file alone cannot run on a phone';
+          body.textContent = ar
+            ? 'فتحت الملف من التنزيلات، فلا يوجد خادم خلفه. اللعبة أونلاين بالكامل، والهاتف لا يستطيع تشغيل الخادم بنفسه — عليه أن يتصل بخادم يعمل في مكان آخر.'
+            : 'You opened the file from your downloads, so there is no server behind it. The game is fully online and a phone cannot run the server itself - it has to connect to one.';
+          showSteps(ar ? [
+            'شغّل الخادم على حاسوب في نفس شبكة الواي فاي: <code>npm start</code>',
+            'الحاسوب سيطبع عنواناً مثل <code>http://192.168.1.20:8080</code>',
+            'افتح ذلك العنوان في متصفح الهاتف — لا تفتح الملف المُنزَّل.',
+            'أو استضف الخادم على الإنترنت وافتح رابطه (انظر <code>README</code>).',
+          ] : [
+            'Run the server on a computer on the same Wi-Fi: <code>npm start</code>',
+            'It prints an address such as <code>http://192.168.1.20:8080</code>',
+            'Open that address in your phone browser - not the downloaded file.',
+            'Or host the server online and open its URL (see <code>README</code>).',
+          ]);
+        } else if (this.app.openedFromDisk) {
           // The single most common mistake: double-clicking the HTML file.
           title.textContent = ar ? 'اللعبة تحتاج تشغيل الخادم' : 'The game needs its server running';
           body.textContent = ar
@@ -13964,9 +13990,20 @@ class App {
     return `${proto}//${host}/ws`;
   }
 
-  /** True when the page was opened straight from disk instead of the server. */
+  /**
+   * True when the page was opened as a local file rather than served by the
+   * game server. Desktop browsers report `file:`, Android file managers and
+   * download viewers report `content:`, and some in-app browsers use `blob:`
+   * - anything that is not http(s) means there is no server behind the page.
+   */
   get openedFromDisk() {
-    return location.protocol === 'file:';
+    return location.protocol !== 'http:' && location.protocol !== 'https:';
+  }
+
+  /** Rough platform check, used only to give the right instructions. */
+  get isMobile() {
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+      (navigator.maxTouchPoints > 1 && !/Windows NT|Macintosh/.test(navigator.userAgent));
   }
 
   _frame() { return new Promise((r) => requestAnimationFrame(() => r())); }
