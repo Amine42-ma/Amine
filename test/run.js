@@ -267,6 +267,39 @@ group('Character physics');
     assert(s.onGround, 'should be grounded');
   });
 
+  // A single move long enough to start one side of a wall and finish on the
+  // other touches nothing at either end, so an endpoint-only collision test
+  // lets the body straight through. That is how players walked through
+  // buildings. The step is split so a test always lands inside the wall.
+  test('a fast move cannot tunnel through a wall', () => {
+    // Ground below 64, plus a solid wall one block thick at x = 10.
+    const walled = (x, y, z) => {
+      if (y < 64) return WorldGen.B.stone;
+      if (x === 10 && y >= 64 && y < 68) return WorldGen.B.stone;
+      return 0;
+    };
+    for (const speed of [8, 20, 60, 150]) {
+      const s = Movement.createState(6.5, 64, 0.5, 0);
+      s.onGround = true;
+      for (let i = 0; i < 40; i++) {
+        s.vx = speed;                       // forced, as a lag spike would
+        Movement.step(s, { keys: IN.FWD, yaw: Math.PI / 2, pitch: 0, dt: 1 / 15 }, walled);
+        if (s.x > 9.0) break;
+      }
+      assert(s.x < 10.0,
+        `at ${speed} m/s the body stopped before the wall (x=${s.x.toFixed(2)})`);
+    }
+  });
+
+  test('a long fall cannot tunnel through the floor', () => {
+    const s = Movement.createState(0.5, 400, 0.5);
+    for (let i = 0; i < 400; i++) {
+      Movement.step(s, { keys: 0, yaw: 0, pitch: 0, dt: 1 / 10 }, flat);
+      if (s.onGround) break;
+    }
+    assert(s.y >= 63.9, `landed on the floor rather than through it (y=${s.y.toFixed(2)})`);
+  });
+
   test('identical inputs produce bit-identical states (prediction parity)', () => {
     const a = Movement.createState(0.5, 66, 0.5);
     const b = Movement.createState(0.5, 66, 0.5);

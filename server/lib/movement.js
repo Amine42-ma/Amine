@@ -155,7 +155,38 @@
   // ---------------------------------------------------------------------------
   // Swept AABB resolution, axis by axis, with automatic step-up.
   // ---------------------------------------------------------------------------
+  /**
+   * Moves the body, splitting the step so it can never pass through a wall.
+   *
+   * The per-axis resolve below only ever tests where the body would END UP.
+   * If a single step is long enough to start on one side of a wall and finish
+   * on the other, nothing is touching at either end and the body sails
+   * straight through. That happens at sprint speed on a slow frame, in a lag
+   * spike, or in fast falls - and it is what lets a player walk through
+   * buildings. Capping each sub-step below the body's own thickness means
+   * there is always a test inside the obstacle.
+   */
   function moveAxis(q, s, dx, dy, dz, height, radius) {
+    const longest = Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz));
+    const limit = Math.max(0.05, radius * 0.75);
+    if (longest > limit) {
+      const steps = Math.min(16, Math.ceil(longest / limit));
+      const sx = dx / steps, sy = dy / steps, sz = dz / steps;
+      let hitX = false, hitY = false, hitZ = false;
+      for (let i = 0; i < steps; i++) {
+        const hit = moveAxisStep(q, s, hitX ? 0 : sx, hitY ? 0 : sy, hitZ ? 0 : sz, height, radius);
+        // Once an axis is blocked the remaining motion along it is spent.
+        hitX = hitX || hit.hitX;
+        hitY = hitY || hit.hitY;
+        hitZ = hitZ || hit.hitZ;
+        if (hitX && hitY && hitZ) break;
+      }
+      return { hitX, hitY, hitZ };
+    }
+    return moveAxisStep(q, s, dx, dy, dz, height, radius);
+  }
+
+  function moveAxisStep(q, s, dx, dy, dz, height, radius) {
     let hitX = false;
     let hitY = false;
     let hitZ = false;

@@ -479,18 +479,85 @@ html[dir="ltr"] .switch input:checked ~ .thumb{transform:translateX(20px);}
 .play-grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(320px,.85fr);gap:22px;align-items:start;}
 @media(max-width:1080px){.play-grid{grid-template-columns:1fr;}}
 
-.hero{
+/* ==========================================================================
+   The stage
+   --------------------------------------------------------------------------
+   Character centred, squad along the bottom, one unmistakable button. The
+   layout every game in this genre converges on, because it answers "who am I,
+   who am I with, how do I start" before you have read a word.
+   ========================================================================== */
+.stage{
   position:relative;overflow:hidden;border-radius:var(--r-xl);
-  border:1px solid var(--stroke);min-height:330px;
-  background:linear-gradient(135deg,rgba(20,28,39,.9),rgba(10,14,20,.95));
-  display:flex;flex-direction:column;justify-content:flex-end;
-  padding:30px;
+  border:1px solid var(--stroke);
+  min-height:min(62vh,470px);
+  background:
+    radial-gradient(120% 80% at 50% 120%, rgba(255,178,56,.12), transparent 62%),
+    linear-gradient(160deg,rgba(24,32,45,.95),rgba(8,11,17,.98));
+  /* Everything stacks in flow. Absolute offsets looked right at one size and
+     put the play button on top of the squad slots at every other. */
+  display:flex;flex-direction:column;align-items:center;gap:10px;
+  padding:18px;
+  isolation:isolate;
 }
-.hero canvas.hero-art{position:absolute;inset:0;width:100%;height:100%;opacity:.85;}
-.hero .hero-shade{position:absolute;inset:0;background:linear-gradient(to top,rgba(5,7,10,.95) 8%,rgba(5,7,10,.15) 70%);}
-.hero > *{position:relative;}
-.hero h1{font-family:var(--font-display);font-size:clamp(28px,3.4vw,44px);margin:0 0 6px;letter-spacing:.05em;text-transform:uppercase;}
-.hero p{margin:0 0 20px;color:var(--text-dim);max-width:62ch;}
+.stage canvas.stage-art{position:absolute;inset:0;width:100%;height:100%;opacity:.55;z-index:-2;}
+.stage .stage-shade{position:absolute;inset:0;z-index:-1;
+  background:linear-gradient(to top,rgba(5,7,10,.92) 6%,rgba(5,7,10,.10) 62%);}
+.stage-top{position:relative;text-align:center;align-self:stretch;}
+.stage h1{font-family:var(--font-display);font-size:clamp(22px,4.4vw,40px);margin:0 0 2px;letter-spacing:.05em;text-transform:uppercase;}
+.stage p{margin:0;color:var(--text-dim);font-size:13px;}
+
+/* The character. A canvas so it can be drawn from the player's own cosmetics
+   rather than shipping artwork. */
+.hero-figure{
+  position:relative;flex:1 1 auto;min-height:0;
+  width:min(280px,46vw);height:auto;
+  filter:drop-shadow(0 18px 26px rgba(0,0,0,.55));
+}
+.hero-plate{position:relative;text-align:center;pointer-events:none;}
+.hero-plate .hp-name{font-weight:900;font-size:17px;letter-spacing:.03em;text-shadow:0 2px 10px #000;}
+.hero-plate .hp-sub{font-size:11.5px;color:var(--text-mute);}
+
+/* Squad slots: you, plus room for three. */
+.squad-row{position:relative;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;}
+.squad-slot{
+  width:54px;height:54px;border-radius:14px;
+  border:1px solid var(--stroke-2);background:rgba(8,11,17,.72);
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;transition:.16s;position:relative;overflow:hidden;
+}
+.squad-slot:hover{border-color:var(--accent);transform:translateY(-2px);}
+.squad-slot.empty{border-style:dashed;color:var(--text-mute);font-size:22px;font-weight:300;}
+.squad-slot.me{border-color:var(--accent);box-shadow:var(--ring);}
+.squad-slot canvas{width:100%;height:100%;display:block;image-rendering:pixelated;}
+.squad-slot .ss-lv{position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:9px;font-weight:800;
+  background:rgba(0,0,0,.6);padding:1px 0;}
+
+.stage-actions{position:relative;display:flex;flex-direction:column;gap:8px;align-items:center;align-self:stretch;margin-top:2px;}
+.play-big{
+  min-width:min(300px,64vw);
+  padding:15px 30px;
+  font-family:var(--font-display);font-size:20px;letter-spacing:.06em;
+  border:0;border-radius:16px;
+  background:linear-gradient(180deg,#ffc960,#ff9c22);
+  color:#241500;font-weight:900;
+  box-shadow:0 6px 0 #b96a00, 0 14px 28px rgba(255,150,30,.32);
+  transition:.12s;
+}
+.play-big:active{transform:translateY(4px);box-shadow:0 2px 0 #b96a00, 0 6px 14px rgba(255,150,30,.3);}
+.play-big.alt{background:linear-gradient(180deg,#5a6472,#3d4450);box-shadow:0 6px 0 #23282f;color:#fff;}
+
+@media(max-width:820px){
+  .stage{min-height:min(72vh,540px);padding:12px;gap:8px;}
+  .hero-figure{width:min(220px,54vw);}
+  .squad-slot{width:46px;height:46px;border-radius:12px;}
+  .play-big{min-width:min(320px,86vw);font-size:18px;padding:13px 22px;}
+}
+@media(max-height:460px) and (orientation:landscape){
+  .stage{min-height:auto;gap:6px;padding:10px;}
+  .hero-figure{width:min(150px,26vw);}
+  .stage h1{font-size:20px;}
+  .stage p{display:none;}
+}
 
 .mode-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;}
 .mode-card{
@@ -1252,18 +1319,36 @@ body.touch-on .zone-timer{top:56px;}
     <div class="page active" id="page-play">
       <div class="page-inner play-grid">
         <div class="col gap-16">
-          <div class="hero">
-            <canvas class="hero-art" id="hero-art"></canvas>
-            <div class="hero-shade"></div>
-            <div class="eyebrow" data-i18n="play.eyebrow">عالم مفتوح • ديناصورات • بقاء</div>
-            <h1 id="hero-mode-name">SQUAD ROYALE</h1>
-            <p id="hero-mode-desc">أربعة لاعبين، مصير واحد.</p>
-            <div class="row wrap gap-8">
-              <button class="btn btn-primary btn-hero" id="btn-random-match" data-i18n="play.randomMatch">مباراة عشوائية</button>
-              <button class="btn btn-hero" id="btn-cancel-queue" style="display:none" data-i18n="play.cancelSearch">إلغاء البحث</button>
-              <button class="btn btn-hero" id="btn-play-bots" data-i18n="play.vsBots">العب ضد البوتات</button>
-              <button class="btn" id="btn-create-room" data-i18n="play.createRoom">إنشاء غرفة خاصة</button>
-              <button class="btn" id="btn-join-code" data-i18n="play.joinByCode">الانضمام بكود</button>
+          <!-- The stage: your character, your squad, and one big button. The
+               shape lobbies in this genre have settled on, because it answers
+               "who am I, who am I with, and how do I start" without reading. -->
+          <div class="stage" id="stage">
+            <canvas class="stage-art" id="hero-art"></canvas>
+            <div class="stage-shade"></div>
+
+            <div class="stage-top">
+              <div class="eyebrow" data-i18n="play.eyebrow">عالم مفتوح • ديناصورات • بقاء</div>
+              <h1 id="hero-mode-name">SQUAD ROYALE</h1>
+              <p id="hero-mode-desc">أربعة لاعبين، مصير واحد.</p>
+            </div>
+
+            <canvas class="hero-figure" id="hero-figure"></canvas>
+
+            <div class="hero-plate" id="hero-plate">
+              <div class="hp-name" id="hero-name">—</div>
+              <div class="hp-sub"><span id="hero-skin">Ranger</span> · <span data-i18n="common.level">المستوى</span> <span id="hero-level">1</span></div>
+            </div>
+
+            <div class="squad-row" id="squad-row"></div>
+
+            <div class="stage-actions">
+              <button class="btn play-big" id="btn-random-match" data-i18n="play.randomMatch">مباراة عشوائية</button>
+              <button class="btn play-big alt" id="btn-cancel-queue" style="display:none" data-i18n="play.cancelSearch">إلغاء البحث</button>
+              <div class="row gap-8 wrap" style="justify-content:flex-end">
+                <button class="btn btn-sm" id="btn-play-bots" data-i18n="play.vsBots">العب ضد البوتات</button>
+                <button class="btn btn-sm" id="btn-create-room" data-i18n="play.createRoom">إنشاء غرفة خاصة</button>
+                <button class="btn btn-sm" id="btn-join-code" data-i18n="play.joinByCode">الانضمام بكود</button>
+              </div>
             </div>
           </div>
 
@@ -4489,7 +4574,38 @@ body.touch-on .zone-timer{top:56px;}
   // ---------------------------------------------------------------------------
   // Swept AABB resolution, axis by axis, with automatic step-up.
   // ---------------------------------------------------------------------------
+  /**
+   * Moves the body, splitting the step so it can never pass through a wall.
+   *
+   * The per-axis resolve below only ever tests where the body would END UP.
+   * If a single step is long enough to start on one side of a wall and finish
+   * on the other, nothing is touching at either end and the body sails
+   * straight through. That happens at sprint speed on a slow frame, in a lag
+   * spike, or in fast falls - and it is what lets a player walk through
+   * buildings. Capping each sub-step below the body's own thickness means
+   * there is always a test inside the obstacle.
+   */
   function moveAxis(q, s, dx, dy, dz, height, radius) {
+    const longest = Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz));
+    const limit = Math.max(0.05, radius * 0.75);
+    if (longest > limit) {
+      const steps = Math.min(16, Math.ceil(longest / limit));
+      const sx = dx / steps, sy = dy / steps, sz = dz / steps;
+      let hitX = false, hitY = false, hitZ = false;
+      for (let i = 0; i < steps; i++) {
+        const hit = moveAxisStep(q, s, hitX ? 0 : sx, hitY ? 0 : sy, hitZ ? 0 : sz, height, radius);
+        // Once an axis is blocked the remaining motion along it is spent.
+        hitX = hitX || hit.hitX;
+        hitY = hitY || hit.hitY;
+        hitZ = hitZ || hit.hitZ;
+        if (hitX && hitY && hitZ) break;
+      }
+      return { hitX, hitY, hitZ };
+    }
+    return moveAxisStep(q, s, dx, dy, dz, height, radius);
+  }
+
+  function moveAxisStep(q, s, dx, dy, dz, height, radius) {
     let hitX = false;
     let hitY = false;
     let hitZ = false;
@@ -10592,6 +10708,118 @@ const MARKINGS = ['none', 'warpaint', 'stripes', 'dots', 'tribal'];
 const ACCESSORIES = ['none', 'goggles', 'mask', 'headset', 'bandana', 'scope'];
 const BG_STYLES = ['#1b2430', '#241b30', '#302a1b', '#1b3028', '#301b1e', '#1b2a30', '#262630', '#0f1620'];
 
+/**
+ * Paints the lobby character: a full-body block figure in the player's own
+ * skin palette, holding whatever weapon they have selected.
+ *
+ * Drawn rather than shipped as artwork, for the same reason everything else
+ * here is generated - the game contains no image files, and a character built
+ * from the player's cosmetics changes when they do.
+ */
+function drawHeroFigure(canvas, { skin = 'ranger', weapon = null, avatar = null } = {}) {
+  // Fit the drawing to whatever box the layout gave the canvas.
+  const box = Math.min(canvas.clientWidth || 260, canvas.clientHeight || 260);
+  const size = Math.max(140, Math.min(340, box || 260));
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = size * dpr;
+  canvas.height = size * dpr;
+  const c = canvas.getContext('2d');
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, size, size);
+  c.imageSmoothingEnabled = false;
+
+  // SKIN_PALETTES is a module-scope const declared further down; it is
+  // populated before any lobby render, so reading it here is safe.
+  const pal = SKIN_PALETTES[skin] || ['#3f4a3a', '#6a7a5a', '#2b2f28', '#c8a24b'];
+  const [cloth, clothLit, dark, trim] = pal;
+  const flesh = SKIN_TONES[(avatar?.skinTone || 2) % SKIN_TONES.length];
+
+  // 24-wide grid keeps the proportions readable at any size.
+  const G = 24;
+  const P = size / G;
+  const px = (x, y, w, h, col) => { c.fillStyle = col; c.fillRect(Math.round(x * P), Math.round(y * P), Math.ceil(w * P), Math.ceil(h * P)); };
+
+  // --- ground shadow -------------------------------------------------------
+  c.save();
+  c.globalAlpha = 0.42;
+  c.fillStyle = '#000';
+  c.beginPath();
+  c.ellipse(size / 2, size * 0.945, size * 0.24, size * 0.035, 0, 0, Math.PI * 2);
+  c.fill();
+  c.restore();
+
+  // --- legs ----------------------------------------------------------------
+  px(8.5, 17, 3, 5.6, dark);
+  px(12.5, 17, 3, 5.6, dark);
+  px(8.5, 22.1, 3.2, 1.1, shade(dark, 0.7));      // boots
+  px(12.5, 22.1, 3.2, 1.1, shade(dark, 0.7));
+
+  // --- torso ---------------------------------------------------------------
+  px(7.5, 9.5, 9, 7.8, cloth);
+  px(7.5, 9.5, 9, 1.1, clothLit);                  // lit shoulders
+  px(15.2, 10.2, 1.3, 7, shade(cloth, 0.72));      // side shade
+  px(10.6, 10.4, 2.8, 6.4, shade(cloth, 1.12));    // chest plate
+  px(7.5, 13.4, 9, 0.9, trim);                     // belt
+  px(11.2, 13.2, 1.6, 1.3, shade(trim, 1.25));     // buckle
+
+  // --- arms ----------------------------------------------------------------
+  px(5.6, 10, 2.1, 6.2, shade(cloth, 0.88));
+  px(16.3, 10, 2.1, 6.2, shade(cloth, 0.88));
+  px(5.6, 15.4, 2.1, 1.5, flesh);                  // hands
+  px(16.3, 15.4, 2.1, 1.5, flesh);
+
+  // --- head ----------------------------------------------------------------
+  px(8.6, 3.4, 6.8, 6.4, flesh);
+  px(8.6, 3.4, 6.8, 0.9, shade(flesh, 1.14));
+  px(14.2, 4.2, 1.2, 5.4, shade(flesh, 0.8));
+  px(8.2, 2.7, 7.6, 1.5, dark);                    // hood / helmet
+  px(8.2, 2.7, 7.6, 0.55, shade(dark, 1.35));
+  px(9.9, 6.1, 1.25, 1.1, '#1b1f26');              // eyes
+  px(12.6, 6.1, 1.25, 1.1, '#1b1f26');
+  px(9.9, 6.1, 1.25, 0.4, '#cfe3ff');
+  px(12.6, 6.1, 1.25, 0.4, '#cfe3ff');
+  px(10.6, 8.3, 2.8, 0.55, shade(flesh, 0.62));    // mouth line
+  px(8.2, 4.1, 0.8, 4.6, trim);                    // face stripe
+
+  // --- weapon in the right hand -------------------------------------------
+  // The weapon sits in the right hand at 16.3..18.4 x 15.4, so every shape
+  // below is anchored there - otherwise it floats beside the figure.
+  const def = weapon ? Content.WEAPON_BY_ID[weapon.id] : null;
+  const cls = def?.class || null;
+  const gun = '#2f353d';
+  const gunLit = '#525c69';
+  const wood = '#6b4a2e';
+  if (cls === 'melee') {
+    px(16.6, 10.6, 0.9, 5.6, wood);                // haft down the arm
+    px(15.4, 9.0, 3.4, 1.7, '#d3d9e0');            // blade
+    px(15.4, 9.0, 3.4, 0.45, '#f2f6fa');
+    px(16.2, 10.4, 1.7, 0.6, trim);                // guard
+  } else if (cls) {
+    const long = cls === 'sniper' || cls === 'marksman' || cls === 'lmg';
+    const bulky = cls === 'shotgun' || cls === 'explosive' || cls === 'lmg';
+    const barrelLen = long ? 8.0 : cls === 'pistol' ? 2.6 : 5.4;
+    const barrelH = bulky ? 1.5 : 1.05;
+    const x0 = 17.6 - barrelLen;                   // muzzle ends past the hand
+    px(x0, 15.0, barrelLen, barrelH, gun);
+    px(x0, 15.0, barrelLen, 0.4, gunLit);
+    px(16.0, 16.0, 1.9, 1.9, wood);                // grip under the hand
+    if (cls !== 'pistol') px(x0 + 0.4, 16.0, 1.5, 1.4, gun);   // magazine
+    if (long) px(x0 + 2.0, 14.1, 2.2, 0.9, gun);   // scope
+    if (cls === 'explosive') px(x0 - 0.6, 14.5, 1.6, 2.4, '#7a2f2f');
+  }
+
+  // --- rim light, so the figure reads against a dark stage -----------------
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  c.globalAlpha = 0.10;
+  const rim = c.createLinearGradient(0, size * 0.1, 0, size * 0.95);
+  rim.addColorStop(0, '#ffd79a');
+  rim.addColorStop(1, 'transparent');
+  c.fillStyle = rim;
+  c.fillRect(size * 0.22, size * 0.08, size * 0.56, size * 0.88);
+  c.restore();
+}
+
 function drawAvatar(canvas, avatar, size = 96) {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   canvas.width = size * dpr; canvas.height = size * dpr;
@@ -11025,6 +11253,8 @@ uniform float uTime;
 uniform float uWindStrength;
 out vec3 vViewNormal;
 out float vRough;
+out vec2 vUV;
+out float vLayer;
 void main(){
   vec3 world = aPos + uChunkOrigin;
   int ni = int(aNormalIdx);
@@ -11037,15 +11267,28 @@ void main(){
   }
   vViewNormal = normalize(uNormalView * n);
   vRough = 0.8;
+  vUV = aUV;
+  vLayer = aLayer;
   gl_Position = uViewProj * vec4(world, 1.0);
 }`;
 
 GLSL.chunkPrepassFS = `#version 300 es
 precision highp float;
+precision highp sampler2DArray;
+uniform sampler2DArray uAlbedo;
+uniform int uCutout;
 in vec3 vViewNormal;
 in float vRough;
+in vec2 vUV;
+in float vLayer;
 layout(location=0) out vec4 oNormal;
 void main(){
+  // The prepass has to reject the same fragments the shading pass will, or a
+  // blade of grass writes depth across its whole quad. The shading pass then
+  // discards the transparent part, and the terrain behind it is already
+  // depth-occluded - so the gap shows the sky, and the plants read as pale
+  // cut-outs pasted over the world.
+  if (uCutout == 1 && texture(uAlbedo, vec3(vUV, vLayer)).a < 0.5) discard;
   oNormal = vec4(normalize(vViewNormal)*0.5+0.5, vRough);
 }`;
 
@@ -12177,10 +12420,16 @@ class Renderer {
     gl.uniformMatrix3fv(pp.u.uNormalView, false, normalView);
     gl.uniform1f(pp.u.uTime, this.time);
     gl.uniform1f(pp.u.uWindStrength, scene.wind || 1);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.materials.albedo);
+    gl.uniform1i(pp.u.uAlbedo, 0);
+    gl.uniform1i(pp.u.uCutout, 0);
     this._drawChunkList(scene.chunks, pp, 'opaque');
+    gl.uniform1i(pp.u.uCutout, 1);
     gl.disable(gl.CULL_FACE);
     this._drawChunkList(scene.chunks, pp, 'cutout');
     gl.enable(gl.CULL_FACE);
+    gl.uniform1i(pp.u.uCutout, 0);
 
     if (scene.boxes && scene.boxes.length) {
       const bp = this.prog.boxPrepass;
@@ -18101,6 +18350,7 @@ class UI {
     $('#topbar-level').textContent = p.level;
     $('#hud-coins').textContent = fmtNum(p.coins);
     drawAvatar(this._avatarCanvas('#topbar-avatar'), p.avatar, 38);
+    this.renderStage();
   }
 
   /**
@@ -18270,6 +18520,69 @@ class UI {
   _renderHeroMode(mode) {
     $('#hero-mode-name').textContent = mode.name;
     $('#hero-mode-desc').textContent = mode.description;
+    this.renderStage();
+  }
+
+  /**
+   * Paints the character, the name plate and the squad slots. The slot count
+   * follows the mode, so a solo lobby does not show three empty chairs.
+   */
+  renderStage() {
+    const p = this.app.profile;
+    if (!p) return;
+    const mode = Content.MODE_BY_KEY[this.selectedMode] || Content.MODE_BY_KEY.solo;
+
+    const fig = $('#hero-figure');
+    if (fig) {
+      // Out of a match there is no inventory, so show the starter rifle
+      // rather than an empty-handed figure.
+      const held = this.app.matchState?.inventory?.weapons?.[0]
+        || { id: (Content.WEAPONS.find((w) => w.class === 'assault') || Content.WEAPONS[1]).id };
+      drawHeroFigure(fig, {
+        skin: p.cosmetics?.skin || 'ranger',
+        weapon: held,
+        avatar: p.avatar,
+      });
+    }
+    $('#hero-name').textContent = p.name;
+    $('#hero-level').textContent = p.level;
+    const skinDef = (Content.SKINS || []).find((s) => s.key === (p.cosmetics?.skin || 'ranger'));
+    $('#hero-skin').textContent = skinDef?.name || 'Ranger';
+
+    const row = $('#squad-row');
+    if (!row) return;
+    row.innerHTML = '';
+    const seats = Math.max(1, mode.teamSize || 1);
+    const mates = (this.party?.members || []).filter((m) => m.id !== p.id);
+
+    for (let i = 0; i < seats; i++) {
+      if (i === 0) {
+        const slot = el('div', { class: 'squad-slot me', title: p.name,
+          onclick: () => this.goPage('armoury') });
+        const cv = el('canvas');
+        slot.appendChild(cv);
+        slot.appendChild(el('div', { class: 'ss-lv' }, String(p.level)));
+        row.appendChild(slot);
+        drawAvatar(cv, p.avatar, 54);
+        continue;
+      }
+      const mate = mates[i - 1];
+      if (mate) {
+        const slot = el('div', { class: 'squad-slot', title: mate.name });
+        const cv = el('canvas');
+        slot.appendChild(cv);
+        slot.appendChild(el('div', { class: 'ss-lv' }, String(mate.level || 1)));
+        row.appendChild(slot);
+        drawAvatar(cv, mate.avatar, 54);
+      } else {
+        // An empty chair is an invitation, so it opens the way to fill it.
+        row.appendChild(el('div', {
+          class: 'squad-slot empty',
+          title: 'ادعُ صديقاً',
+          onclick: () => (this.app.netMode === 'p2p' ? this.createRoom() : this.goPage('social')),
+        }, '+'));
+      }
+    }
   }
 
   renderLobbies(lobbies) {
@@ -20091,7 +20404,12 @@ class App {
   }
 
   _bindGlobal() {
-    window.addEventListener('resize', () => this.renderer.resize());
+    window.addEventListener('resize', () => {
+      this.renderer.resize();
+      // The character is drawn at the canvas's real pixel size, so it has to
+      // be repainted when that changes or it turns blurry.
+      if (this.ui?.screen === 'lobby') this.ui.renderStage();
+    });
 
     // First interaction unlocks audio (browser autoplay policy).
     const unlock = () => { this.audio.init(); this.audio.resume(); window.removeEventListener('pointerdown', unlock); };
