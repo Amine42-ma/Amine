@@ -10843,6 +10843,8 @@ function createFBO(gl, attachments, depthTex) {
     bufs.push(gl.COLOR_ATTACHMENT0 + i);
   });
   if (bufs.length > 1) gl.drawBuffers(bufs);
+  // A depth-only target has to say so explicitly, or it is incomplete.
+  if (bufs.length === 0) { gl.drawBuffers([gl.NONE]); gl.readBuffer(gl.NONE); }
   if (depthTex) gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthTex, 0);
   const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
   if (status !== gl.FRAMEBUFFER_COMPLETE) console.warn('[gl] incomplete framebuffer', status.toString(16));
@@ -11991,14 +11993,19 @@ class Renderer {
     const del = (o) => { if (o) { if (o.tex) gl.deleteTexture(o.tex); if (o.fbo) gl.deleteFramebuffer(o.fbo); } };
 
     // free previous
-    for (const key of ['depthTex','normalTex','sceneTex','sceneCopyTex','historyTex','taaTex','aoTex','aoBlurTex','bloomA','bloomB','postTex']) {
+    for (const key of ['depthTex','depthCopyTex','normalTex','sceneTex','sceneCopyTex','historyTex','taaTex','aoTex','aoBlurTex','bloomA','bloomB','postTex']) {
       if (this[key]) gl.deleteTexture(this[key]);
     }
-    for (const key of ['prepassFBO','sceneFBO','aoFBO','aoBlurFBO','bloomAFBO','bloomBFBO','taaFBO','historyFBO','postFBO','sceneCopyFBO']) {
+    for (const key of ['prepassFBO','sceneFBO','aoFBO','aoBlurFBO','bloomAFBO','bloomBFBO','taaFBO','historyFBO','postFBO','sceneCopyFBO','depthCopyFBO']) {
       if (this[key]) gl.deleteFramebuffer(this[key]);
     }
 
     this.depthTex = createTexture(gl, w, h, gl.DEPTH_COMPONENT24, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, gl.NEAREST);
+    // Water and soft particles need to read scene depth while still drawing
+    // into the framebuffer that depth belongs to. Sampling a texture that is
+    // attached to the bound framebuffer is a feedback loop - INVALID_OPERATION
+    // with undefined results - so they read this copy instead.
+    this.depthCopyTex = createTexture(gl, w, h, gl.DEPTH_COMPONENT24, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, gl.NEAREST);
     this.normalTex = createTexture(gl, w, h, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.NEAREST);
     this.sceneTex = createTexture(gl, w, h, hdrFormat, gl.RGBA, hdrType, gl.LINEAR);
     this.sceneCopyTex = createTexture(gl, w, h, hdrFormat, gl.RGBA, hdrType, gl.LINEAR);
@@ -12019,6 +12026,7 @@ class Renderer {
     this.prepassFBO = createFBO(gl, [this.normalTex], this.depthTex);
     this.sceneFBO = createFBO(gl, [this.sceneTex], this.depthTex);
     this.sceneCopyFBO = createFBO(gl, [this.sceneCopyTex], null);
+    this.depthCopyFBO = createFBO(gl, [], this.depthCopyTex);
     this.aoFBO = createFBO(gl, [this.aoTex], null);
     this.aoBlurFBO = createFBO(gl, [this.aoBlurTex], null);
     this.bloomAFBO = createFBO(gl, [this.bloomA], null);
@@ -12301,6 +12309,14 @@ class Renderer {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.shadowTex);
       gl.uniform1i(bp.u.uShadowMap, 0);
+      // uAO must be given a unit of its own. An unassigned sampler defaults
+      // to unit 0, and this shader's other sampler is a sampler2DArray bound
+      // there - two sampler types on one unit is an error the spec answers
+      // with INVALID_OPERATION and *undefined* rendering, which is what tore
+      // the world apart on hardware less forgiving than a software rasteriser.
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this.quality.ssao ? this.aoTex : this.whiteTex);
+      gl.uniform1i(bp.u.uAO, 1);
       this._drawBoxInstances(scene.boxes.length);
       this.stats.boxes = scene.boxes.length;
     }
@@ -12334,8 +12350,9 @@ class Renderer {
       gl.uniform1f(wp.u.uFar, cam.far);
       gl.uniform1f(wp.u.uUnderwater, scene.underwater ? 1 : 0);
       gl.uniform1i(wp.u.uReflections, this.quality.reflections ? 1 : 0);
+      this._copyDepth();
       this._bind(wp, 'uSceneColour', this.sceneCopyTex, 0);
-      this._bind(wp, 'uSceneDepth', this.depthTex, 1);
+      this._bind(wp, 'uSceneDepth', this.depthCopyTex, 1);
       this._drawChunkList(scene.waterChunks, wp, 'water');
       gl.enable(gl.CULL_FACE);
       gl.depthMask(true);
@@ -12355,7 +12372,8 @@ class Renderer {
       gl.uniform2f(pp2.u.uScreenSize, this.width, this.height);
       gl.uniform1f(pp2.u.uNear, cam.near);
       gl.uniform1f(pp2.u.uFar, cam.far);
-      this._bind(pp2, 'uSceneDepth', this.depthTex, 0);
+      this._copyDepth();
+      this._bind(pp2, 'uSceneDepth', this.depthCopyTex, 0);
       const n = Math.min(scene.particles.count, this.MAX_PARTICLES);
       gl.bindBuffer(gl.ARRAY_BUFFER, this.particleVBO);
       gl.bufferSubData(gl.ARRAY_BUFFER, 0, scene.particles.data.subarray(0, n * 10));
@@ -12445,6 +12463,27 @@ class Renderer {
       this._bind(fp, 'uTex', this.postTex, 0);
       gl.uniform2f(fp.u.uTexel, 1 / this.width, 1 / this.height);
       this._fullscreen();
+    }
+
+    this._checkGlErrors();
+  }
+
+  /**
+   * A driver that rejects a draw call renders undefined output rather than
+   * failing loudly, so a mistake here shows up as a scrambled world and
+   * nothing in the log. Sampling the error flag once a second costs nothing
+   * and turns that into a message somebody can act on.
+   */
+  _checkGlErrors() {
+    if (this.frame % 60 !== 0) return;
+    const err = this.gl.getError();
+    if (err === 0) return;
+    this.lastGlError = err;
+    this.glErrorCount = (this.glErrorCount || 0) + 1;
+    if (this.glErrorCount <= 3) {
+      const names = { 1280: 'INVALID_ENUM', 1281: 'INVALID_VALUE', 1282: 'INVALID_OPERATION',
+                      1285: 'OUT_OF_MEMORY', 1286: 'INVALID_FRAMEBUFFER_OPERATION' };
+      console.error(`[gl] ${names[err] || err} during rendering - the image may be wrong.`);
     }
   }
 
@@ -12538,6 +12577,21 @@ class Renderer {
     gl.bindVertexArray(null);
     this.stats.drawCalls++;
     this.stats.triangles += (this.boxIndexCount / 3) * n;
+  }
+
+  /**
+   * Snapshots the depth buffer so a pass can read it while still drawing into
+   * the framebuffer it belongs to. Done at most once per frame.
+   */
+  _copyDepth() {
+    if (this._depthCopiedAt === this.frame) return;
+    this._depthCopiedAt = this.frame;
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.sceneFBO);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.depthCopyFBO);
+    gl.blitFramebuffer(0, 0, this.width, this.height, 0, 0, this.width, this.height,
+      gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneFBO);
   }
 
   _bind(program, uniform, tex, unit) {
@@ -19373,7 +19427,8 @@ class HUD {
         `boxes ${r.stats.boxes}  particles ${r.stats.particles}\n` +
         `ping ${this.app.net.ping} ms  seq ${game.state.inputSeq}  pending ${game.state.pendingInputs.length}\n` +
         `pos ${st.self.x.toFixed(1)}, ${st.self.y.toFixed(1)}, ${st.self.z.toFixed(1)}\n` +
-        `biome ${game.currentBiome?.name || '—'}`;
+        `biome ${game.currentBiome?.name || '—'}` +
+        (r.lastGlError ? `\nGL ERROR ${r.lastGlError} x${r.glErrorCount}` : '');
     }
 
     // --- scoreboard live refresh
