@@ -1261,6 +1261,7 @@ body.touch-on .zone-timer{top:56px;}
             <div class="row wrap gap-8">
               <button class="btn btn-primary btn-hero" id="btn-random-match" data-i18n="play.randomMatch">مباراة عشوائية</button>
               <button class="btn btn-hero" id="btn-cancel-queue" style="display:none" data-i18n="play.cancelSearch">إلغاء البحث</button>
+              <button class="btn btn-hero" id="btn-play-bots" data-i18n="play.vsBots">العب ضد البوتات</button>
               <button class="btn" id="btn-create-room" data-i18n="play.createRoom">إنشاء غرفة خاصة</button>
               <button class="btn" id="btn-join-code" data-i18n="play.joinByCode">الانضمام بكود</button>
             </div>
@@ -5192,7 +5193,14 @@ function randomId(bytes = 6) {
 }
 
 const { WORLD, B, isSolid, isLiquid, isBreakable, BIOME_INFO } = WorldGen;
-const { OP, EV, EF, MOVE, PHYS, COMBAT, ZONE, Writer, Reader, TICK_RATE } = Protocol;
+const { OP, EV, EF, IN, MOVE, PHYS, COMBAT, ZONE, Writer, Reader, TICK_RATE } = Protocol;
+
+/** Shortest signed angle between two headings. */
+function wrapAngle(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
 
 const MAX_EDITS = 60000; // per match, guards memory
 const HISTORY_TICKS = Math.ceil((COMBAT.MAX_LAG_COMPENSATION_MS / 1000) * TICK_RATE) + 2;
@@ -6827,6 +6835,9 @@ class Match {
         this._updatePlane(dt);
       // falls through - dropping shares the active simulation
       case 'active':
+        // Bots write their intent first so it is consumed by the very same
+        // simulation pass that handles everyone else's.
+        this._updateBots(dt);
         this._updatePlayers(dt);
         this._updateProjectiles(dt);
         this._updateDinos(dt);
@@ -6846,6 +6857,225 @@ class Match {
 
   _updateLobby() {
     if (this.lobbyDeadline && Date.now() >= this.lobbyDeadline && this.canStart()) this.start();
+  }
+
+  // ==========================================================================
+  //  Bots
+  //  ------------------------------------------------------------------------
+  //  A battle royale with nobody else in it is not a battle royale, and the
+  //  first player to open a room is always alone. Bots fill the lobby.
+  //
+  //  They are ordinary players. Rather than being moved around by special
+  //  cases, each one writes into the same input queue a human's keyboard
+  //  fills, so they run through identical physics, collision, storm damage
+  //  and elimination logic. A bot cannot walk through a wall or outrun a
+  //  human for the same reason a cheating client cannot.
+  // ==========================================================================
+
+  /** Difficulty shapes reaction time, accuracy and engagement range. */
+  static get BOT_SKILLS() {
+    return {
+      easy:   { react: 0.85, spread: 0.16, range: 42, aimSpeed: 2.2, fireRate: 0.55, wander: 0.5 },
+      normal: { react: 0.45, spread: 0.075, range: 62, aimSpeed: 4.5, fireRate: 0.85, wander: 0.32 },
+      hard:   { react: 0.22, spread: 0.032, range: 82, aimSpeed: 7.5, fireRate: 1.0, wander: 0.18 },
+    };
+  }
+
+  static get BOT_NAMES() {
+    return [
+      'رابتور', 'مخلب', 'ناب', 'ظل', 'صقر', 'رعد', 'نيزك', 'إعصار', 'صخر', 'جمرة',
+      'وميض', 'خنجر', 'شبح', 'قاطع', 'حارس', 'نمر', 'عاصف', 'جبل', 'سهم', 'درع',
+    ];
+  }
+
+  /**
+   * Fills the match up to `count` extra participants.
+   * Returns the bots actually added.
+   */
+  addBots(count, skill = 'normal') {
+    const added = [];
+    const names = Match.BOT_NAMES;
+    for (let i = 0; i < count; i++) {
+      if (this.players.size >= this.mode.maxPlayers) break;
+      const n = this.botCount = (this.botCount || 0) + 1;
+      const user = {
+        id: `bot_${this.id}_${n}`,
+        name: `${names[(n - 1) % names.length]}_${100 + ((n * 37) % 900)}`,
+        level: 1 + Math.floor(this.rng.next() * 40),
+        avatar: null,
+        cosmetics: { skin: 'ranger', trail: 'none' },
+      };
+      // conn is null: nothing is ever sent to a bot, and every send path
+      // already checks for it.
+      const player = this.addPlayer(user, null, {});
+      if (!player) break;
+      player.isBot = true;
+      player.connected = true;
+      player.bot = {
+        skill: Match.BOT_SKILLS[skill] ? skill : 'normal',
+        target: null,
+        nextThink: 0,
+        wanderAngle: this.rng.next() * Math.PI * 2,
+        fireCooldown: 0,
+        yaw: player.s.yaw,
+        pitch: 0,
+        seq: 0,
+      };
+      added.push(player);
+    }
+    return added;
+  }
+
+  get botsPresent() {
+    for (const p of this.players.values()) if (p.isBot) return true;
+    return false;
+  }
+
+  /**
+   * Produces one tick of intent per bot. Called before player simulation so
+   * the inputs are consumed in the very same pass as everyone else's.
+   */
+  _updateBots(dt) {
+    if (this.state !== 'active' && this.state !== 'dropping') return;
+    const now = Date.now();
+
+    for (const bot of this.players.values()) {
+      if (!bot.isBot || !bot.alive) continue;
+      const b = bot.bot;
+      const s = bot.s;
+
+      // --- leave the dropship ------------------------------------------
+      if (bot.inPlane) {
+        // Spread the jumps out so they do not all land on one spot.
+        if (!b.dropAt) b.dropAt = now + 2000 + this.rng.next() * 30000;
+        if (now >= b.dropAt) { bot.inPlane = false; bot.dropped = true; }
+        continue;
+      }
+
+      const skill = Match.BOT_SKILLS[b.skill];
+
+      // --- pick something to shoot at ----------------------------------
+      if (now >= b.nextThink) {
+        b.nextThink = now + skill.react * 1000 * (0.7 + this.rng.next() * 0.6);
+        b.target = null;
+        let best = skill.range * skill.range;
+        for (const other of this.players.values()) {
+          if (other === bot || !other.alive || other.inPlane) continue;
+          if (other.teamId === bot.teamId) continue;
+          const d2 = dist2(other.s.x, other.s.y, other.s.z, s.x, s.y, s.z);
+          if (d2 < best) { best = d2; b.target = other; }
+        }
+      }
+      const target = b.target && b.target.alive && !b.target.inPlane ? b.target : null;
+
+      // --- decide where to go ------------------------------------------
+      // Staying inside the closing circle always wins: a bot that stands in
+      // the storm trading shots simply dies to it, which reads as broken.
+      const zoneDx = this.zone.cx - s.x;
+      const zoneDz = this.zone.cz - s.z;
+      const zoneDist = Math.hypot(zoneDx, zoneDz);
+      const mustRun = zoneDist > this.zone.radius * 0.72;
+
+      let wishYaw;
+      if (mustRun) {
+        wishYaw = Math.atan2(zoneDx, zoneDz);
+      } else if (target) {
+        wishYaw = Math.atan2(target.s.x - s.x, target.s.z - s.z);
+      } else {
+        b.wanderAngle += (this.rng.next() - 0.5) * skill.wander;
+        wishYaw = b.wanderAngle;
+      }
+
+      // --- aim ----------------------------------------------------------
+      let wantPitch = 0;
+      if (target) {
+        const dx = target.s.x - s.x, dy = (target.s.y + 1.5) - (s.y + 1.6), dz = target.s.z - s.z;
+        const flat = Math.hypot(dx, dz);
+        wantPitch = -Math.atan2(dy, flat);
+        wishYaw = Math.atan2(dx, dz);
+        // Imperfect aim, scaled by skill, so bots miss like people do.
+        wishYaw += (this.rng.next() - 0.5) * skill.spread;
+        wantPitch += (this.rng.next() - 0.5) * skill.spread;
+      }
+
+      const turn = Math.min(1, skill.aimSpeed * dt);
+      b.yaw += wrapAngle(wishYaw - b.yaw) * turn;
+      b.pitch += (wantPitch - b.pitch) * turn;
+      b.pitch = clamp(b.pitch, -1.5, 1.5);
+
+      // --- movement keys -------------------------------------------------
+      let keys = IN.FWD;
+      if (mustRun || (target && Math.sqrt(dist2(target.s.x, target.s.y, target.s.z, s.x, s.y, s.z)) > 14)) {
+        keys |= IN.SPRINT;
+      }
+      // Strafe around a target rather than walking straight at it.
+      if (target && !mustRun) keys |= (this.tick + bot.entityId) % 120 < 60 ? IN.LEFT : IN.RIGHT;
+      // Hop when blocked: the shared physics stops flat against a wall, and
+      // this is enough to clear most terrain lips without pathfinding.
+      if (s.onGround && Math.hypot(s.vx, s.vz) < 1.2 && !target) keys |= IN.JUMP;
+      if (s.inWater) keys |= IN.SWIM_UP;
+
+      bot.inputQueue.push({
+        seq: ++b.seq,
+        keys,
+        yaw: b.yaw,
+        pitch: b.pitch,
+        dt: Math.min(0.1, dt),
+        moveX: 0,
+        moveY: 0,
+      });
+
+      // --- shooting -------------------------------------------------------
+      b.fireCooldown -= dt;
+      if (target && b.fireCooldown <= 0 && !bot.downed) {
+        const weapon = bot.inv.weapons[bot.inv.slot];
+        const def = weapon ? Content.WEAPON_BY_ID[weapon.id] : null;
+        if (def && def.fireMode !== 'melee') {
+          b.fireCooldown = (60 / (def.rpm || 300)) / Math.max(0.2, skill.fireRate);
+          this._botShoot(bot, target, def, skill);
+        } else {
+          b.fireCooldown = 0.6;
+          const d = Math.sqrt(dist2(target.s.x, target.s.y, target.s.z, s.x, s.y, s.z));
+          if (d < 3.2) this._damagePlayer(target, 24, bot, { weapon: 'melee', distance: d });
+        }
+      }
+    }
+  }
+
+  /**
+   * A bot's shot. Deliberately not routed through the network fire handler:
+   * that one exists to validate an untrusted claim from a client, and a bot
+   * has no client. The outcome is resolved here with the same weapon data,
+   * the same line of sight test and the same damage entry point.
+   */
+  _botShoot(bot, target, def, skill) {
+    const s = bot.s;
+    const ox = s.x, oy = s.y + 1.6, oz = s.z;
+    const tx = target.s.x, ty = target.s.y + 1.1, tz = target.s.z;
+    let dx = tx - ox, dy = ty - oy, dz = tz - oz;
+    const dist = Math.hypot(dx, dy, dz) || 1;
+    dx /= dist; dy /= dist; dz /= dist;
+
+    const range = def.range || 100;
+    if (dist > range) return;
+
+    // Everyone hears and sees the shot, whether or not it lands.
+    this._pushEvent(EV.SHOT, {
+      entityId: bot.entityId, weaponId: def.id,
+      x: ox, y: oy, z: oz, dx, dy, dz,
+    });
+
+    // Terrain between us? Then the shot hits the wall, as it should - the
+    // same raycast the client-authored fire path uses.
+    const voxelHit = Movement.raycast(this.getBlock, ox, oy, oz, dx, dy, dz, Math.min(dist, range));
+    if (voxelHit && voxelHit.distance < dist - 0.6) return;
+
+    // Skill decides whether the shot lands, so a weak bot genuinely misses.
+    if (this.rng.next() < skill.spread * 2.2) return;
+
+    const falloff = def.falloff ? Math.max(0.45, 1 - (dist / range) * def.falloff) : 1;
+    this._damagePlayer(target, (def.damage || 18) * falloff, bot,
+      { part: 'body', distance: dist, weapon: def.key });
   }
 
   _updatePlane(dt) {
@@ -8839,6 +9069,15 @@ return { Match, Rng, createInventory, weaponInstance, randomId };
           return;
         }
 
+        case 'match.addBots': {
+          // Only the room's owner decides who else is in it.
+          if ((peer ? peer.userId : this.net.selfId) !== this.net.selfId) return;
+          const added = this.match.addBots(
+            Math.max(1, Math.min(48, msg.count | 0 || 8)), msg.skill || 'normal');
+          this._broadcastRoster();
+          return reply({ t: 'ok', action: 'bots', added: added.length });
+        }
+
         case 'match.start':
         case 'match.startRoom': {
           // Only the person who opened the room may force an early start.
@@ -9041,6 +9280,19 @@ return { Match, Rng, createInventory, weaponInstance, randomId };
         const retry = setInterval(announce, 1500);
         this._joinRetry = retry;
       }));
+    }
+
+    /**
+     * A match against bots, straight away. Opens a private room so nobody
+     * wanders into it, fills it, and starts without a countdown - waiting for
+     * players is exactly what this mode exists to avoid.
+     */
+    async playWithBots({ mode = 'solo', count = 9, skill = 'normal' } = {}) {
+      await this.connect();
+      const code = await this.createRoom({ mode, privateRoom: true });
+      this.send({ t: 'match.addBots', count, skill });
+      this.send({ t: 'match.startRoom' });
+      return { code, bots: count };
     }
 
     /**
@@ -9525,6 +9777,7 @@ const I18N = DRE.I18N = {
       'nav.career': 'السجل', 'nav.ranks': 'الترتيب', 'nav.settings': 'الإعدادات',
       'play.eyebrow': 'عالم مفتوح • ديناصورات • بقاء', 'play.randomMatch': 'مباراة عشوائية',
       'play.cancelSearch': 'إلغاء البحث', 'play.createRoom': 'إنشاء غرفة خاصة', 'play.joinByCode': 'الانضمام بكود',
+      'play.vsBots': 'العب ضد البوتات',
       'play.searching': 'جارٍ البحث عن مباراة بلاعبين حقيقيين…', 'play.elapsed': 'الوقت المنقضي',
       'play.modes': 'أنماط اللعب', 'play.lobbies': 'المباريات المفتوحة',
       'party.title': 'المجموعة', 'party.invite': 'دعوة', 'party.leave': 'مغادرة', 'party.code': 'كود المجموعة',
@@ -9561,6 +9814,7 @@ const I18N = DRE.I18N = {
       'nav.career': 'Career', 'nav.ranks': 'Ranks', 'nav.settings': 'Settings',
       'play.eyebrow': 'Open world • Saurians • Survival', 'play.randomMatch': 'Random Match',
       'play.cancelSearch': 'Cancel Search', 'play.createRoom': 'Create Private Room', 'play.joinByCode': 'Join by Code',
+      'play.vsBots': 'Play vs Bots',
       'play.searching': 'Searching for a match with real players…', 'play.elapsed': 'Elapsed',
       'play.modes': 'Game Modes', 'play.lobbies': 'Open Lobbies',
       'party.title': 'Party', 'party.invite': 'Invite', 'party.leave': 'Leave', 'party.code': 'Party code',
@@ -12747,7 +13001,13 @@ function meshChunk(cx, cz) {
     // Restrict whichever index maps to Y to the active band.
     const uLo = u === 1 ? bandY0 : 0, uHi = u === 1 ? bandY1 : dims[u];
     const vLo = v === 1 ? bandY0 : 0, vHi = v === 1 ? bandY1 : dims[v];
-    const dLo = axis === 1 ? bandY0 : -1, dHi = axis === 1 ? bandY1 : dims[axis];
+    // Faces land on plane d+1, so scanning d from -1 covers planes 0..15 -
+    // every boundary inside this chunk plus the one it shares with the
+    // neighbour behind it. Stopping one short is deliberate: the plane at 16
+    // is the next chunk's plane 0, and letting both draw it puts two coplanar
+    // surfaces in the same place, which z-fights along every chunk seam.
+    const dLo = axis === 1 ? bandY0 : -1;
+    const dHi = axis === 1 ? bandY1 : dims[axis] - 1;
 
     for (let d = dLo; d < dHi; d++) {
       mask.fill(0);
@@ -12852,7 +13112,12 @@ function meshChunk(cx, cz) {
           const light = maskLight[mi];
 
           const base = [0, 0, 0];
-          base[axis] = d + (dir > 0 ? 1 : 0);
+          // The shared face between the blocks at d and d+1 lies on the plane
+          // d+1, whichever of the two owns it. Offsetting the negative-facing
+          // half back to d detached it from its block by a full unit: every
+          // solid rendered two units wide instead of one, which is what turned
+          // the world into stretched slabs with sky showing through the seams.
+          base[axis] = d + 1;
           base[u] = i;
           base[v] = j;
           const du = [0, 0, 0]; du[u] = w;
@@ -17104,6 +17369,7 @@ class UI {
     $('#btn-random-match').onclick = () => this.startRandomMatch();
     $('#btn-cancel-queue').onclick = () => { net.send({ t: 'match.cancel' }); this._setQueue(false); };
     $('#btn-create-room').onclick = () => this.createRoom();
+    $('#btn-play-bots').onclick = () => this.playWithBots();
     $('#btn-join-code').onclick = () => this.joinByCode();
     $('#btn-refresh-lobbies').onclick = () => net.send({ t: 'match.lobbies' });
 
@@ -17996,6 +18262,28 @@ class UI {
     this._setQueue(true);
   }
 
+  /**
+   * Straight into a match against bots. This is the answer to opening the
+   * game when nobody else is online - which, for a game you just downloaded
+   * and shared with two friends, is most of the time.
+   */
+  async playWithBots() {
+    const mode = this.selectedMode === 'custom' ? 'solo' : this.selectedMode;
+    const count = M.clamp((Content.MODE_BY_KEY[mode]?.maxPlayers || 10) - 1, 3, 15);
+    this.app.audio.ui('ok');
+
+    if (this.app.netMode !== 'p2p') {
+      this.net.send({ t: 'match.bots', mode, count, skill: this.app.settings.botSkill || 'normal' });
+      return;
+    }
+    try {
+      await this.net.playWithBots({ mode, count, skill: this.app.settings.botSkill || 'normal' });
+      Toast.ok('ضد البوتات', `${count} خصماً`);
+    } catch (err) {
+      Toast.err('تعذّر بدء المباراة', err.message);
+    }
+  }
+
   async createRoom() {
     const mode = this.selectedMode === 'custom' ? 'squad' : this.selectedMode;
     if (this.app.netMode === 'p2p') {
@@ -18555,6 +18843,8 @@ class UI {
       body.appendChild(row('الحساسية', 'حساسية الفأرة الأساسية.', slider('sensitivity', 0.1, 4, 0.05, (v) => v.toFixed(2))));
       body.appendChild(row('حساسية التصويب', 'مضاعف الحساسية أثناء التصويب.', slider('adsSensitivity', 0.1, 2, 0.02, (v) => v.toFixed(2))));
       body.appendChild(row('عكس المحور الرأسي', null, toggle('invertY')));
+      body.appendChild(row('صعوبة البوتات', 'تؤثر على سرعة رد فعلهم ودقّة تصويبهم.',
+        select('botSkill', [['easy', 'سهل'], ['normal', 'متوسط'], ['hard', 'صعب']])));
       body.appendChild(el('div', { class: 'divider' }));
 
       body.appendChild(el('div', { class: 'set-label', style: { marginBottom: '4px' } }, 'التحكّم باللمس (الهاتف)'));
@@ -20041,6 +20331,7 @@ const DEFAULT_CLIENT_SETTINGS = {
   colorblind: 'none', headBob: 1.0, autoSprint: false, toggleAds: false, toggleCrouch: false,
   binds: null,
   // Touch: 'auto' follows device detection, 'on'/'off' force it.
+  botSkill: 'normal',
   touchControls: 'auto', touchSensitivity: 1.0, touchScale: 1.0,
   touchLeftHanded: false, aimAssist: true,
 };

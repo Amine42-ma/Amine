@@ -877,6 +877,214 @@ group('Match simulation');
 }
 
 // ===========================================================================
+group('Bots');
+// ===========================================================================
+{
+  const { Match } = require('../server/lib/match.js');
+  const Content = require('../server/lib/content.js');
+
+  test('bots fill a lobby and are ordinary players', () => {
+    const m = new Match({ id: 'bots', mode: 'solo', seed: 777 });
+    m.addPlayer({ id: 'h1', name: 'Human', level: 5, cosmetics: {} },
+      { send() {}, sendBinary() {} }, {});
+    const added = m.addBots(9, 'normal');
+    assertEqual(added.length, 9);
+    assertEqual(m.players.size, 10);
+    assert(added.every((b) => b.isBot && b.entityId && b.inv), 'bots have entity ids and inventories');
+    assert(m.botsPresent, 'the match reports bots present');
+  });
+
+  test('a bot lobby never exceeds the mode capacity', () => {
+    const m = new Match({ id: 'cap', mode: 'duo', seed: 8 });
+    const added = m.addBots(500);
+    assert(m.players.size <= m.mode.maxPlayers,
+      `${m.players.size} players within ${m.mode.maxPlayers}`);
+    assertEqual(added.length, m.players.size);
+  });
+
+  test('bots move, fight and can be eliminated over a full match', () => {
+    const m = new Match({ id: 'sim', mode: 'solo', seed: 4242 });
+    const human = m.addPlayer({ id: 'h1', name: 'Human', level: 5, cosmetics: {} },
+      { send() {}, sendBinary() {} }, {});
+    const bots = m.addBots(9, 'hard');
+    m.start();
+
+    const startPos = bots.map((b) => ({ x: b.s.x, z: b.s.z }));
+    // Ninety seconds of simulation: long enough to leave the dropship, land,
+    // find each other and shoot.
+    for (let i = 0; i < 30 * 90; i++) m.update(1 / 30);
+
+    const moved = bots.filter((b, i) =>
+      Math.hypot(b.s.x - startPos[i].x, b.s.z - startPos[i].z) > 20).length;
+    assert(moved >= 5, `at least half the bots travelled (${moved}/9)`);
+
+    const damage = bots.reduce((s, b) => s + (b.damage || 0), 0);
+    assert(damage > 0, `bots dealt damage (${damage})`);
+
+    // They are subject to the same world the player is: nobody should be
+    // underground, flying, or outside the map.
+    for (const b of bots) {
+      assert(Number.isFinite(b.s.x) && Number.isFinite(b.s.y) && Number.isFinite(b.s.z),
+        `${b.name} has a finite position`);
+      assert(b.s.y > -5 && b.s.y < 400, `${b.name} is within the world vertically (${b.s.y})`);
+    }
+    assert(human, 'the human is still tracked');
+  });
+
+  test('a bot cannot shoot through solid ground', () => {
+    const m = new Match({ id: 'los', mode: 'solo', seed: 99 });
+    const shooter = m.addBots(1, 'hard')[0];
+    const victim = m.addPlayer({ id: 'v', name: 'Victim', level: 1, cosmetics: {} },
+      { send() {}, sendBinary() {} }, {});
+    m.start();
+    shooter.inPlane = false;
+    victim.inPlane = false;
+
+    // Bury the victim well below the shooter with terrain in between.
+    shooter.s.x = m.arena.cx; shooter.s.z = m.arena.cz;
+    shooter.s.y = m.world.safeSpawn(m.arena.cx, m.arena.cz).y + 30;
+    victim.s.x = m.arena.cx; victim.s.z = m.arena.cz; victim.s.y = 4;
+    victim.health = 100;
+
+    const def = Content.WEAPON_BY_ID[shooter.inv.weapons[shooter.inv.slot]?.id]
+      || { damage: 30, range: 120, key: 'test', id: 1 };
+    for (let i = 0; i < 40; i++) {
+      m._botShoot(shooter, victim, def, { spread: 0 });
+    }
+    assertEqual(victim.health, 100, 'no damage passed through the ground');
+  });
+}
+
+// ===========================================================================
+group('Chunk meshing');
+// ===========================================================================
+{
+  // The mesher only ever runs inside a Web Worker, so nothing else in the
+  // suite touches it - and a geometry bug there is invisible to every other
+  // test while making the game unplayable. Run the real worker source in a
+  // sandbox and check the geometry it produces.
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+
+  const SB = '<script id="shared-modules" type="text/plain">';
+  const SE = '</' + 'script><!-- /shared-modules -->';
+  const shared = html.slice(html.indexOf(SB) + SB.length, html.indexOf(SE));
+
+  const marker = 'const CHUNK_WORKER_SRC = `';
+  const from = html.indexOf(marker) + marker.length;
+  let to = from;
+  while (to < html.length && !(html[to] === '`' && html[to - 1] !== '\\')) to++;
+  const workerSrc = html.slice(from, to)
+    .replace(/\\`/g, '`')
+    .replace(/\\\$/g, '$')
+    .replace(/\$\{CHUNK_W\}/g, '16')
+    .replace(/\$\{VOL_H\}/g, '194')
+    .replace(/\$\{VOL_W\}/g, '18');
+
+  const posted = [];
+  const sandbox = {
+    console, Math, Date, JSON, Object, Array, Number, String, Boolean,
+    isNaN, parseInt, parseFloat, performance, crypto: globalThis.crypto,
+    Uint8Array, Int8Array, Uint16Array, Int16Array, Uint32Array, Int32Array,
+    Float32Array, Float64Array, ArrayBuffer, DataView, Map, Set,
+    TextEncoder, TextDecoder,
+    postMessage: (m) => posted.push(m),
+  };
+  sandbox.globalThis = sandbox;
+  sandbox.self = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(shared, sandbox, { filename: 'shared.js' });
+  vm.runInContext(workerSrc, sandbox, { filename: 'chunk-worker.js' });
+  sandbox.onmessage({ data: { type: 'init', seed: 20260728 } });
+
+  const meshOf = (cx, cz) => {
+    posted.length = 0;
+    sandbox.onmessage({ data: { type: 'mesh', cx, cz, key: `${cx},${cz}`, revision: 0, edits: [] } });
+    return posted.find((m) => m.type === 'mesh');
+  };
+
+  const CHUNKS = [[0, 0], [-72, -55], [40, 18], [-3, 7], [12, -30]];
+
+  test('every meshed vertex stays inside its own chunk', () => {
+    let outside = 0;
+    let worst = '';
+    for (const [cx, cz] of CHUNKS) {
+      const out = meshOf(cx, cz);
+      assert(out, `chunk ${cx},${cz} produced a mesh`);
+      for (const part of ['opaque', 'cutout', 'water']) {
+        if (!out[part]) continue;
+        const f32 = new Float32Array(out[part].vertices);
+        const n = out[part].vertices.byteLength / 20;
+        for (let v = 0; v < n; v++) {
+          const x = f32[v * 5], y = f32[v * 5 + 1], z = f32[v * 5 + 2];
+          if (x < -0.01 || x > 16.01 || z < -0.01 || z > 16.01 || y < -0.01 || y > 256.01) {
+            outside++;
+            if (!worst) worst = `${part} @${cx},${cz} = (${x}, ${y}, ${z})`;
+          }
+        }
+      }
+    }
+    // A face placed on the wrong side of its block lands outside the chunk,
+    // which is what stretched every solid to double width on screen.
+    assertEqual(outside, 0, `vertices outside the chunk (${worst})`);
+  });
+
+  test('a lone block is meshed exactly one unit across', () => {
+    // Six faces of a unit cube: the two planes on each axis must be exactly
+    // one apart. If a negative face is misplaced they come out two apart.
+    const out = meshOf(0, 0);
+    const f32 = new Float32Array(out.opaque.vertices);
+    const n = out.opaque.vertices.byteLength / 20;
+    const u8 = new Uint8Array(out.opaque.vertices);
+
+    // Group vertex X by which face normal they belong to (0 = +X, 1 = -X).
+    const planes = { 0: new Set(), 1: new Set() };
+    for (let v = 0; v < n; v++) {
+      const ni = u8[v * 20 + 12];
+      if (ni === 0 || ni === 1) planes[ni].add(Math.round(f32[v * 5] * 100) / 100);
+    }
+    for (const ni of [0, 1]) {
+      for (const p of planes[ni]) {
+        assert(Number.isInteger(p), `face plane ${p} lands on a block boundary`);
+        assert(p >= 0 && p <= 16, `face plane ${p} is within the chunk`);
+      }
+    }
+    assert(planes[0].size > 0 && planes[1].size > 0, 'both X directions produce faces');
+  });
+
+  test('indices address only vertices that exist', () => {
+    for (const [cx, cz] of CHUNKS) {
+      const out = meshOf(cx, cz);
+      for (const part of ['opaque', 'cutout', 'water']) {
+        if (!out[part]) continue;
+        const n = out[part].vertices.byteLength / 20;
+        for (const i of out[part].indices) {
+          assert(i < n, `index ${i} within ${n} vertices of ${part}`);
+        }
+      }
+    }
+  });
+
+  test('no triangle is degenerate', () => {
+    let degenerate = 0;
+    for (const [cx, cz] of CHUNKS) {
+      const out = meshOf(cx, cz);
+      for (const part of ['opaque', 'cutout', 'water']) {
+        if (!out[part]) continue;
+        const f32 = new Float32Array(out[part].vertices);
+        const idx = out[part].indices;
+        for (let t = 0; t + 2 < idx.length; t += 3) {
+          const [a, b, c] = [idx[t], idx[t + 1], idx[t + 2]];
+          const ux = f32[b * 5] - f32[a * 5], uy = f32[b * 5 + 1] - f32[a * 5 + 1], uz = f32[b * 5 + 2] - f32[a * 5 + 2];
+          const vx = f32[c * 5] - f32[a * 5], vy = f32[c * 5 + 1] - f32[a * 5 + 1], vz = f32[c * 5 + 2] - f32[a * 5 + 2];
+          if (Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) < 1e-6) degenerate++;
+        }
+      }
+    }
+    assertEqual(degenerate, 0, 'zero-area triangles');
+  });
+}
+
+// ===========================================================================
 group('Content integrity');
 // ===========================================================================
 {

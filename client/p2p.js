@@ -475,6 +475,15 @@
           return;
         }
 
+        case 'match.addBots': {
+          // Only the room's owner decides who else is in it.
+          if ((peer ? peer.userId : this.net.selfId) !== this.net.selfId) return;
+          const added = this.match.addBots(
+            Math.max(1, Math.min(48, msg.count | 0 || 8)), msg.skill || 'normal');
+          this._broadcastRoster();
+          return reply({ t: 'ok', action: 'bots', added: added.length });
+        }
+
         case 'match.start':
         case 'match.startRoom': {
           // Only the person who opened the room may force an early start.
@@ -677,6 +686,19 @@
         const retry = setInterval(announce, 1500);
         this._joinRetry = retry;
       }));
+    }
+
+    /**
+     * A match against bots, straight away. Opens a private room so nobody
+     * wanders into it, fills it, and starts without a countdown - waiting for
+     * players is exactly what this mode exists to avoid.
+     */
+    async playWithBots({ mode = 'solo', count = 9, skill = 'normal' } = {}) {
+      await this.connect();
+      const code = await this.createRoom({ mode, privateRoom: true });
+      this.send({ t: 'match.addBots', count, skill });
+      this.send({ t: 'match.startRoom' });
+      return { code, bots: count };
     }
 
     /**

@@ -54,7 +54,14 @@ function randomId(bytes = 6) {
 }
 
 const { WORLD, B, isSolid, isLiquid, isBreakable, BIOME_INFO } = WorldGen;
-const { OP, EV, EF, MOVE, PHYS, COMBAT, ZONE, Writer, Reader, TICK_RATE } = Protocol;
+const { OP, EV, EF, IN, MOVE, PHYS, COMBAT, ZONE, Writer, Reader, TICK_RATE } = Protocol;
+
+/** Shortest signed angle between two headings. */
+function wrapAngle(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
 
 const MAX_EDITS = 60000; // per match, guards memory
 const HISTORY_TICKS = Math.ceil((COMBAT.MAX_LAG_COMPENSATION_MS / 1000) * TICK_RATE) + 2;
@@ -1689,6 +1696,9 @@ class Match {
         this._updatePlane(dt);
       // falls through - dropping shares the active simulation
       case 'active':
+        // Bots write their intent first so it is consumed by the very same
+        // simulation pass that handles everyone else's.
+        this._updateBots(dt);
         this._updatePlayers(dt);
         this._updateProjectiles(dt);
         this._updateDinos(dt);
@@ -1708,6 +1718,225 @@ class Match {
 
   _updateLobby() {
     if (this.lobbyDeadline && Date.now() >= this.lobbyDeadline && this.canStart()) this.start();
+  }
+
+  // ==========================================================================
+  //  Bots
+  //  ------------------------------------------------------------------------
+  //  A battle royale with nobody else in it is not a battle royale, and the
+  //  first player to open a room is always alone. Bots fill the lobby.
+  //
+  //  They are ordinary players. Rather than being moved around by special
+  //  cases, each one writes into the same input queue a human's keyboard
+  //  fills, so they run through identical physics, collision, storm damage
+  //  and elimination logic. A bot cannot walk through a wall or outrun a
+  //  human for the same reason a cheating client cannot.
+  // ==========================================================================
+
+  /** Difficulty shapes reaction time, accuracy and engagement range. */
+  static get BOT_SKILLS() {
+    return {
+      easy:   { react: 0.85, spread: 0.16, range: 42, aimSpeed: 2.2, fireRate: 0.55, wander: 0.5 },
+      normal: { react: 0.45, spread: 0.075, range: 62, aimSpeed: 4.5, fireRate: 0.85, wander: 0.32 },
+      hard:   { react: 0.22, spread: 0.032, range: 82, aimSpeed: 7.5, fireRate: 1.0, wander: 0.18 },
+    };
+  }
+
+  static get BOT_NAMES() {
+    return [
+      'رابتور', 'مخلب', 'ناب', 'ظل', 'صقر', 'رعد', 'نيزك', 'إعصار', 'صخر', 'جمرة',
+      'وميض', 'خنجر', 'شبح', 'قاطع', 'حارس', 'نمر', 'عاصف', 'جبل', 'سهم', 'درع',
+    ];
+  }
+
+  /**
+   * Fills the match up to `count` extra participants.
+   * Returns the bots actually added.
+   */
+  addBots(count, skill = 'normal') {
+    const added = [];
+    const names = Match.BOT_NAMES;
+    for (let i = 0; i < count; i++) {
+      if (this.players.size >= this.mode.maxPlayers) break;
+      const n = this.botCount = (this.botCount || 0) + 1;
+      const user = {
+        id: `bot_${this.id}_${n}`,
+        name: `${names[(n - 1) % names.length]}_${100 + ((n * 37) % 900)}`,
+        level: 1 + Math.floor(this.rng.next() * 40),
+        avatar: null,
+        cosmetics: { skin: 'ranger', trail: 'none' },
+      };
+      // conn is null: nothing is ever sent to a bot, and every send path
+      // already checks for it.
+      const player = this.addPlayer(user, null, {});
+      if (!player) break;
+      player.isBot = true;
+      player.connected = true;
+      player.bot = {
+        skill: Match.BOT_SKILLS[skill] ? skill : 'normal',
+        target: null,
+        nextThink: 0,
+        wanderAngle: this.rng.next() * Math.PI * 2,
+        fireCooldown: 0,
+        yaw: player.s.yaw,
+        pitch: 0,
+        seq: 0,
+      };
+      added.push(player);
+    }
+    return added;
+  }
+
+  get botsPresent() {
+    for (const p of this.players.values()) if (p.isBot) return true;
+    return false;
+  }
+
+  /**
+   * Produces one tick of intent per bot. Called before player simulation so
+   * the inputs are consumed in the very same pass as everyone else's.
+   */
+  _updateBots(dt) {
+    if (this.state !== 'active' && this.state !== 'dropping') return;
+    const now = Date.now();
+
+    for (const bot of this.players.values()) {
+      if (!bot.isBot || !bot.alive) continue;
+      const b = bot.bot;
+      const s = bot.s;
+
+      // --- leave the dropship ------------------------------------------
+      if (bot.inPlane) {
+        // Spread the jumps out so they do not all land on one spot.
+        if (!b.dropAt) b.dropAt = now + 2000 + this.rng.next() * 30000;
+        if (now >= b.dropAt) { bot.inPlane = false; bot.dropped = true; }
+        continue;
+      }
+
+      const skill = Match.BOT_SKILLS[b.skill];
+
+      // --- pick something to shoot at ----------------------------------
+      if (now >= b.nextThink) {
+        b.nextThink = now + skill.react * 1000 * (0.7 + this.rng.next() * 0.6);
+        b.target = null;
+        let best = skill.range * skill.range;
+        for (const other of this.players.values()) {
+          if (other === bot || !other.alive || other.inPlane) continue;
+          if (other.teamId === bot.teamId) continue;
+          const d2 = dist2(other.s.x, other.s.y, other.s.z, s.x, s.y, s.z);
+          if (d2 < best) { best = d2; b.target = other; }
+        }
+      }
+      const target = b.target && b.target.alive && !b.target.inPlane ? b.target : null;
+
+      // --- decide where to go ------------------------------------------
+      // Staying inside the closing circle always wins: a bot that stands in
+      // the storm trading shots simply dies to it, which reads as broken.
+      const zoneDx = this.zone.cx - s.x;
+      const zoneDz = this.zone.cz - s.z;
+      const zoneDist = Math.hypot(zoneDx, zoneDz);
+      const mustRun = zoneDist > this.zone.radius * 0.72;
+
+      let wishYaw;
+      if (mustRun) {
+        wishYaw = Math.atan2(zoneDx, zoneDz);
+      } else if (target) {
+        wishYaw = Math.atan2(target.s.x - s.x, target.s.z - s.z);
+      } else {
+        b.wanderAngle += (this.rng.next() - 0.5) * skill.wander;
+        wishYaw = b.wanderAngle;
+      }
+
+      // --- aim ----------------------------------------------------------
+      let wantPitch = 0;
+      if (target) {
+        const dx = target.s.x - s.x, dy = (target.s.y + 1.5) - (s.y + 1.6), dz = target.s.z - s.z;
+        const flat = Math.hypot(dx, dz);
+        wantPitch = -Math.atan2(dy, flat);
+        wishYaw = Math.atan2(dx, dz);
+        // Imperfect aim, scaled by skill, so bots miss like people do.
+        wishYaw += (this.rng.next() - 0.5) * skill.spread;
+        wantPitch += (this.rng.next() - 0.5) * skill.spread;
+      }
+
+      const turn = Math.min(1, skill.aimSpeed * dt);
+      b.yaw += wrapAngle(wishYaw - b.yaw) * turn;
+      b.pitch += (wantPitch - b.pitch) * turn;
+      b.pitch = clamp(b.pitch, -1.5, 1.5);
+
+      // --- movement keys -------------------------------------------------
+      let keys = IN.FWD;
+      if (mustRun || (target && Math.sqrt(dist2(target.s.x, target.s.y, target.s.z, s.x, s.y, s.z)) > 14)) {
+        keys |= IN.SPRINT;
+      }
+      // Strafe around a target rather than walking straight at it.
+      if (target && !mustRun) keys |= (this.tick + bot.entityId) % 120 < 60 ? IN.LEFT : IN.RIGHT;
+      // Hop when blocked: the shared physics stops flat against a wall, and
+      // this is enough to clear most terrain lips without pathfinding.
+      if (s.onGround && Math.hypot(s.vx, s.vz) < 1.2 && !target) keys |= IN.JUMP;
+      if (s.inWater) keys |= IN.SWIM_UP;
+
+      bot.inputQueue.push({
+        seq: ++b.seq,
+        keys,
+        yaw: b.yaw,
+        pitch: b.pitch,
+        dt: Math.min(0.1, dt),
+        moveX: 0,
+        moveY: 0,
+      });
+
+      // --- shooting -------------------------------------------------------
+      b.fireCooldown -= dt;
+      if (target && b.fireCooldown <= 0 && !bot.downed) {
+        const weapon = bot.inv.weapons[bot.inv.slot];
+        const def = weapon ? Content.WEAPON_BY_ID[weapon.id] : null;
+        if (def && def.fireMode !== 'melee') {
+          b.fireCooldown = (60 / (def.rpm || 300)) / Math.max(0.2, skill.fireRate);
+          this._botShoot(bot, target, def, skill);
+        } else {
+          b.fireCooldown = 0.6;
+          const d = Math.sqrt(dist2(target.s.x, target.s.y, target.s.z, s.x, s.y, s.z));
+          if (d < 3.2) this._damagePlayer(target, 24, bot, { weapon: 'melee', distance: d });
+        }
+      }
+    }
+  }
+
+  /**
+   * A bot's shot. Deliberately not routed through the network fire handler:
+   * that one exists to validate an untrusted claim from a client, and a bot
+   * has no client. The outcome is resolved here with the same weapon data,
+   * the same line of sight test and the same damage entry point.
+   */
+  _botShoot(bot, target, def, skill) {
+    const s = bot.s;
+    const ox = s.x, oy = s.y + 1.6, oz = s.z;
+    const tx = target.s.x, ty = target.s.y + 1.1, tz = target.s.z;
+    let dx = tx - ox, dy = ty - oy, dz = tz - oz;
+    const dist = Math.hypot(dx, dy, dz) || 1;
+    dx /= dist; dy /= dist; dz /= dist;
+
+    const range = def.range || 100;
+    if (dist > range) return;
+
+    // Everyone hears and sees the shot, whether or not it lands.
+    this._pushEvent(EV.SHOT, {
+      entityId: bot.entityId, weaponId: def.id,
+      x: ox, y: oy, z: oz, dx, dy, dz,
+    });
+
+    // Terrain between us? Then the shot hits the wall, as it should - the
+    // same raycast the client-authored fire path uses.
+    const voxelHit = Movement.raycast(this.getBlock, ox, oy, oz, dx, dy, dz, Math.min(dist, range));
+    if (voxelHit && voxelHit.distance < dist - 0.6) return;
+
+    // Skill decides whether the shot lands, so a weak bot genuinely misses.
+    if (this.rng.next() < skill.spread * 2.2) return;
+
+    const falloff = def.falloff ? Math.max(0.45, 1 - (dist / range) * def.falloff) : 1;
+    this._damagePlayer(target, (def.damage || 18) * falloff, bot,
+      { part: 'body', distance: dist, weapon: def.key });
   }
 
   _updatePlane(dt) {

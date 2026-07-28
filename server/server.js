@@ -743,6 +743,19 @@ function handleControl(conn, msg) {
       const result = matchmaker.joinByCode(user, msg.code);
       return conn.send(result.error ? { t: 'error', code: 'room', message: result.error } : { t: 'ok', action: 'room.join' });
     }
+    case 'match.bots': {
+      // A private room filled with bots and started at once, so a player
+      // alone on a quiet server still has a game to play.
+      const user = requireAuth(conn);
+      if (!user) return;
+      const room = matchmaker.createRoom(user, { mode: msg.mode || 'solo', settings: {} });
+      if (room.error) return conn.send({ t: 'error', code: 'room', message: room.error });
+      const match = matchmaker.matchOf(user.id);
+      if (!match) return conn.send({ t: 'error', code: 'room', message: 'Room vanished.' });
+      match.addBots(Math.max(1, Math.min(48, msg.count | 0 || 9)), msg.skill || 'normal');
+      matchmaker.startPrivate(user, match.id);
+      return conn.send({ t: 'ok', action: 'bots', matchId: match.id });
+    }
     case 'match.startRoom': {
       const user = requireAuth(conn);
       if (!user) return;
