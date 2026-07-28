@@ -34,6 +34,10 @@
     SECTION: 16, // vertical section height
     RADIUS: 3072, // playable half-extent in blocks -> 6144 x 6144 world
     CLOUD_LEVEL: 150,
+    // Deepest a cave may reach below its own column. Must stay inside the
+    // vertical band the chunk mesher builds (surface - 64), or the world would
+    // contain hollows that are never drawn. See World.caveAt.
+    CAVE_FLOOR: 58,
   };
   WORLD.SECTIONS = WORLD.HEIGHT / WORLD.SECTION;
 
@@ -545,8 +549,25 @@
     }
 
     // -- caves ---------------------------------------------------------------
-    caveAt(x, y, z) {
+    /**
+     * Caves stop at CAVE_FLOOR blocks under their own column.
+     *
+     * The client only generates, lights and meshes a vertical band around the
+     * terrain - 64 rows below the lowest column of a chunk - because meshing
+     * the full 192-row world costs more than twice as much for rock nobody can
+     * reach. Anything hollow below that band exists to the physics but is never
+     * drawn, so a player who found their way into it would drop through visible
+     * ground into an unmeshed void. Sealing the caves at a depth the band is
+     * guaranteed to cover removes the case entirely rather than papering over
+     * it: what exists is what you can see.
+     *
+     * `h` is passed by the two callers that already have the column height so
+     * the common path costs nothing.
+     */
+    caveAt(x, y, z, h) {
       if (y <= WORLD.BEDROCK + 1) return false;
+      const surface = h === undefined ? this.column(x, z).height : h;
+      if (y < surface - WORLD.CAVE_FLOOR) return false;
       // Two offset ridged fields intersect into tunnel networks.
       const a = fbm3(this.s.cave, x * 0.019, y * 0.034, z * 0.019, 3, 2.0, 0.5);
       const b = fbm3(this.s.cave + 4441, x * 0.019, y * 0.034, z * 0.019, 3, 2.0, 0.5);
@@ -880,7 +901,7 @@
       }
 
       // Caves are carved above lava level only, so the world floor stays sealed.
-      if (y < h && y > WORLD.BEDROCK + 1 && this.caveAt(x, y, z)) {
+      if (y < h && y > WORLD.BEDROCK + 1 && this.caveAt(x, y, z, h)) {
         if (y <= WORLD.LAVA_LEVEL) return B.lava;
         return 0;
       }
@@ -940,7 +961,7 @@
               if (wy <= WORLD.SEA_LEVEL) id = B.water;
               else if (biome === BIOME.VOLCANO && wy <= WORLD.LAVA_LEVEL + 6 && wy <= h + 2) id = B.lava;
               else id = 0;
-            } else if (wy < h && this.caveAt(wx, wy, wz)) {
+            } else if (wy < h && this.caveAt(wx, wy, wz, h)) {
               id = wy <= WORLD.LAVA_LEVEL ? B.lava : 0;
             } else {
               const depth = h - wy;

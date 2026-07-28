@@ -216,6 +216,38 @@ group('Client/server world parity');
       assert(decorated > 500, `only ${decorated} decorated voxels found in ${checked}`);
     });
 
+    /**
+     * The client only generates and meshes a band 64 rows below the lowest
+     * column of a chunk. Anything hollow below that exists to the physics but
+     * is never drawn, so a player who reached it would drop through visible
+     * ground into a void. Caves are sealed above the band floor to make that
+     * impossible; this is the check that keeps them there.
+     */
+    test('nothing hollow exists below the band the mesher builds', () => {
+      const w = new ServerWorldGen.World(20260728);
+      const { WORLD } = ServerWorldGen;
+      for (const [cx, cz] of [[0, 0], [-21, 33], [47, -12], [8, 61], [-55, -48]]) {
+        let minH = WORLD.HEIGHT;
+        for (let lz = -1; lz <= 16; lz++) {
+          for (let lx = -1; lx <= 16; lx++) {
+            const h = w.column(cx * 16 + lx, cz * 16 + lz).height;
+            if (h < minH) minH = h;
+          }
+        }
+        const floor = Math.max(0, minH - 64);
+        for (let lz = 0; lz < 16; lz++) {
+          for (let lx = 0; lx < 16; lx++) {
+            for (let y = WORLD.BEDROCK + 2; y < floor; y++) {
+              const id = w.getBlock(cx * 16 + lx, y, cz * 16 + lz);
+              if (id === 0) {
+                throw new Error(`air at ${cx * 16 + lx},${y},${cz * 16 + lz} is below the meshed band floor ${floor}`);
+              }
+            }
+          }
+        }
+      }
+    });
+
     test('trees and buildings are solid to the authority', () => {
       const w = new ServerWorldGen.World(20260728);
       // A structure the world places for real, not a synthetic one.
