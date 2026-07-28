@@ -173,6 +173,71 @@ group('Client/server world parity');
       }
     });
 
+    /**
+     * The single most important invariant in the game: what the authority
+     * thinks is there, and what the client meshes, are the same voxels.
+     *
+     * getBlock answers from the terrain formula plus a cached decoration diff;
+     * genSection generates the whole section. If those two ever drift, trees
+     * and buildings become things you walk through and the ground grows holes
+     * you can see the world through - which is exactly what used to happen when
+     * getBlock skipped decoration entirely.
+     */
+    test('getBlock returns exactly what genSection generates', () => {
+      const seed = 20260728;
+      const w = new ServerWorldGen.World(seed);
+      const sec = new Uint8Array(4096);
+      let checked = 0;
+      let decorated = 0;
+      // Sections around the surface, where every kind of decoration lives.
+      for (const [cx, cz] of [[0, 0], [7, -3], [-19, 24], [56, 61], [-44, -37], [13, 88]]) {
+        const surface = w.column(cx * 16 + 8, cz * 16 + 8).height;
+        const base = Math.floor(surface / 16);
+        for (let sy = Math.max(0, base - 2); sy <= base + 2; sy++) {
+          w.genSection(cx, sy, cz, sec);
+          for (let ly = 0; ly < 16; ly++) {
+            for (let lz = 0; lz < 16; lz++) {
+              for (let lx = 0; lx < 16; lx++) {
+                const want = sec[(ly * 16 + lz) * 16 + lx];
+                const x = cx * 16 + lx, y = sy * 16 + ly, z = cz * 16 + lz;
+                const got = w.getBlock(x, y, z);
+                checked++;
+                if (want !== got) {
+                  throw new Error(`voxel ${x},${y},${z}: genSection says ${want}, getBlock says ${got}`);
+                }
+                if (want !== w.terrainBlock(x, y, z)) decorated++;
+              }
+            }
+          }
+        }
+      }
+      assert(checked >= 100000, `only ${checked} voxels compared`);
+      // Guards against the test passing because decoration silently stopped.
+      assert(decorated > 500, `only ${decorated} decorated voxels found in ${checked}`);
+    });
+
+    test('trees and buildings are solid to the authority', () => {
+      const w = new ServerWorldGen.World(20260728);
+      // A structure the world places for real, not a synthetic one.
+      const list = w.structuresInRegion(-1500, -1500, 1500, 1500)
+        .filter((s) => s.key === 'outpost' || s.key === 'village' || s.key === 'temple');
+      assert(list.length > 0, 'no buildings generated in a 3000x3000 region');
+      let anySolid = false;
+      for (const s of list.slice(0, 12)) {
+        for (let dy = 0; dy < 6 && !anySolid; dy++) {
+          for (let dz = -s.radius; dz <= s.radius && !anySolid; dz += 2) {
+            for (let dx = -s.radius; dx <= s.radius && !anySolid; dx += 2) {
+              const id = w.getBlock(s.x + dx, s.y + dy, s.z + dz);
+              // A built wall is a block the plain terrain formula does not have.
+              if (id && id !== w.terrainBlock(s.x + dx, s.y + dy, s.z + dz)) anySolid = true;
+            }
+          }
+        }
+        if (anySolid) break;
+      }
+      assert(anySolid, 'getBlock reports empty air where buildings stand');
+    });
+
     test('structures resolve to the same coordinates', () => {
       const sw = new ServerWorldGen.World(4242);
       const cw = new ClientWorldGen.World(4242);

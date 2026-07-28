@@ -347,6 +347,14 @@
       this._colCache = new Map();
       this._colCacheOrder = [];
       this._colCacheMax = 4096;
+      // Per-section decoration diffs, so getBlock can see trees and buildings.
+      // Sections with nothing in them cache a null and cost no memory at all.
+      this._secCache = new Map();
+      this._secCacheOrder = [];
+      this._secCacheMax = 8192;
+      this._secScratch = new Uint8Array(4096);
+      this._secScratch2 = new Uint8Array(4096);
+      this._structMemo = new Map();
     }
 
     // -- climate ------------------------------------------------------------
@@ -484,14 +492,15 @@
       return h < sea + 10 ? BIOME.SWAMP : BIOME.JUNGLE;
     }
 
-    /** Cached per-column data: {height, biome}. */
-    column(x, z) {
-      const cx = x >> 4;
-      const cz = z >> 4;
+    /** The cache slot for a chunk's columns, created on demand. */
+    _colCacheEntry(cx, cz) {
       const key = ((cx & 0xffff) << 16) | (cz & 0xffff);
       let chunkCols = this._colCache.get(key);
       if (!chunkCols) {
-        chunkCols = { h: new Int16Array(256), b: new Uint8Array(256), r: new Uint8Array(256), built: false };
+        chunkCols = {
+          h: new Int16Array(256), b: new Uint8Array(256), r: new Uint8Array(256),
+          built: false, hMin: 0, hMax: 0, span: null,
+        };
         this._colCache.set(key, chunkCols);
         this._colCacheOrder.push(key);
         if (this._colCacheOrder.length > this._colCacheMax) {
@@ -499,12 +508,21 @@
           this._colCache.delete(drop);
         }
       }
+      return chunkCols;
+    }
+
+    /** Cached per-column data: {height, biome}. */
+    column(x, z) {
+      const cx = x >> 4;
+      const cz = z >> 4;
+      const chunkCols = this._colCacheEntry(cx, cz);
       const lx = x - (cx << 4);
       const lz = z - (cz << 4);
       const i = lz * 16 + lx;
       if (!chunkCols.built) {
         const bx = cx << 4;
         const bz = cz << 4;
+        let hMin = WORLD.HEIGHT, hMax = 0;
         for (let j = 0; j < 256; j++) {
           const wx = bx + (j & 15);
           const wz = bz + (j >> 4);
@@ -512,7 +530,11 @@
           chunkCols.h[j] = raw.height;
           chunkCols.b[j] = this.biomeAt(wx, wz, raw);
           chunkCols.r[j] = Math.round(clamp(raw.river, 0, 1) * 255);
+          if (raw.height < hMin) hMin = raw.height;
+          if (raw.height > hMax) hMax = raw.height;
         }
+        chunkCols.hMin = hMin;
+        chunkCols.hMax = hMax;
         chunkCols.built = true;
       }
       return { height: chunkCols.h[i], biome: chunkCols.b[i], river: chunkCols.r[i] / 255 };
@@ -563,7 +585,23 @@
       return null;
     }
 
+    /**
+     * A structure grid cell is 192-512 blocks across, so the same handful of
+     * cells is queried again by every chunk under them - hundreds of times each
+     * for the widest grids. Deciding a cell costs a terrain probe, so the
+     * answer (including "nothing here") is memoised.
+     */
     structureAt(type, gx, gz) {
+      const memoKey = `${type},${gx},${gz}`;
+      const memo = this._structMemo.get(memoKey);
+      if (memo !== undefined) return memo;
+      const result = this._structureAtRaw(type, gx, gz);
+      if (this._structMemo.size >= 4096) this._structMemo.clear();
+      this._structMemo.set(memoKey, result);
+      return result;
+    }
+
+    _structureAtRaw(type, gx, gz) {
       const info = STRUCT_INFO[type];
       const h = hash3i(this.s.struct + type * 7717, gx, gz, type);
       // Density: not every cell hosts a structure.
@@ -684,10 +722,150 @@
     }
 
     /**
-     * Authoritative single-voxel query. Used by the server for collision,
-     * raycasts and AI. The client uses genSection() for meshing instead.
+     * Authoritative single-voxel query, and the world as everyone must agree it
+     * is. Used by the server for collision, raycasts and AI; the client uses
+     * genSection() for meshing, and the two must return the same world.
+     *
+     * `terrainBlock` below is only half of it: trees, plants and structures
+     * come from the decoration pass, which has to run a whole section at a time
+     * because a tree rooted in one column reaches into its neighbours. Reading
+     * one voxel therefore means running that pass for the section it lives in
+     * and keeping the result. Skipping it is what used to make the authority
+     * disagree with what the client draws: buildings you walked straight
+     * through, and ground the server stood you on that was never meshed.
+     *
+     * Only the decoration is cached, as a diff against the terrain formula.
+     * That keeps the cold cost to the decoration pass alone - the cave and ore
+     * noise, which is four fifths of generating a section, is never paid here -
+     * and lets sections outside the reach of any decoration answer straight
+     * from the formula with no allocation at all.
      */
     getBlock(x, y, z) {
+      if (y < 0 || y >= WORLD.HEIGHT) return 0;
+      const ov = this._decorOverlay(x >> 4, y >> 4, z >> 4);
+      if (ov) {
+        const i = (((y & 15) * 16 + (z & 15)) * 16) + (x & 15);
+        if (ov.mask[i >> 3] & (1 << (i & 7))) return ov.ids[i];
+      }
+      return this.terrainBlock(x, y, z);
+    }
+
+    /**
+     * Decoration for one section as a sparse diff, or null when there is none.
+     *
+     * The pass is run against a stand-in base that marks everything at or below
+     * the column height as solid instead of evaluating caves and ores. That is
+     * exact for the decision decoration actually makes - `put` only ever asks
+     * whether a voxel is air - because every builder either writes above the
+     * surface (vegetation) or overwrites unconditionally (structures). The
+     * "client and server agree" suite pins that invariant by diffing whole
+     * generated sections against this function.
+     */
+    _decorOverlay(scx, scy, scz) {
+      const span = this._decorSpan(scx, scz);
+      const by = scy << 4;
+      if (by > span.hi || by + 15 < span.lo) return null;
+
+      const key = `${scx},${scy},${scz}`;
+      const hit = this._secCache.get(key);
+      if (hit !== undefined) return hit;
+
+      const bx = scx << 4, bz = scz << 4;
+      const heights = new Int16Array(256);
+      const biomes = new Uint8Array(256);
+      for (let lz = 0; lz < 16; lz++) {
+        for (let lx = 0; lx < 16; lx++) {
+          const c = this.column(bx + lx, bz + lz);
+          heights[lz * 16 + lx] = c.height;
+          biomes[lz * 16 + lx] = c.biome;
+        }
+      }
+
+      const base = this._secScratch;
+      for (let ly = 0; ly < 16; ly++) {
+        const wy = by + ly;
+        for (let lz = 0; lz < 16; lz++) {
+          for (let lx = 0; lx < 16; lx++) {
+            const ci = lz * 16 + lx;
+            const h = heights[ci];
+            let id;
+            if (wy <= h || wy <= WORLD.BEDROCK) {
+              // Stand-in for "something solid is here".
+              id = B.stone;
+            } else if (wy <= WORLD.SEA_LEVEL) {
+              id = B.water;
+            } else if (biomes[ci] === BIOME.VOLCANO && wy <= WORLD.LAVA_LEVEL + 6 && wy <= h + 2) {
+              id = B.lava;
+            } else {
+              id = 0;
+            }
+            base[(ly * 16 + lz) * 16 + lx] = id;
+          }
+        }
+      }
+
+      const out = this._secScratch2;
+      out.set(base);
+      let ov = null;
+      if (this.decorateSection(scx, scy, scz, out, heights, biomes)) {
+        for (let i = 0; i < 4096; i++) {
+          if (out[i] === base[i]) continue;
+          if (!ov) ov = { mask: new Uint8Array(512), ids: new Uint8Array(4096) };
+          ov.mask[i >> 3] |= 1 << (i & 7);
+          ov.ids[i] = out[i];
+        }
+      }
+
+      this._secCache.set(key, ov);
+      this._secCacheOrder.push(key);
+      if (this._secCacheOrder.length > this._secCacheMax) {
+        this._secCache.delete(this._secCacheOrder.shift());
+      }
+      return ov;
+    }
+
+    /**
+     * Vertical range in which decoration could possibly place a voxel in a
+     * chunk, cached alongside the chunk's columns.
+     *
+     * The decoration pass scans an 8-block margin, so a trunk rooted in a
+     * neighbouring chunk can still drop canopy into this one - the bound is
+     * therefore taken over the 3x3 chunk neighbourhood. Using whole neighbours
+     * rather than just their edge columns is slightly looser but costs nothing:
+     * each chunk's height extent is computed once while its columns are built
+     * and then reused by all nine of its neighbours.
+     *
+     * Structures need the wider window genSection itself uses, because a temple
+     * on a cliff 40 blocks away sits nowhere near this chunk's surface height.
+     */
+    _decorSpan(cx, cz) {
+      const cached = this._colCacheEntry(cx, cz);
+      if (cached.span) return cached.span;
+
+      let minH = WORLD.HEIGHT, maxH = 0;
+      for (let oz = -1; oz <= 1; oz++) {
+        for (let ox = -1; ox <= 1; ox++) {
+          const n = this._colCacheEntry(cx + ox, cz + oz);
+          if (!n.built) this.column((cx + ox) << 4, (cz + oz) << 4);
+          if (n.hMin < minH) minH = n.hMin;
+          if (n.hMax > maxH) maxH = n.hMax;
+        }
+      }
+      // Roots and underwater decoration sit a few blocks under the surface;
+      // the tallest generated tree is well under 30 blocks.
+      let lo = minH - 8;
+      let hi = maxH + 32;
+      const bx = cx << 4, bz = cz << 4;
+      for (const s of this.structuresInRegion(bx - 40, bz - 40, bx + 56, bz + 56)) {
+        if (s.y - 34 < lo) lo = s.y - 34;
+        if (s.y + 50 > hi) hi = s.y + 50;
+      }
+      cached.span = { lo: Math.max(0, lo), hi: Math.min(WORLD.HEIGHT - 1, hi) };
+      return cached.span;
+    }
+
+    /** Terrain before decoration: stone, dirt, ore, water, caves. */
+    terrainBlock(x, y, z) {
       if (y < 0 || y >= WORLD.HEIGHT) return 0;
       if (y <= WORLD.BEDROCK) return B.bedrock;
 
