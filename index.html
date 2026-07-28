@@ -20124,6 +20124,7 @@ class UI {
       }
     } else if (sec === 'graphics') {
       body.appendChild(row('الجودة العامة', 'الإعداد المسبق للأداء والجودة.', select('quality', [['low', 'منخفضة'], ['medium', 'متوسطة'], ['high', 'عالية'], ['ultra', 'فائقة']])));
+      body.appendChild(row('الجودة التلقائية', 'يخفّض الإعدادات تلقائياً إذا تباطأت اللعبة، ويرفعها عندما تتحسن.', toggle('autoPerformance')));
       body.appendChild(row('مسافة العرض', 'عدد المقاطع المعروضة حول اللاعب.', slider('renderDistance', 4, 32, 1, (v) => `${v} × 16 م`)));
       body.appendChild(row('الظلال', 'جودة الظلال الديناميكية المتتالية.', select('shadows', [['off', 'مغلقة'], ['low', 'منخفضة'], ['medium', 'متوسطة'], ['high', 'عالية']])));
       body.appendChild(row('الإظلام المحيطي (SSAO)', 'يضيف عمقاً في الزوايا والتفاصيل.', toggle('ssao')));
@@ -21169,7 +21170,9 @@ class HUD {
 class App {
   constructor() {
     this.canvas = $('#game-canvas');
-    this.settings = { ...DEFAULT_CLIENT_SETTINGS, ...(Store.get('settings') || {}) };
+    const saved = Store.get('settings');
+    // Device-appropriate on a first run; whatever the player chose after that.
+    this.settings = { ...DEFAULT_CLIENT_SETTINGS, ...(saved ? {} : detectQualityDefaults()), ...(saved || {}) };
     this.profile = null;
     this.content = null;
     this.fps = 60;
@@ -21629,6 +21632,92 @@ class App {
     if (this.net.authed) this.net.send({ t: 'profile.settings', settings: this.settings });
   }
 
+  /**
+   * Gives back frame time when the device cannot keep up.
+   *
+   * Guessing a device's capability from what it reports about itself only goes
+   * so far: two phones claiming eight cores can be a generation apart, and a
+   * dense forest costs several times what open ground does. So rather than
+   * trust the guess, watch the frames actually being delivered and step down
+   * the most expensive thing still switched on until they recover - then step
+   * back up once there is headroom to spare.
+   *
+   * The order is deliberate: reach for things the player is least likely to
+   * miss first, and only shorten the view - the thing they asked to be
+   * longer - when nothing cheaper is left.
+   */
+  _governPerformance(dt) {
+    if (this.settings.autoPerformance === false) return;
+    if (!this.game?.running || this.ui?.screen !== 'match') return;
+
+    // Ignore the first seconds of a match: chunks are still streaming in and
+    // every frame is slow for reasons no setting will fix.
+    this._govWarm = (this._govWarm || 0) + dt;
+    if (this._govWarm < 6) return;
+
+    const fps = this.fps;
+    const target = this.settings.fpsCap > 0 ? this.settings.fpsCap : 60;
+    this._govBad = fps < target * 0.62 ? (this._govBad || 0) + dt : 0;
+    this._govGood = fps > target * 0.92 ? (this._govGood || 0) + dt : 0;
+
+    if (this._govBad > 2.5) {
+      this._govBad = 0;
+      if (this._stepQualityDown()) {
+        this._govGood = -12;        // do not immediately undo what we just did
+        Toast.info?.('تم تخفيف الجودة', 'لرفع عدد الإطارات — يمكنك تغييرها من الإعدادات');
+      }
+    } else if (this._govGood > 25) {
+      this._govGood = 0;
+      this._stepQualityUp();
+    }
+  }
+
+  /** One notch cheaper. Returns false when there is nothing left to give up. */
+  _stepQualityDown() {
+    const s = this.settings;
+    const steps = [
+      () => (s.reflections ? ((s.reflections = false), true) : false),
+      () => (s.taa ? ((s.taa = false), true) : false),
+      () => (s.ssao ? ((s.ssao = false), true) : false),
+      () => (s.shadows !== 'off'
+        ? ((s.shadows = s.shadows === 'high' ? 'medium' : s.shadows === 'medium' ? 'low' : 'off'), true)
+        : false),
+      () => (s.bloom ? ((s.bloom = false), true) : false),
+      () => (s.quality !== 'low' ? ((s.quality = s.quality === 'ultra' ? 'high' : s.quality === 'high' ? 'medium' : 'low'), true) : false),
+      () => ((s.renderDistance || 14) > 6 ? ((s.renderDistance = Math.max(6, (s.renderDistance || 14) - 2)), true) : false),
+    ];
+    for (const step of steps) {
+      if (step()) {
+        this._autoTuned = (this._autoTuned || 0) + 1;
+        this.applyLocalSettings();
+        this.saveSettings();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Undo one notch, but never past what the player originally chose. */
+  _stepQualityUp() {
+    if (!this._autoTuned) return false;
+    const s = this.settings;
+    const steps = [
+      () => ((s.renderDistance || 14) < 14 ? ((s.renderDistance = (s.renderDistance || 8) + 2), true) : false),
+      () => (s.quality !== 'high' ? ((s.quality = s.quality === 'low' ? 'medium' : 'high'), true) : false),
+      () => (!s.bloom ? ((s.bloom = true), true) : false),
+      () => (s.shadows === 'off' ? ((s.shadows = 'low'), true) : false),
+    ];
+    for (const step of steps) {
+      if (step()) {
+        this._autoTuned--;
+        this.applyLocalSettings();
+        this.saveSettings();
+        return true;
+      }
+    }
+    return false;
+  }
+
   /* --------------------------------------------------------- main loop -- */
   _loop() {
     const step = (now) => {
@@ -21639,6 +21728,7 @@ class App {
       this.frameMs = M.lerp(this.frameMs, (now - (this._t0 || now)), 0.1);
       this._t0 = now;
       this.fps = M.lerp(this.fps, 1 / Math.max(dt, 1e-4), 0.06);
+      this._governPerformance(dt);
 
       // Optional frame cap.
       const cap = this.settings.fpsCap || 0;
@@ -21667,12 +21757,64 @@ class App {
   }
 }
 
+/**
+ * What this device can plausibly render, for a first run only.
+ *
+ * The defaults were desktop defaults for everybody: full render scale, high
+ * shadows, SSAO, bloom, TAA, reflections and fourteen chunks of view. A phone
+ * asked to do all that renders a slideshow, and the player has no reason to
+ * suspect that a settings page they never opened is why. Choosing from what
+ * the device actually reports gives a playable first impression; the quality
+ * page is still there for anyone who wants to push it.
+ *
+ * Only ever consulted when nothing has been saved - a choice the player made
+ * is never overridden.
+ */
+function detectQualityDefaults() {
+  const ua = navigator.userAgent || '';
+  const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) ||
+    (navigator.maxTouchPoints > 1 && !/Windows NT|Macintosh/.test(ua));
+  const cores = navigator.hardwareConcurrency || (mobile ? 4 : 8);
+  const memory = navigator.deviceMemory || (mobile ? 3 : 8);
+
+  // A software rasteriser reports itself, and no preset makes it fast.
+  let software = false;
+  try {
+    const probe = document.createElement('canvas').getContext('webgl2');
+    const dbg = probe && probe.getExtension('WEBGL_debug_renderer_info');
+    const name = dbg ? String(probe.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : '';
+    software = /swiftshader|llvmpipe|software|basic render/i.test(name);
+  } catch (err) { /* the probe is a nicety, not a requirement */ }
+
+  if (software) {
+    return { quality: 'low', shadows: 'off', ssao: false, bloom: false, taa: false,
+      reflections: false, renderDistance: 6, fpsCap: 30 };
+  }
+  if (!mobile && cores >= 8 && memory >= 8) {
+    return { quality: 'high', shadows: 'high', ssao: true, bloom: true, taa: true,
+      reflections: true, renderDistance: 14 };
+  }
+  if (!mobile) {
+    return { quality: 'medium', shadows: 'medium', ssao: true, bloom: true, taa: false,
+      reflections: false, renderDistance: 12 };
+  }
+  // Phones and tablets. A strong one still gets shadows and bloom.
+  if (cores >= 8 && memory >= 6) {
+    return { quality: 'medium', shadows: 'low', ssao: false, bloom: true, taa: false,
+      reflections: false, renderDistance: 10 };
+  }
+  return { quality: 'low', shadows: 'off', ssao: false, bloom: false, taa: false,
+    reflections: false, renderDistance: 8 };
+}
+
 /* -------------------------------------------------------- default settings */
 const DEFAULT_CLIENT_SETTINGS = {
   sensitivity: 1.0, adsSensitivity: 0.72, fov: 84, invertY: false,
   masterVolume: 0.85, musicVolume: 0.45, sfxVolume: 0.9, voiceVolume: 1.0,
   micEnabled: null, micGain: 1.0, voiceMode: 'ptt', pttKey: 'KeyV',
   quality: 'high', renderDistance: 14, shadows: 'high', ssao: true, bloom: true,
+  // Hand back frame time automatically when the device cannot keep up.
+  autoPerformance: true,
   reflections: true, motionBlur: false, taa: true, vsync: true, fpsCap: 0,
   crosshair: 'dynamic', hudScale: 1.0, language: 'ar', showDamageNumbers: true,
   colorblind: 'none', headBob: 1.0, autoSprint: false, toggleAds: false, toggleCrouch: false,
