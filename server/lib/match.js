@@ -622,23 +622,32 @@ class Match {
     const landmarkBudget = Math.floor(LOOT_BUDGET * 0.55);
 
     // Landmark loot: density proportional to the structure's risk rating.
+    //
+    // Placement retries rather than giving up on the first miss. A single
+    // sample lands on a roof, in a wall or on the water as often as it lands
+    // somewhere useful, and a village that swallows most of its own allocation
+    // that way reads as already looted - which is the opposite of the reason
+    // to walk into one.
     for (const lm of this.landmarks) {
       if (this.loot.size >= landmarkBudget) break;
-      const count = Math.round(lm.loot * 5);
-      for (let i = 0; i < count; i++) {
+      const count = Math.round(lm.loot * 9);
+      let placed = 0;
+      for (let attempt = 0; attempt < count * 6 && placed < count; attempt++) {
         if (this.loot.size >= landmarkBudget) break;
         const a = this.rng.next() * Math.PI * 2;
-        const r = this.rng.next() * lm.radius;
+        // sqrt keeps the spread even instead of clustering on the centre.
+        const r = Math.sqrt(this.rng.next()) * lm.radius;
         const x = Math.round(lm.x + Math.cos(a) * r);
         const z = Math.round(lm.z + Math.sin(a) * r);
         const y = this._groundY(x, z);
         if (y == null) continue;
         this._spawnLootPile(x + 0.5, y, z + 0.5, lm.key === 'vault' ? 'supply_case' : 'crate', Math.min(3, Math.floor(lm.loot)));
+        placed++;
       }
     }
     // Scattered field loot inside the arena.
     const scatter = 640;
-    for (let i = 0; i < scatter; i++) {
+    for (let i = 0; i < scatter * 2 && this.loot.size < LOOT_BUDGET; i++) {
       const a = this.rng.next() * Math.PI * 2;
       const r = Math.sqrt(this.rng.next()) * this.arena.radius;
       const x = Math.round(this.arena.cx + Math.cos(a) * r);
@@ -649,10 +658,29 @@ class Match {
     }
   }
 
+  /**
+   * The lowest spot at (x,z) a player could stand in - and so the lowest spot
+   * a loot pile belongs on.
+   *
+   * The terrain column top is only the ground where nothing was built. Inside
+   * a house the floor is a course of planks laid on that column, on a rig it
+   * is a deck several metres above it, and a temple stacks a dozen steps. Loot
+   * placed at the column top in those places is buried in the structure, which
+   * is how a village ends up looking looted before anyone has been there.
+   *
+   * Returns null over water, or where nothing within reach is standable.
+   */
   _groundY(x, z) {
     const col = this.world.column(x, z);
     if (col.height <= WORLD.SEA_LEVEL) return null;
-    return col.height + 1;
+    const top = Math.min(WORLD.HEIGHT - 3, col.height + 22);
+    for (let y = col.height + 1; y <= top; y++) {
+      // Two clear cells with something solid underfoot: a floor, not a wall.
+      if (isSolid(this.blockAt(x, y - 1, z))
+        && !isSolid(this.blockAt(x, y, z))
+        && !isSolid(this.blockAt(x, y + 1, z))) return y;
+    }
+    return null;
   }
 
   _spawnLootPile(x, y, z, table, bias) {
@@ -664,7 +692,12 @@ class Match {
       if (!item) continue;
       const jx = x + this.rng.range(-0.8, 0.8);
       const jz = z + this.rng.range(-0.8, 0.8);
-      this._createLoot(jx, y, jz, item);
+      // The jitter can cross into the next column, where the floor may be a
+      // step up or down - so the pile settles onto whatever is under the spot
+      // it actually landed on, rather than hanging at the height of the spot
+      // it was aimed at.
+      const jy = this._groundY(Math.floor(jx), Math.floor(jz));
+      this._createLoot(jx, jy == null ? y : jy, jz, item);
     }
   }
 
