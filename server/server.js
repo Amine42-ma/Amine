@@ -375,6 +375,27 @@ function handleControl(conn, msg) {
       bindSession(conn, result.user, result.token);
       return;
     }
+    case 'auth.guest': {
+      // One click, no form: the fastest possible path into a match.
+      const result = accounts.createGuest(conn.remoteAddress);
+      if (result.error) return conn.send({ t: 'auth.error', message: result.error });
+      bindSession(conn, result.user, result.token);
+      return;
+    }
+    case 'auth.claim': {
+      const user = requireAuth(conn);
+      if (!user) return;
+      const result = accounts.claimAccount(user, msg);
+      if (result.error) return conn.send({ t: 'auth.error', message: result.error });
+      social.broadcastPresence(user.id);
+      conn.send({ t: 'profile', profile: accounts.selfProfile(user), notice: 'Account secured.' });
+      conn.send({
+        t: 'auth.recoveryCode',
+        code: result.recoveryCode,
+        message: 'Store this recovery key somewhere safe. It restores your account if you lose your password.',
+      });
+      return;
+    }
     case 'auth.ticket': {
       // One-time ticket handed back by the OAuth callback redirect.
       const userId = oauth.redeemTicket(msg.ticket);

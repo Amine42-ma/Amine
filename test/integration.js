@@ -253,6 +253,17 @@ class TestClient {
     await waitFor(() => alpha.byType.has('hello') && bravo.byType.has('hello'), 5000, 'hello');
     check('server sends hello with protocol version', alpha.byType.get('hello')?.protocol === Protocol.PROTOCOL_VERSION);
 
+    // Quick play must work end to end before anything else: it is the path
+    // most players take on their very first launch.
+    const guest = new TestClient('Guest');
+    await guest.connect();
+    await waitFor(() => guest.byType.has('hello'), 5000, 'guest hello');
+    guest.send({ t: 'auth.guest' });
+    const guestIn = await waitFor(() => guest.profile, 10000, 'quick play');
+    check('quick play signs in with a single request, no form', guestIn);
+    check('the quick-play account is playable immediately', !!guest.profile?.guest && guest.profile.level === 1);
+    guest.close();
+
     alpha.send({ t: 'auth.register', name: `AlphaHunter${suffix}`, email: `alpha${suffix}@example.com`, password: 'abcd1234' });
     bravo.send({ t: 'auth.register', name: `BravoHunter${suffix}`, email: `bravo${suffix}@example.com`, password: 'abcd1234' });
     const authed = await waitFor(() => alpha.profile && bravo.profile, 15000, 'registration');

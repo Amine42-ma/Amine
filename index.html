@@ -362,7 +362,23 @@ html[dir="ltr"] .switch input:checked ~ .thumb{transform:translateX(20px);}
 }
 .cb-actions{display:flex;gap:6px;margin-top:11px;}
 
-.social-auth{margin-bottom:18px;}
+.quickplay{margin-bottom:12px;}
+.btn-quickplay{
+  flex-direction:column;gap:2px;padding:15px 20px;
+  box-shadow:0 8px 30px -8px rgba(255,139,42,.7);
+}
+.btn-quickplay .qp-title{font-size:17px;font-weight:900;letter-spacing:.02em;}
+.btn-quickplay .qp-sub{font-size:11.5px;font-weight:600;opacity:.72;}
+
+.guest-banner{
+  display:flex;align-items:center;gap:12px;padding:11px 15px;margin-bottom:14px;
+  border-radius:var(--r-md);border:1px solid rgba(255,178,56,.32);
+  background:rgba(255,178,56,.08);font-size:13px;
+}
+.guest-banner .gb-text{flex:1;color:var(--text-dim);line-height:1.5;}
+.guest-banner b{color:var(--text);}
+
+.social-auth{margin-bottom:14px;}
 .social-buttons{display:flex;flex-direction:column;gap:9px;}
 .btn-social{
   display:flex;align-items:center;justify-content:center;gap:11px;width:100%;
@@ -884,12 +900,20 @@ html[dir="ltr"] .toast{animation-name:toastInL;}
 
       <div class="auth-msg" id="auth-msg"></div>
 
+      <!-- The fastest way in: no form, no provider setup, no email. -->
+      <div class="quickplay" id="quickplay">
+        <button class="btn btn-primary btn-block btn-quickplay" id="btn-quickplay" type="button">
+          <span class="qp-title" data-i18n="auth.quickPlay">العب الآن</span>
+          <span class="qp-sub" data-i18n="auth.quickPlaySub">بدون تسجيل · تدخل مباشرة</span>
+        </button>
+      </div>
+
       <!-- Social sign-in. Rendered only for providers the server has
            credentials for, so the panel stays empty on a default install. -->
       <div class="social-auth" id="social-auth" style="display:none">
         <div class="social-buttons" id="social-buttons"></div>
-        <div class="social-divider"><span data-i18n="auth.or">أو</span></div>
       </div>
+      <div class="social-divider" id="auth-divider"><span data-i18n="auth.or">أو سجّل الدخول بحساب</span></div>
 
       <!-- login -->
       <form class="auth-form" id="form-login">
@@ -11861,6 +11885,18 @@ class UI {
         password: $('#rec-pass').value,
       });
     };
+    $('#btn-quickplay').onclick = () => {
+      if (!net.connected) {
+        this._authMsg(t('auth.offline', 'لا يوجد اتصال بالخادم. تأكد أن الخادم يعمل ثم أعد المحاولة.'), 'error');
+        return;
+      }
+      this._authMsg('', '');
+      this._authBusy(true);
+      $('#btn-quickplay').disabled = true;
+      this.app.audio.ui('ok');
+      net.send({ t: 'auth.guest' });
+    };
+
     $('#btn-lang').onclick = () => {
       I18N.set(I18N.lang === 'ar' ? 'en' : 'ar');
       Store.set('lang', I18N.lang);
@@ -12181,6 +12217,8 @@ class UI {
     host.innerHTML = '';
     if (!providers.length) { wrap.style.display = 'none'; return; }
     wrap.style.display = '';
+    const divider = $('#auth-divider');
+    if (divider) divider.style.display = '';
 
     const icons = {
       google: '<svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.8 6.1C12.3 13.2 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.6c0-1.6-.1-3.2-.4-4.6H24v9.1h12.4c-.5 2.9-2.2 5.3-4.6 7l7.6 5.9c4.4-4.1 6.7-10.1 6.7-17.4z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.4-.8-2.9-.8-4.7s.3-3.3.8-4.7l-7.8-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.6 10.8l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.2 0 11.5-2 15.4-5.6l-7.6-5.9c-2.1 1.4-4.8 2.3-7.8 2.3-6.3 0-11.7-3.7-13.6-9.1l-7.8 6.1C6.5 42.6 14.6 48 24 48z"/></svg>',
@@ -12338,6 +12376,8 @@ class UI {
       if (node) node.disabled = !enabled;
     }
     for (const b of $$('.btn-social')) b.disabled = !enabled;
+    const quick = $('#btn-quickplay');
+    if (quick) quick.disabled = !enabled;
   }
 
   promptServerAddress() {
@@ -12385,6 +12425,8 @@ class UI {
    * the reply never arrives.
    */
   _authBusy(busy, which) {
+    const quick = $('#btn-quickplay');
+    if (quick) quick.disabled = busy || this.connectionState === 'down';
     const buttons = [
       $('#form-login button[type=submit]'),
       $('#form-register button[type=submit]'),
@@ -12430,10 +12472,53 @@ class UI {
   renderProfile() {
     const p = this.app.profile;
     if (!p) return;
+    this.renderGuestBanner();
     $('#topbar-name').textContent = p.name;
     $('#topbar-level').textContent = p.level;
     $('#hud-coins').textContent = fmtNum(p.coins);
     drawAvatar(this._avatarCanvas('#topbar-avatar'), p.avatar, 38);
+  }
+
+  /**
+   * Quick-play accounts are real accounts, but they only survive as long as
+   * the browser keeps its token. This offers - without nagging - the one step
+   * that makes them permanent.
+   */
+  renderGuestBanner() {
+    const host = $('#page-play .page-inner');
+    const existing = $('#guest-banner');
+    const p = this.app.profile;
+    if (!p || !p.guest) { if (existing) existing.remove(); return; }
+    if (existing) return;
+
+    const banner = el('div', { class: 'guest-banner', id: 'guest-banner', style: { gridColumn: '1 / -1' } },
+      el('span', {}, '⚠'),
+      el('div', { class: 'gb-text' },
+        el('b', {}, 'أنت تلعب كضيف. '),
+        'تقدّمك محفوظ على هذا المتصفح فقط — أضف بريداً وكلمة مرور لتحتفظ به على أي جهاز.'),
+      el('button', { class: 'btn btn-sm btn-primary', onclick: () => this.promptClaimAccount() }, 'تأمين الحساب'),
+      el('button', { class: 'btn btn-sm btn-ghost', onclick: () => banner.remove() }, '✕'));
+    host.insertBefore(banner, host.firstChild);
+  }
+
+  /** Upgrades a quick-play account without losing any progress. */
+  promptClaimAccount() {
+    const p = this.app.profile;
+    const name = el('input', { class: 'input', maxlength: 20, value: p?.name || '' });
+    const email = el('input', { class: 'input', type: 'email', placeholder: 'you@example.com' });
+    const pass = el('input', { class: 'input', type: 'password', placeholder: '8 أحرف على الأقل مع أرقام' });
+    const form = el('form', { class: 'col gap-16', onsubmit: (e) => {
+      e.preventDefault();
+      this.net.send({ t: 'auth.claim', name: name.value.trim(), email: email.value.trim(), password: pass.value });
+      Modal.close();
+    } },
+      el('div', { class: 'muted tiny' }, 'كل تقدّمك ومستواك وإنجازاتك ستبقى كما هي.'),
+      el('div', { class: 'field' }, el('label', {}, 'الاسم داخل اللعبة'), name),
+      el('div', { class: 'field' }, el('label', {}, 'البريد الإلكتروني'), email),
+      el('div', { class: 'field' }, el('label', {}, 'كلمة المرور'), pass),
+      el('button', { class: 'btn btn-primary btn-block', type: 'submit' }, 'تأمين الحساب'));
+    Modal.open(form, { title: 'تحويل الحساب إلى دائم' });
+    setTimeout(() => email.focus(), 60);
   }
 
   renderAll() {
@@ -13087,7 +13172,10 @@ class UI {
       body.appendChild(row('الاسم', p?.name, el('button', { class: 'btn btn-sm', onclick: () => this.goPage('armoury') }, 'تغيير')));
       body.appendChild(row('البريد الإلكتروني', p?.email || '—', el('span', { class: 'dim tiny' }, '')));
 
-      if (p && p.hasPassword === false) {
+      if (p && p.guest) {
+        body.appendChild(row('حساب ضيف', 'تقدّمك محفوظ على هذا المتصفح فقط. أضف بريداً وكلمة مرور للاحتفاظ به.',
+          el('button', { class: 'btn btn-sm btn-primary', onclick: () => this.promptClaimAccount() }, 'تأمين الحساب')));
+      } else if (p && p.hasPassword === false) {
         // Social accounts start without one; offer to add it so the player
         // keeps a way in even if they unlink the provider later.
         body.appendChild(row('تعيين كلمة مرور', 'حسابك يسجّل الدخول عبر مزوّد خارجي. أضف كلمة مرور لتتمكن من الدخول بها أيضاً.',

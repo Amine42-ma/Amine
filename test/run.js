@@ -469,6 +469,74 @@ group('Accounts and progression');
     assertEqual(user.cosmetics.skin, 'fossil');
   });
 
+  test('quick play creates a real, playable account with no form', () => {
+    const g = accounts.createGuest('20.0.0.1');
+    assert(!g.error, g.error);
+    assert(g.token, 'a session must be issued immediately');
+    assertEqual(g.user.guest, true);
+    assertEqual(g.user.hash, '', 'no password yet');
+    assertEqual(g.user.email, '', 'no email yet');
+    assertEqual(g.user.coins, 500, 'same starting balance as any account');
+    assert(/^[A-Za-z]+\d{4}$/.test(g.user.name), `unexpected guest name: ${g.user.name}`);
+    assert(!accounts.loginWithToken(g.token).error, 'the token must resume the session');
+  });
+
+  test('quick-play names never collide', () => {
+    const names = new Set();
+    for (let i = 0; i < 40; i++) {
+      const g = accounts.createGuest(`21.0.0.${i}`);
+      assert(!g.error, g.error);
+      assert(!names.has(g.user.name), `duplicate guest name ${g.user.name}`);
+      names.add(g.user.name);
+    }
+  });
+
+  test('quick play is rate limited per device', () => {
+    const ip = '22.0.0.1';
+    let blocked = null;
+    for (let i = 0; i < 15; i++) {
+      const r = accounts.createGuest(ip);
+      if (r.error) { blocked = i; break; }
+    }
+    assert(blocked !== null && blocked <= 8, `guest spam was not limited (stopped at ${blocked})`);
+  });
+
+  test('claiming a quick-play account keeps every bit of progress', () => {
+    const g = accounts.createGuest('23.0.0.1');
+    accounts.applyMatchResult(g.user, {
+      kills: 5, damage: 900, placement: 1, won: true, survivalTime: 600, partySize: 1, dinoKills: 4,
+    });
+    const before = { xp: g.user.xp, coins: g.user.coins, kills: g.user.stats.kills, level: g.user.level, id: g.user.id };
+    const res = accounts.claimAccount(g.user, { name: 'Claimed Hunter', email: 'claimed@example.com', password: 'abcd1234' });
+    assert(!res.error, res.error);
+    assert(res.recoveryCode, 'a recovery key should be issued on claim');
+    assertEqual(g.user.id, before.id, 'the account id must not change');
+    assertEqual(g.user.xp, before.xp, 'xp');
+    assertEqual(g.user.coins, before.coins, 'coins');
+    assertEqual(g.user.stats.kills, before.kills, 'kills');
+    assertEqual(g.user.level, before.level, 'level');
+    assertEqual(g.user.guest, false, 'no longer a guest');
+    assert(!accounts.login({ login: 'claimed@example.com', password: 'abcd1234' }, '23.0.0.2').error, 'password sign-in');
+  });
+
+  test('claiming validates its inputs and cannot be repeated', () => {
+    const g = accounts.createGuest('24.0.0.1');
+    assert(accounts.claimAccount(g.user, { email: 'nope', password: 'abcd1234' }).error, 'bad email');
+    assert(accounts.claimAccount(g.user, { email: 'ok@example.com', password: 'short' }).error, 'weak password');
+    assert(accounts.claimAccount(g.user, { name: 'ab', email: 'ok@example.com', password: 'abcd1234' }).error, 'short name');
+    assert(!accounts.claimAccount(g.user, { email: 'ok2@example.com', password: 'abcd1234' }).error, 'valid claim');
+    assert(accounts.claimAccount(g.user, { email: 'ok3@example.com', password: 'abcd1234' }).error, 'second claim must be refused');
+  });
+
+  test('a quick-play account can be linked to a provider instead', () => {
+    const g = accounts.createGuest('25.0.0.1');
+    const res = accounts.findOrCreateFromProvider('google', { id: 'g-guest', email: 'guest-link@example.com', name: 'Guest' });
+    assert(!res.error, res.error);
+    // A guest with no email is a separate account - linking by email only
+    // applies when the addresses actually match.
+    assert(res.user.id !== g.user.id, 'an email-less guest must not be hijacked by any provider login');
+  });
+
   test('a correct password is never refused after earlier typos', () => {
     // Regression: the throttle used to count *every* attempt, so a player who
     // mistyped a few times could be locked out with the right password.

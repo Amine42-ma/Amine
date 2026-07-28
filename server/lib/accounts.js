@@ -26,6 +26,14 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 const RESERVED_NAMES = new Set(['admin', 'moderator', 'system', 'server', 'dinoroyale', 'support', 'staff']);
 
+/** Original word list used to name guest accounts. */
+const GUEST_WORDS = [
+  'Raptor', 'Ember', 'Tundra', 'Fossil', 'Basalt', 'Cinder', 'Vertex', 'Onyx',
+  'Quartz', 'Talon', 'Ridge', 'Drift', 'Vapor', 'Granite', 'Aurora', 'Cobalt',
+  'Ivory', 'Zenith', 'Nimbus', 'Torrent', 'Marrow', 'Thorn', 'Gale', 'Flint',
+  'Verdant', 'Cortex', 'Sable', 'Halcyon', 'Umber', 'Rift',
+];
+
 function nowMs() {
   return Date.now();
 }
@@ -113,6 +121,25 @@ function defaultAvatar() {
     markingColor: '#c8a24b',
     accessory: 0,
     background: 4,
+  };
+}
+
+/** Gives every quick-play account a distinct look straight away. */
+function randomAvatarServer() {
+  const hairColors = ['#3b2a1e', '#12100f', '#8a6234', '#c9a227', '#a33b2a', '#6b6f76', '#e8e2d4', '#4a2f6b'];
+  const eyeColors = ['#3f6fa8', '#4a8a5a', '#8a5a3a', '#6b4a8a', '#2b2b2b', '#c9a227'];
+  const markColors = ['#c8a24b', '#e04a4a', '#4aa8ff', '#3ddc84', '#b06bff', '#ffffff'];
+  const pick = (arr) => arr[crypto.randomInt(arr.length)];
+  return {
+    skinTone: crypto.randomInt(8),
+    hair: crypto.randomInt(8),
+    hairColor: pick(hairColors),
+    eyes: crypto.randomInt(5),
+    eyeColor: pick(eyeColors),
+    marking: crypto.randomInt(5),
+    markingColor: pick(markColors),
+    accessory: crypto.randomInt(6),
+    background: crypto.randomInt(8),
   };
 }
 
@@ -338,6 +365,103 @@ class Accounts {
     this.users.put(user);
     const session = this.createSession(user.id);
     return { user, token: session.token };
+  }
+
+  /**
+   * Creates a playable account with no form to fill in: one click and the
+   * player is in the lobby. The account is a real account - it keeps XP,
+   * levels, friends and stats - and can be claimed later by adding a name,
+   * email and password, or by linking Google/Facebook.
+   */
+  createGuest(ip) {
+    const key = `guest:${ip}`;
+    const wait = this._throttleCheck(key, 6, 60 * 60 * 1000);
+    if (wait) return { error: `Too many quick-play accounts from this device. Try again in ${Math.ceil(wait / 60)} min, or sign in to an existing account.` };
+    this._throttleFail(key, 60 * 60 * 1000);
+
+    const name = this._uniqueGuestName();
+    const recoveryCode = generateRecoveryCode();
+    const now = nowMs();
+    const user = {
+      id: newId('u'),
+      name,
+      nameLower: name.toLowerCase(),
+      email: '',
+      emailLower: '',
+      salt: '',
+      hash: '',
+      recoveryHash: sha256(recoveryCode),
+      recoveryUsed: false,
+      guest: true,
+      createdAt: now,
+      lastSeen: now,
+      lastLoginDay: 0,
+      xp: 0,
+      level: 1,
+      coins: 500,
+      gems: 0,
+      avatar: randomAvatarServer(),
+      cosmetics: defaultCosmetics(),
+      settings: defaultSettings(),
+      stats: defaultStats(),
+      achievements: {},
+      friends: [],
+      friendRequestsIn: [],
+      friendRequestsOut: [],
+      blocked: [],
+      clanId: null,
+      banned: false,
+      nameChanges: 0,
+    };
+    this.users.put(user);
+    const session = this.createSession(user.id);
+    return { user, token: session.token, recoveryCode };
+  }
+
+  _uniqueGuestName() {
+    for (let i = 0; i < 400; i++) {
+      const word = GUEST_WORDS[crypto.randomInt(GUEST_WORDS.length)];
+      const digits = String(crypto.randomInt(1000, 10000));
+      const candidate = `${word}${digits}`;
+      if (!this.users.by('nameLower', candidate)) return candidate;
+    }
+    return `Hunter${Date.now().toString(36).slice(-7)}`;
+  }
+
+  /**
+   * Turns a quick-play account into a permanent one. Progress is untouched -
+   * only the credentials are added.
+   */
+  claimAccount(user, { name, email, password }) {
+    if (!user.guest && user.hash) return { error: 'This account is already registered.' };
+
+    const wantName = typeof name === 'string' && name.trim() && name.trim() !== user.name;
+    if (wantName) {
+      const err = this.validateName(name);
+      if (err) return { error: err };
+    }
+    const emailErr = this.validateEmail(email);
+    if (emailErr) return { error: emailErr };
+    const passErr = this.validatePassword(password);
+    if (passErr) return { error: passErr };
+
+    if (wantName) {
+      user.name = name.trim();
+      user.nameLower = user.name.toLowerCase();
+    }
+    const mail = email.trim();
+    user.email = mail;
+    user.emailLower = mail.toLowerCase();
+    const { salt, hash } = hashPassword(password);
+    user.salt = salt;
+    user.hash = hash;
+    user.guest = false;
+    // A fresh recovery key, since the guest one was never shown prominently.
+    const recoveryCode = generateRecoveryCode();
+    user.recoveryHash = sha256(recoveryCode);
+    user.recoveryUsed = false;
+    this.users.put(user);
+    return { ok: true, recoveryCode };
   }
 
   /**
@@ -889,6 +1013,7 @@ class Accounts {
       achievements: this.achievementProgress(user),
       createdAt: user.createdAt,
       nameChanges: user.nameChanges,
+      guest: !!user.guest,
       hasPassword: !!user.hash,
       linked: {
         google: !!user.oauthGoogle,
@@ -912,6 +1037,7 @@ class Accounts {
 
 module.exports = {
   Accounts,
+  randomAvatarServer,
   hashPassword,
   verifyPassword,
   generateRecoveryCode,
