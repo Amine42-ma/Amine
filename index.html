@@ -11077,6 +11077,159 @@ function drawHeroFigure(canvas, { skin = 'ranger', weapon = null, avatar = null 
   c.restore();
 }
 
+/**
+ * The lobby figure, rendered from the same box model the match uses.
+ *
+ * `buildHumanoid` is the single source of truth for what a player looks like -
+ * proportions, skin palette, held weapon, the lot. Rather than keep a second
+ * hand-drawn likeness in sync with it, this runs that exact builder and paints
+ * the boxes it produces onto a 2D canvas: transform each unit cube's corners,
+ * drop the faces pointing away, sort what remains back to front and fill them.
+ * Flat-shaded axis-aligned boxes are precisely the case a 2D canvas renders
+ * faithfully, so the lobby shows the character you actually play, without a
+ * second WebGL context competing with the one running the game.
+ *
+ * Returns false if the model could not be built, so callers can fall back.
+ */
+function drawHeroModel(canvas, { skin = 'ranger', weapon = null, yaw = 0.62, time = 0, height = null } = {}) {
+  const box = Math.min(canvas.clientWidth || 260, canvas.clientHeight || 260);
+  const size = Math.max(140, Math.min(420, box || 260));
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.round(size * dpr);
+  canvas.height = Math.round(size * dpr);
+  const c = canvas.getContext('2d');
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, size, size);
+
+  const boxes = [];
+  // A slow idle: breathing from `time`, no translation, facing the viewer.
+  canvas._heroAnim = canvas._heroAnim || { phase: 0, lean: 0, recoil: 0, aim: 0, crouch: 0, breathe: 0 };
+  try {
+    const rig = new Rig(boxes);
+    buildHumanoid(rig, {
+      x: 0, y: 0, z: 0, yaw: 0, pitch: -0.06,
+      vx: 0, vy: 0, vz: 0,
+      state: Protocol.MOVE.IDLE ?? 0, flags: 0,
+      height: height || Protocol.PHYS.PLAYER_HEIGHT,
+      anim: canvas._heroAnim, skin, dt: 1 / 60,
+      weaponId: weapon ? weapon.id : 0,
+      teamColour: null,
+    }, time);
+  } catch (err) {
+    return false;
+  }
+  if (!boxes.length) return false;
+
+  // --- camera: orbit by `yaw`, tilt down slightly, orthographic ------------
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  const tilt = 0.14;
+  const ct = Math.cos(tilt), st = Math.sin(tilt);
+  const view = (x, y, z) => {
+    const x1 = x * cy - z * sy;
+    const z1 = x * sy + z * cy;
+    return { x: x1, y: y * ct - z1 * st, z: y * st + z1 * ct };
+  };
+
+  // Corners of the centred unit cube the renderer instances.
+  const CORNERS = [
+    [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+    [-0.5, -0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5],
+  ];
+  const FACES = [
+    { idx: [1, 5, 6, 2], n: [1, 0, 0] },
+    { idx: [4, 0, 3, 7], n: [-1, 0, 0] },
+    { idx: [3, 2, 6, 7], n: [0, 1, 0] },
+    { idx: [4, 5, 1, 0], n: [0, -1, 0] },
+    { idx: [5, 4, 7, 6], n: [0, 0, 1] },
+    { idx: [0, 1, 2, 3], n: [0, 0, -1] },
+  ];
+
+  // Collect every visible face in view space, then sort once.
+  const quads = [];
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  const LIGHT = { x: -0.45, y: 0.78, z: 0.44 };
+
+  for (const b of boxes) {
+    const m = b.matrix;
+    const pts = CORNERS.map(([lx, ly, lz]) => {
+      const wx = m[0] * lx + m[4] * ly + m[8] * lz + m[12];
+      const wy = m[1] * lx + m[5] * ly + m[9] * lz + m[13];
+      const wz = m[2] * lx + m[6] * ly + m[10] * lz + m[14];
+      const v = view(wx, wy, wz);
+      if (v.x < minX) minX = v.x; if (v.x > maxX) maxX = v.x;
+      if (v.y < minY) minY = v.y; if (v.y > maxY) maxY = v.y;
+      return v;
+    });
+    const col = b.colour || [0.6, 0.6, 0.6, 1];
+    for (const f of FACES) {
+      // Rotate the face normal the same way as the geometry.
+      const nx = m[0] * f.n[0] + m[4] * f.n[1] + m[8] * f.n[2];
+      const ny = m[1] * f.n[0] + m[5] * f.n[1] + m[9] * f.n[2];
+      const nz = m[2] * f.n[0] + m[6] * f.n[1] + m[10] * f.n[2];
+      const len = Math.hypot(nx, ny, nz) || 1;
+      const vn = view(nx / len, ny / len, nz / len);
+      if (vn.z <= 0.001) continue;                    // facing away from the eye
+      const p0 = pts[f.idx[0]], p1 = pts[f.idx[1]], p2 = pts[f.idx[2]], p3 = pts[f.idx[3]];
+      const lambert = Math.max(0, (nx / len) * LIGHT.x + (ny / len) * LIGHT.y + (nz / len) * LIGHT.z);
+      const shade = 0.42 + lambert * 0.66 + (b.emissive || 0) * 0.5;
+      quads.push({
+        depth: (p0.z + p1.z + p2.z + p3.z) * 0.25,
+        pts: [p0, p1, p2, p3],
+        r: M.clamp(col[0] * shade, 0, 1), g: M.clamp(col[1] * shade, 0, 1), b: M.clamp(col[2] * shade, 0, 1),
+        a: col[3] ?? 1,
+      });
+    }
+  }
+  if (!quads.length) return false;
+  // Painter's algorithm: the boxes never interpenetrate, so per-face depth
+  // sorting is exact for this model.
+  quads.sort((a, b2) => a.depth - b2.depth);
+
+  const w = maxX - minX || 1;
+  const h = maxY - minY || 1;
+  const scale = Math.min(size * 0.9 / w, size * 0.92 / h);
+  const ox = size / 2 - (minX + maxX) / 2 * scale;
+  const oy = size * 0.52 + (minY + maxY) / 2 * scale;
+  const sx = (v) => ox + v.x * scale;
+  const sy2 = (v) => oy - v.y * scale;
+
+  // Ground shadow. Sized to the figure's stance, not its bounding box - the
+  // bounding box includes an outstretched rifle, and a shadow that wide reads
+  // as a dark slab behind the character rather than something it stands on.
+  c.save();
+  c.globalAlpha = 0.34;
+  c.fillStyle = '#000';
+  c.beginPath();
+  c.ellipse(size / 2, sy2({ x: 0, y: minY, z: 0 }) + 1, h * scale * 0.19, h * scale * 0.045, 0, 0, Math.PI * 2);
+  c.fill();
+  c.restore();
+
+  for (const q of quads) {
+    c.beginPath();
+    c.moveTo(sx(q.pts[0]), sy2(q.pts[0]));
+    for (let i = 1; i < 4; i++) c.lineTo(sx(q.pts[i]), sy2(q.pts[i]));
+    c.closePath();
+    const fill = `rgba(${Math.round(q.r * 255)},${Math.round(q.g * 255)},${Math.round(q.b * 255)},${q.a})`;
+    c.fillStyle = fill;
+    c.strokeStyle = fill;          // hairline stroke hides seams between faces
+    c.lineWidth = 1;
+    c.fill();
+    c.stroke();
+  }
+
+  // Rim light, so the figure reads against a dark stage.
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  c.globalAlpha = 0.09;
+  const rim = c.createLinearGradient(0, size * 0.1, 0, size * 0.95);
+  rim.addColorStop(0, '#ffd79a');
+  rim.addColorStop(1, 'transparent');
+  c.fillStyle = rim;
+  c.fillRect(size * 0.18, size * 0.06, size * 0.64, size * 0.9);
+  c.restore();
+  return true;
+}
+
 function drawAvatar(canvas, avatar, size = 96) {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   canvas.width = size * dpr; canvas.height = size * dpr;
@@ -14937,6 +15090,23 @@ class TouchControls {
     return node;
   }
 
+  /**
+   * Repaint a button's icon and caption without rebuilding the pad, so a mode
+   * that changes what a button does can say so.
+   */
+  setButtonFace(id, icon, label) {
+    const entry = this._buttons.get(id);
+    if (!entry) return;
+    const ico = entry.node.querySelector('.tc-ico');
+    if (ico) ico.textContent = icon;
+    let lbl = entry.node.querySelector('.tc-lbl');
+    if (!lbl && label) {
+      lbl = el('span', { class: 'tc-lbl' });
+      entry.node.appendChild(lbl);
+    }
+    if (lbl) lbl.textContent = label || '';
+  }
+
   _buildButtons() {
     this._addButton('fire', { icon: '🔫', size: 82, action: 'fire' });
     this._addButton('aim', { icon: '🎯', label: 'تصويب', size: 60, action: 'aim', sticky: true });
@@ -17096,8 +17266,12 @@ class Game {
       if (touch.wasTapped('use')) this._interact();
       if (touch.wasTapped('melee')) this._tryMelee();
       if (touch.wasTapped('heal')) this._useBest(['medkit', 'bandage', 'shield_cell', 'shield_core']);
-      if (touch.wasTapped('build')) {
-        this.buildMode = touch.isDown('build');
+      // Build is a sticky button, and sticky buttons latch `toggled` instead of
+      // reporting a tap - so this has to read the latch, not wait for one.
+      const wantBuild = touch.isDown('build');
+      if (wantBuild !== this.buildMode) {
+        this.buildMode = wantBuild;
+        this.audio.ui(this.buildMode ? 'ok' : 'back');
         DRE.bus.emit('hud.buildMode', this.buildMode);
       }
       if (touch.wasTapped('jump') && this.state.inPlane) this.state.sendInteract(0, 1);
@@ -18868,6 +19042,35 @@ class UI {
   }
 
   /**
+   * Keeps the lobby character breathing and slowly turning.
+   *
+   * Only the figure is repainted, and only while the lobby is the screen on
+   * show - the rest of renderStage rebuilds DOM, which has no business running
+   * at 60 Hz. The loop stops itself the moment you leave the lobby, so it never
+   * competes with the renderer during a match.
+   */
+  _startHeroIdle() {
+    if (this._heroRAF) return;
+    let last = performance.now();
+    const step = (now) => {
+      const fig = $('#hero-figure');
+      if (this.screen !== 'lobby' || !fig || !this._heroOpts) {
+        this._heroRAF = 0;
+        return;
+      }
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      this._heroTime = (this._heroTime || 0) + dt;
+      // A slow sweep either side of front-on, so you can read the silhouette
+      // and the weapon without the figure ever showing you its back.
+      this._heroYaw = 0.5 + Math.sin(this._heroTime * 0.28) * 0.42;
+      drawHeroModel(fig, { ...this._heroOpts, yaw: this._heroYaw, time: this._heroTime });
+      this._heroRAF = requestAnimationFrame(step);
+    };
+    this._heroRAF = requestAnimationFrame(step);
+  }
+
+  /**
    * Paints the character, the name plate and the squad slots. The slot count
    * follows the mode, so a solo lobby does not show three empty chairs.
    */
@@ -18882,11 +19085,15 @@ class UI {
       // rather than an empty-handed figure.
       const held = this.app.matchState?.inventory?.weapons?.[0]
         || { id: (Content.WEAPONS.find((w) => w.class === 'assault') || Content.WEAPONS[1]).id };
-      drawHeroFigure(fig, {
-        skin: p.cosmetics?.skin || 'ranger',
-        weapon: held,
-        avatar: p.avatar,
-      });
+      const opts = { skin: p.cosmetics?.skin || 'ranger', weapon: held, avatar: p.avatar };
+      // The real in-game model first; the drawn figure is the safety net if
+      // anything about the rig is unavailable.
+      this._heroOpts = opts;
+      if (!drawHeroModel(fig, { ...opts, yaw: this._heroYaw ?? 0.62, time: this._heroTime || 0 })) {
+        drawHeroFigure(fig, opts);
+      } else {
+        this._startHeroIdle();
+      }
     }
     $('#hero-name').textContent = p.name;
     $('#hero-level').textContent = p.level;
@@ -19997,6 +20204,11 @@ class HUD {
 
   renderBuildMode(on) {
     $('#crosshair').style.opacity = on ? '0.5' : '1';
+    // On a phone the only clue about what the buttons do is what they say, and
+    // in build mode fire and melee stop meaning fire and melee.
+    this.app.touch?.setButtonFace('fire', on ? '🧱' : '🔥', on ? 'ضع' : 'إطلاق');
+    this.app.touch?.setButtonFace('melee', on ? '⛏' : '🔪', on ? 'كسّر' : 'ضربة');
+    document.body.classList.toggle('build-on', !!on);
   }
 
   flashHitmarker(m) {
