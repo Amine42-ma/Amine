@@ -2580,10 +2580,10 @@ body.touch-on .zone-timer{top:56px;}
             if (inSection) this._decorateUnderwater(wx, wz, h, col.biome, put);
             continue;
           }
-          // Trees are sparse; the hash gate rejects ~97% of columns immediately.
+          // Trees are sparse; the hash gate rejects most columns immediately.
           const tr = rand2(this.s.tree, wx, wz);
           const density = this._treeDensity(col.biome);
-          if (tr < density) {
+          if (tr < density && this._treeWins(wx, wz, tr, density)) {
             this._buildTree(wx, h + 1, wz, col.biome, put, by);
           } else if (inSection) {
             this._decorateGround(wx, wz, h, col.biome, put);
@@ -2600,6 +2600,34 @@ body.touch-on .zone-timer{top:56px;}
       }
 
       return any;
+    }
+
+    /**
+     * Keeps trees apart.
+     *
+     * A plain probability gate lets two trees land on neighbouring columns, and
+     * since a canopy is several blocks across, a forest came out as one solid
+     * wall of leaves with no room to walk or see between the trunks. A column
+     * only grows a tree if it holds the lowest hash in its neighbourhood, which
+     * enforces a minimum spacing while keeping the natural clumping - some
+     * clearings, some denser stands - rather than a grid.
+     *
+     * Cost is bounded: this only runs for the few percent of columns that pass
+     * the density gate at all.
+     */
+    _treeWins(wx, wz, tr, density) {
+      // Canopies are 7 blocks across, so trunks need real distance or the
+      // crowns still fuse into one roof.
+      const R = 4;
+      for (let dz = -R; dz <= R; dz++) {
+        for (let dx = -R; dx <= R; dx++) {
+          if (dx === 0 && dz === 0) continue;
+          const other = rand2(this.s.tree, wx + dx, wz + dz);
+          // Only competitors that would themselves become trees matter.
+          if (other < density && other < tr) return false;
+        }
+      }
+      return true;
     }
 
     _treeDensity(biome) {
@@ -11235,6 +11263,27 @@ layout(location=5) in float aLayer;
 layout(location=6) in float aFlags;   // bit 0: foliage
 `;
 
+/**
+ * Foliage sway, defined once.
+ *
+ * The depth prepass and the shading pass must place a vertex at EXACTLY the
+ * same spot. When they each carried their own copy of this they had drifted
+ * apart - different amplitudes, a different vertical falloff - so the depth
+ * written for a blade of grass never matched the depth tested for it. The
+ * blade failed LEQUAL and vanished, and the terrain behind it was already
+ * occluded by that same depth, so the pixel fell through to the sky. Every
+ * tuft became a hole. Sharing the source is the only way to keep them equal.
+ */
+const CHUNK_SWAY = `
+vec3 applySway(vec3 world, vec3 localPos, float flags, float time, float wind){
+  if (flags <= 0.5) return world;
+  float sway = sin(time*1.6 + world.x*0.6 + world.z*0.4) * 0.07 * wind
+             + sin(time*2.7 + world.z*0.9) * 0.03 * wind;
+  world.xz += sway * max(0.0, fract(localPos.y) + 0.35);
+  return world;
+}
+`;
+
 const NORMAL_TABLE = `
 const vec3 NORMALS[6] = vec3[6](
   vec3( 1.0, 0.0, 0.0), vec3(-1.0, 0.0, 0.0),
@@ -11250,6 +11299,7 @@ GLSL.chunkPrepassVS = `#version 300 es
 precision highp float;
 ${CHUNK_ATTRIBS}
 ${NORMAL_TABLE}
+${CHUNK_SWAY}
 uniform mat4 uViewProj;
 uniform vec3 uChunkOrigin;
 uniform mat3 uNormalView;
@@ -11263,12 +11313,7 @@ void main(){
   vec3 world = aPos + uChunkOrigin;
   int ni = int(aNormalIdx);
   vec3 n = NORMALS[ni];
-  // Foliage sway. Must match the main pass exactly or the depth written
-  // here will not equal the depth tested there, and fragments drop out.
-  if (aFlags > 0.5) {
-    float sway = sin(uTime*1.6 + world.x*0.6 + world.z*0.4) * 0.06 * uWindStrength;
-    world.xz += sway * max(0.0, fract(aPos.y));
-  }
+  world = applySway(world, aPos, aFlags, uTime, uWindStrength);
   vViewNormal = normalize(uNormalView * n);
   vRough = 0.8;
   vUV = aUV;
@@ -11326,6 +11371,7 @@ GLSL.chunkVS = `#version 300 es
 precision highp float;
 ${CHUNK_ATTRIBS}
 ${NORMAL_TABLE}
+${CHUNK_SWAY}
 uniform mat4 uViewProj;
 uniform vec3 uChunkOrigin;
 uniform float uTime;
@@ -11346,11 +11392,7 @@ void main(){
   vec3 tg = TANGENTS[ni];
   float light = aLight;
   bool foliage = aFlags > 0.5;
-  if (foliage) {
-    float sway = sin(uTime*1.6 + world.x*0.6 + world.z*0.4) * 0.07 * uWindStrength
-               + sin(uTime*2.7 + world.z*0.9) * 0.03 * uWindStrength;
-    world.xz += sway * max(0.0, fract(aPos.y) + 0.35);
-  }
+  world = applySway(world, aPos, aFlags, uTime, uWindStrength);
   vWorld = world;
   vNormal = n;
   vTangent = tg;
@@ -11701,7 +11743,12 @@ void main(){
   vUV = aUV;
   vColour = iColour;
   vParams = iParams;
-  gl_Position = uViewProj * world;
+  // Grouped exactly as the depth prepass groups it: (uViewProj * iModel) * v.
+  // Written as uViewProj * world it is the same value in algebra but not in
+  // floating point, and the depth test that follows is LEQUAL - so entities
+  // lost the comparison against their own prepass depth and disappeared.
+  // The weapon in your hands and your own feet were the most visible.
+  gl_Position = uViewProj * iModel * vec4(aPos, 1.0);
 }`;
 
 GLSL.boxFS = `#version 300 es

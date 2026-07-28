@@ -820,10 +820,10 @@
             if (inSection) this._decorateUnderwater(wx, wz, h, col.biome, put);
             continue;
           }
-          // Trees are sparse; the hash gate rejects ~97% of columns immediately.
+          // Trees are sparse; the hash gate rejects most columns immediately.
           const tr = rand2(this.s.tree, wx, wz);
           const density = this._treeDensity(col.biome);
-          if (tr < density) {
+          if (tr < density && this._treeWins(wx, wz, tr, density)) {
             this._buildTree(wx, h + 1, wz, col.biome, put, by);
           } else if (inSection) {
             this._decorateGround(wx, wz, h, col.biome, put);
@@ -840,6 +840,34 @@
       }
 
       return any;
+    }
+
+    /**
+     * Keeps trees apart.
+     *
+     * A plain probability gate lets two trees land on neighbouring columns, and
+     * since a canopy is several blocks across, a forest came out as one solid
+     * wall of leaves with no room to walk or see between the trunks. A column
+     * only grows a tree if it holds the lowest hash in its neighbourhood, which
+     * enforces a minimum spacing while keeping the natural clumping - some
+     * clearings, some denser stands - rather than a grid.
+     *
+     * Cost is bounded: this only runs for the few percent of columns that pass
+     * the density gate at all.
+     */
+    _treeWins(wx, wz, tr, density) {
+      // Canopies are 7 blocks across, so trunks need real distance or the
+      // crowns still fuse into one roof.
+      const R = 4;
+      for (let dz = -R; dz <= R; dz++) {
+        for (let dx = -R; dx <= R; dx++) {
+          if (dx === 0 && dz === 0) continue;
+          const other = rand2(this.s.tree, wx + dx, wz + dz);
+          // Only competitors that would themselves become trees matter.
+          if (other < density && other < tr) return false;
+        }
+      }
+      return true;
     }
 
     _treeDensity(biome) {
