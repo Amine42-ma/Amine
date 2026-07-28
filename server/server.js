@@ -23,6 +23,7 @@ const { Accounts } = require('./lib/accounts.js');
 const { Social } = require('./lib/social.js');
 const { VoiceHub } = require('./lib/voice.js');
 const { MatchMaker } = require('./lib/matchmaking.js');
+const { OAuth } = require('./lib/oauth.js');
 const Content = require('./lib/content.js');
 const Protocol = require('./lib/protocol.js');
 const WorldGen = require('./lib/worldgen.js');
@@ -59,6 +60,8 @@ function firstConnection(userId) {
   for (const conn of set) return conn;
   return null;
 }
+
+const oauth = new OAuth(accounts);
 
 const social = new Social(accounts, push);
 social.connectionsOf = firstConnection;
@@ -119,6 +122,9 @@ const ALLOWED_STATIC = new Set(['/', '/index.html', '/favicon.ico', '/README.md'
 function serveStatic(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   let pathname = decodeURIComponent(url.pathname);
+
+  // Social sign-in redirects (/auth/<provider>/start and /callback).
+  if (pathname.startsWith('/auth/') && oauth.handleRequest(req, res, url)) return;
 
   if (pathname === '/health') {
     return sendJson(res, 200, {
@@ -200,6 +206,7 @@ wss.on('connection', (conn) => {
   conn.data.jsonTimes = [];
   conn.send({
     t: 'hello',
+    providers: oauth.availableProviders(),
     protocol: Protocol.PROTOCOL_VERSION,
     serverTime: Date.now(),
     tickRate: Protocol.TICK_RATE,
@@ -367,6 +374,31 @@ function handleControl(conn, msg) {
       if (result.error) return conn.send({ t: 'auth.error', message: result.error, expired: true });
       bindSession(conn, result.user, result.token);
       return;
+    }
+    case 'auth.ticket': {
+      // One-time ticket handed back by the OAuth callback redirect.
+      const userId = oauth.redeemTicket(msg.ticket);
+      if (!userId) return conn.send({ t: 'auth.error', message: 'That sign-in link expired. Please try again.' });
+      const user = accounts.users.get(userId);
+      if (!user) return conn.send({ t: 'auth.error', message: 'Account not found.' });
+      if (user.banned) return conn.send({ t: 'auth.error', message: 'This account is suspended.' });
+      const session = accounts.createSession(user.id);
+      bindSession(conn, user, session.token);
+      return;
+    }
+    case 'auth.setPassword': {
+      const user = requireAuth(conn);
+      if (!user) return;
+      const result = accounts.setInitialPassword(user, msg.password);
+      if (result.error) return conn.send({ t: 'error', code: 'password', message: result.error });
+      return conn.send({ t: 'profile', profile: accounts.selfProfile(user), notice: 'Password set.' });
+    }
+    case 'auth.unlink': {
+      const user = requireAuth(conn);
+      if (!user) return;
+      const result = accounts.unlinkProvider(user, msg.provider);
+      if (result.error) return conn.send({ t: 'error', code: 'unlink', message: result.error });
+      return conn.send({ t: 'profile', profile: accounts.selfProfile(user), notice: 'Provider unlinked.' });
     }
     case 'auth.logout': {
       const user = conn.user;
@@ -876,4 +908,4 @@ process.on('unhandledRejection', (err) => {
 // Periodic persistence heartbeat.
 setInterval(() => store.flush().catch(() => {}), 30000).unref?.();
 
-module.exports = { httpServer, wss, accounts, social, matchmaker, voice, store };
+module.exports = { httpServer, wss, accounts, social, matchmaker, voice, store, oauth };

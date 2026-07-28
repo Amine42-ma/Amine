@@ -469,6 +469,33 @@ group('Accounts and progression');
     assertEqual(user.cosmetics.skin, 'fossil');
   });
 
+  test('a correct password is never refused after earlier typos', () => {
+    // Regression: the throttle used to count *every* attempt, so a player who
+    // mistyped a few times could be locked out with the right password.
+    const ip = '7.7.7.7';
+    for (let i = 0; i < 6; i++) accounts.login({ login: 'Ranger One', password: 'wrongpass1' }, ip);
+    for (let i = 0; i < 25; i++) {
+      const res = accounts.login({ login: 'Ranger One', password: 'another789' }, ip);
+      assert(!res.error, `attempt ${i + 1} was refused: ${res.error}`);
+    }
+  });
+
+  test('sign-in accepts the name or the email, in any case', () => {
+    assert(!accounts.login({ login: 'ranger one', password: 'another789' }, '8.8.8.1').error, 'lowercase name');
+    assert(!accounts.login({ login: 'RANGER@EXAMPLE.COM'.toLowerCase(), password: 'another789' }, '8.8.8.2').error, 'email');
+    assert(!accounts.login({ login: 'ranger@example.com', password: 'another789' }, '8.8.8.3').error, 'email in the name field');
+  });
+
+  test('repeated wrong passwords are eventually throttled', () => {
+    const ip = '9.9.9.9';
+    let blocked = false;
+    for (let i = 0; i < 40 && !blocked; i++) {
+      const res = accounts.login({ login: 'Ranger One', password: 'definitelywrong1' }, ip);
+      if (/Try again in/.test(res.error || '')) blocked = true;
+    }
+    assert(blocked, 'brute force was never throttled');
+  });
+
   test('leaderboards rank by the requested board', () => {
     const board = accounts.leaderboard('kills', 10);
     assert(board.length >= 1);
@@ -483,6 +510,141 @@ group('Accounts and progression');
     const reloaded = accounts2.users.by('nameLower', 'ranger one');
     assert(reloaded, 'user not reloaded from disk');
     assertEqual(reloaded.stats.kills, 6);
+  });
+
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// ===========================================================================
+group('Social sign-in (Google / Facebook)');
+// ===========================================================================
+{
+  const { Store } = require('../server/lib/store.js');
+  const { Accounts } = require('../server/lib/accounts.js');
+  const { OAuth, PROVIDERS } = require('../server/lib/oauth.js');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dre-oauth-'));
+  const accounts = new Accounts(new Store(dir));
+  const oauth = new OAuth(accounts, { secret: 'test-secret', publicUrl: 'https://example.test' });
+
+  test('providers stay disabled until credentials are supplied', () => {
+    // The test process has no client ids configured.
+    assert(!oauth.isEnabled('google') || !!process.env.GOOGLE_CLIENT_ID, 'google should be off by default');
+    assert(!oauth.isEnabled('facebook') || !!process.env.FACEBOOK_APP_ID, 'facebook should be off by default');
+    const listed = oauth.availableProviders().map((p) => p.key);
+    for (const key of listed) assert(oauth.isEnabled(key), `${key} advertised but not configured`);
+  });
+
+  test('the state parameter is signed, timestamped and tamper evident', () => {
+    const state = oauth._signState({ p: 'google', n: 'abc', t: Date.now() });
+    const ok = oauth._verifyState(state);
+    assert(ok && ok.p === 'google', 'valid state must verify');
+    assert(!oauth._verifyState(state.replace(/.$/, 'X')), 'tampered signature must fail');
+    assert(!oauth._verifyState('garbage'), 'garbage must fail');
+    assert(!oauth._verifyState(null), 'null must fail');
+    const stale = oauth._signState({ p: 'google', n: 'abc', t: Date.now() - 20 * 60 * 1000 });
+    assert(!oauth._verifyState(stale), 'expired state must fail');
+  });
+
+  test('redirect URIs honour PUBLIC_URL', () => {
+    assertEqual(oauth.redirectUri('google', { headers: {} }), 'https://example.test/auth/google/callback');
+    const local = new OAuth(accounts, { secret: 's' });
+    assertEqual(local.redirectUri('facebook', { headers: { host: 'game.local:8080' } }), 'http://game.local:8080/auth/facebook/callback');
+  });
+
+  test('tickets are single use and short lived', () => {
+    const t = oauth.issueTicket('u_abc');
+    assertEqual(oauth.redeemTicket(t), 'u_abc');
+    assertEqual(oauth.redeemTicket(t), null, 'a ticket must not be reusable');
+    assertEqual(oauth.redeemTicket('never-issued'), null);
+    const expired = oauth.issueTicket('u_xyz');
+    oauth.tickets.get(expired).expires = Date.now() - 1;
+    assertEqual(oauth.redeemTicket(expired), null, 'expired tickets must be refused');
+  });
+
+  test('a first social sign-in creates a password-less account', () => {
+    const res = accounts.findOrCreateFromProvider('google', { id: 'g-1', email: 'social@example.com', name: 'Amine Kingdede' });
+    assert(!res.error, res.error);
+    assert(res.created, 'should be a new account');
+    assertEqual(res.user.hash, '', 'no password should be set');
+    assertEqual(res.user.oauthGoogle, 'g-1');
+    assertEqual(res.user.coins, 500, 'same starting balance as a normal account');
+  });
+
+  test('returning with the same provider id resolves to the same account', () => {
+    const a = accounts.findOrCreateFromProvider('google', { id: 'g-1', email: 'social@example.com', name: 'Whatever' });
+    const b = accounts.users.by('oauthGoogle', 'g-1');
+    assertEqual(a.user.id, b.id);
+    assert(!a.created, 'must not create a duplicate');
+  });
+
+  test('a second provider with the same email links to the existing account', () => {
+    const existing = accounts.users.by('oauthGoogle', 'g-1');
+    const res = accounts.findOrCreateFromProvider('facebook', { id: 'f-1', email: 'social@example.com', name: 'Amine' });
+    assertEqual(res.user.id, existing.id, 'should link, not duplicate');
+    assert(res.linked, 'linked flag expected');
+    assertEqual(res.user.oauthFacebook, 'f-1');
+  });
+
+  test('display names are made unique automatically', () => {
+    const a = accounts.findOrCreateFromProvider('google', { id: 'g-2', email: null, name: 'Ranger' });
+    const b = accounts.findOrCreateFromProvider('google', { id: 'g-3', email: null, name: 'Ranger' });
+    assert(a.user.name !== b.user.name, 'names collided');
+    assert(a.user.name.length >= 3 && b.user.name.length >= 3);
+  });
+
+  test('password sign-in on a social account explains what to do', () => {
+    const user = accounts.users.by('oauthGoogle', 'g-1');
+    const res = accounts.login({ login: user.name, password: 'anything123' }, '4.4.4.9');
+    assert(res.error && /Google|Facebook|provider/.test(res.error), `unhelpful error: ${res.error}`);
+  });
+
+  test('a social account can add a password and then sign in with it', () => {
+    const user = accounts.users.by('oauthGoogle', 'g-1');
+    const set = accounts.setInitialPassword(user, 'newpass123');
+    assert(!set.error, set.error);
+    assert(!accounts.login({ login: user.name, password: 'newpass123' }, '4.4.4.10').error);
+    // A second call must be refused - that path requires the current password.
+    assert(accounts.setInitialPassword(user, 'other456789').error);
+  });
+
+  test('unlinking never leaves an account with no way in', () => {
+    const solo = accounts.findOrCreateFromProvider('facebook', { id: 'f-solo', email: null, name: 'Lone Hunter' });
+    assert(accounts.unlinkProvider(solo.user, 'facebook').error, 'must refuse to strip the only credential');
+    const dual = accounts.users.by('oauthGoogle', 'g-1');
+    assert(!accounts.unlinkProvider(dual, 'facebook').error, 'should allow when a password exists');
+  });
+
+  test('the profile reports which providers are linked', () => {
+    const user = accounts.users.by('oauthGoogle', 'g-1');
+    const profile = accounts.selfProfile(user);
+    assertEqual(profile.linked.google, true);
+    assertEqual(profile.hasPassword, true);
+  });
+
+  test('unknown providers are rejected', () => {
+    assert(accounts.findOrCreateFromProvider('twitter', { id: 'x' }).error);
+    assert(accounts.findOrCreateFromProvider('google', {}).error, 'a profile without an id must fail');
+  });
+
+  test('every configured provider declares a complete endpoint set', () => {
+    for (const p of Object.values(PROVIDERS)) {
+      for (const field of ['authorizeUrl', 'tokenHost', 'tokenPath', 'profileHost', 'profilePath', 'scope', 'idEnv', 'secretEnv']) {
+        assert(p[field], `${p.key} is missing ${field}`);
+      }
+      assert(typeof p.normalise === 'function', `${p.key} has no normaliser`);
+      const sample = p.key === 'google'
+        ? { sub: '1', email: 'a@b.c', email_verified: true, name: 'N' }
+        : { id: '1', email: 'a@b.c', name: 'N' };
+      const out = p.normalise(sample);
+      assertEqual(out.id, '1');
+      assertEqual(out.email, 'a@b.c');
+    }
+  });
+
+  test('Google emails are only trusted when verified', () => {
+    const out = PROVIDERS.google.normalise({ sub: '9', email: 'unverified@example.com', email_verified: false, name: 'X' });
+    assertEqual(out.email, null, 'an unverified address must not be used for linking');
   });
 
   fs.rmSync(dir, { recursive: true, force: true });

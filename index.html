@@ -341,6 +341,24 @@ html[dir="ltr"] .switch input:checked ~ .thumb{transform:translateX(20px);}
   direction:ltr;
 }
 
+.social-auth{margin-bottom:18px;}
+.social-buttons{display:flex;flex-direction:column;gap:9px;}
+.btn-social{
+  display:flex;align-items:center;justify-content:center;gap:11px;width:100%;
+  padding:11px 18px;border-radius:var(--r-md);cursor:pointer;font-weight:700;font-size:14px;
+  border:1px solid var(--stroke-2);background:rgba(255,255,255,.06);color:var(--text);
+  transition:background .18s,border-color .18s,transform .12s;
+}
+.btn-social:hover{background:rgba(255,255,255,.11);border-color:rgba(255,255,255,.26);transform:translateY(-1px);}
+.btn-social:active{transform:translateY(1px);}
+.btn-social svg{width:19px;height:19px;flex:none;}
+.btn-social.google{background:#fff;color:#1f1f1f;border-color:#dadce0;}
+.btn-social.google:hover{background:#f4f6f8;}
+.btn-social.facebook{background:#1877f2;color:#fff;border-color:#1877f2;}
+.btn-social.facebook:hover{background:#2b88f7;}
+.social-divider{display:flex;align-items:center;gap:12px;margin-top:16px;color:var(--text-mute);font-size:12px;}
+.social-divider::before,.social-divider::after{content:"";height:1px;flex:1;background:var(--stroke);}
+
 /* ==========================================================================
    Lobby shell
    ========================================================================== */
@@ -832,6 +850,13 @@ html[dir="ltr"] .toast{animation-name:toastInL;}
       </div>
 
       <div class="auth-msg" id="auth-msg"></div>
+
+      <!-- Social sign-in. Rendered only for providers the server has
+           credentials for, so the panel stays empty on a default install. -->
+      <div class="social-auth" id="social-auth" style="display:none">
+        <div class="social-buttons" id="social-buttons"></div>
+        <div class="social-divider"><span data-i18n="auth.or">أو</span></div>
+      </div>
 
       <!-- login -->
       <form class="auth-form" id="form-login">
@@ -5109,11 +5134,12 @@ const Modal = DRE.Modal = {
     const back = $('#modal-back');
     const box = $('#modal');
     box.innerHTML = '';
-    if (title) {
-      box.appendChild(el('div', { class: 'panel-head' },
-        el('div', { class: 'panel-title' }, title),
-        el('button', { class: 'btn btn-ghost btn-xs', onclick: () => Modal.close() }, '✕')));
-    }
+    // A dialog must always offer a way out. Without a header the overlay would
+    // cover the whole interface with nothing to click, which silently blocks
+    // every button underneath it.
+    box.appendChild(el('div', { class: 'panel-head' },
+      el('div', { class: 'panel-title' }, title || ''),
+      el('button', { class: 'btn btn-ghost btn-xs', title: 'Close', onclick: () => Modal.close() }, '✕')));
     const body = el('div', { class: 'panel-body' });
     if (typeof content === 'string') body.innerHTML = content;
     else body.appendChild(content);
@@ -5126,6 +5152,7 @@ const Modal = DRE.Modal = {
     $('#modal-back')?.classList.remove('show');
     if (Modal._onClose) { const f = Modal._onClose; Modal._onClose = null; f(); }
   },
+  get isOpen() { return !!$('#modal-back')?.classList.contains('show'); },
   prompt({ title, label, placeholder, value = '', confirmText, onConfirm, maxlength = 60 }) {
     const input = el('input', { class: 'input', placeholder: placeholder || '', maxlength, value });
     const form = el('form', { class: 'col gap-16', onsubmit: (e) => { e.preventDefault(); onConfirm(input.value.trim()); Modal.close(); } },
@@ -11714,6 +11741,9 @@ class UI {
   /* ------------------------------------------------------------ screens -- */
   show(name) {
     if (this.screen === name) return;
+    // Never carry an open dialog across a screen change - its overlay would
+    // swallow every click on the new screen.
+    Modal.close();
     for (const s of $$('.screen')) s.classList.remove('active');
     const target = $(`#screen-${name}`);
     if (target) target.classList.add('active');
@@ -11757,12 +11787,28 @@ class UI {
 
     $('#form-login').onsubmit = (e) => {
       e.preventDefault();
+      const ident = $('#login-ident').value.trim();
+      const password = $('#login-pass').value;
+      if (!ident || !password) {
+        this._authMsg(t('auth.fillBoth', 'أدخل الاسم وكلمة المرور.'), 'error');
+        return;
+      }
+      if (!net.connected) {
+        this._authMsg(t('auth.offline', 'لا يوجد اتصال بالخادم. تأكد أن الخادم يعمل ثم أعد المحاولة.'), 'error');
+        return;
+      }
       this._authMsg('', '');
-      net.send({ t: 'auth.login', login: $('#login-ident').value.trim(), password: $('#login-pass').value });
+      this._authBusy(true, 'login');
+      net.send({ t: 'auth.login', login: ident, password });
     };
     $('#form-register').onsubmit = (e) => {
       e.preventDefault();
+      if (!net.connected) {
+        this._authMsg(t('auth.offline', 'لا يوجد اتصال بالخادم. تأكد أن الخادم يعمل ثم أعد المحاولة.'), 'error');
+        return;
+      }
       this._authMsg('', '');
+      this._authBusy(true, 'register');
       net.send({
         t: 'auth.register',
         name: $('#reg-name').value.trim(),
@@ -11887,18 +11933,24 @@ class UI {
     $('#btn-ml-start').onclick = () => net.send({ t: 'match.startRoom', matchId: this.app.matchState.matchId });
 
     $('#modal-back').onclick = (e) => { if (e.target === $('#modal-back')) Modal.close(); };
+    // Escape is the universal way out of a dialog.
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && Modal.isOpen) { e.preventDefault(); Modal.close(); }
+    });
 
     // =================================================== server messages ==
     net.on('hello', (m) => {
+      this.renderProviders(m.providers || []);
       $('#server-status').textContent = `protocol v${m.protocol} · ${m.online} online`;
       $('#stat-build').textContent = `v1.0 · p${m.protocol}`;
       this.app.content = this.app.content || null;
       this.renderModes(m.modes);
     });
 
-    net.on('auth.error', (m) => this._authMsg(m.message, 'error'));
+    net.on('auth.error', (m) => { this._authBusy(false); this._authMsg(m.message, 'error'); });
 
     net.on('auth.ok', (m) => {
+      this._authBusy(false);
       this.app.onAuthenticated(m);
       this.show('lobby');
       this.renderProfile();
@@ -11906,6 +11958,9 @@ class UI {
     });
 
     net.on('auth.recoveryCode', (m) => {
+      // Can arrive just after a logout raced ahead of it; showing a dialog on
+      // the sign-in screen would block the form for an account we just left.
+      if (!this.app.profile) return;
       Modal.open(el('div', { class: 'col gap-16' },
         el('div', { class: 'muted' }, m.message || 'Store this recovery key somewhere safe.'),
         el('div', { class: 'recovery-key' }, m.code),
@@ -11926,6 +11981,7 @@ class UI {
     net.on('auth.loggedOut', () => {
       Store.del('token');
       this.app.profile = null;
+      this.app.cancelMicPrompt();
       this.show('auth');
       this._authTab('login');
     });
@@ -12071,7 +12127,75 @@ class UI {
     }, 1000);
   }
 
+  /** Draws a button per provider the server actually has credentials for. */
+  renderProviders(providers) {
+    const host = $('#social-buttons');
+    const wrap = $('#social-auth');
+    host.innerHTML = '';
+    if (!providers.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+
+    const icons = {
+      google: '<svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.8 6.1C12.3 13.2 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.6c0-1.6-.1-3.2-.4-4.6H24v9.1h12.4c-.5 2.9-2.2 5.3-4.6 7l7.6 5.9c4.4-4.1 6.7-10.1 6.7-17.4z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.4-.8-2.9-.8-4.7s.3-3.3.8-4.7l-7.8-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.6 10.8l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.2 0 11.5-2 15.4-5.6l-7.6-5.9c-2.1 1.4-4.8 2.3-7.8 2.3-6.3 0-11.7-3.7-13.6-9.1l-7.8 6.1C6.5 42.6 14.6 48 24 48z"/></svg>',
+      facebook: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07C0 18.1 4.39 23.1 10.13 24v-8.44H7.08v-3.49h3.05V9.41c0-3.02 1.79-4.69 4.53-4.69 1.31 0 2.68.24 2.68.24v2.96h-1.51c-1.49 0-1.96.93-1.96 1.89v2.26h3.33l-.53 3.49h-2.8V24C19.61 23.1 24 18.1 24 12.07z"/></svg>',
+    };
+    const labels = { google: 'المتابعة باستخدام Google', facebook: 'المتابعة باستخدام Facebook' };
+    const labelsEn = { google: 'Continue with Google', facebook: 'Continue with Facebook' };
+
+    for (const p of providers) {
+      const btn = el('button', { class: `btn-social ${p.key}`, type: 'button' });
+      btn.innerHTML = icons[p.key] || '';
+      btn.appendChild(document.createTextNode(
+        I18N.lang === 'ar' ? (labels[p.key] || p.label) : (labelsEn[p.key] || p.label)));
+      btn.onclick = () => {
+        this._authMsg('', '');
+        this.app.audio.ui('click');
+        // Full-page redirect: the most reliable flow across browsers and the
+        // only one Google permits inside embedded webviews.
+        location.href = `/auth/${p.key}/start`;
+      };
+      host.appendChild(btn);
+    }
+  }
+
+  /**
+   * Picks up the result of a social sign-in redirect. The one-time ticket is
+   * swapped for a session over the WebSocket, then scrubbed from the URL so it
+   * cannot be replayed from history.
+   */
+  consumeAuthRedirect() {
+    const params = new URLSearchParams(location.search);
+    const ticket = params.get('auth');
+    const error = params.get('auth_error');
+    if (!ticket && !error) return false;
+
+    history.replaceState({}, '', location.pathname);
+
+    if (error) {
+      const messages = {
+        cancelled: 'تم إلغاء تسجيل الدخول.',
+        provider_unavailable: 'هذا الخيار غير مفعّل على هذا الخادم.',
+        bad_state: 'انتهت صلاحية الطلب. حاول مرة أخرى.',
+        token_exchange_failed: 'تعذّر إكمال التحقق مع المزوّد.',
+        no_profile: 'لم يُرجع المزوّد بيانات الحساب.',
+        link_failed: params.get('auth_detail') || 'تعذّر ربط الحساب.',
+        provider_error: 'تعذّر الوصول إلى المزوّد. حاول لاحقاً.',
+        missing_code: 'رد غير مكتمل من المزوّد.',
+      };
+      this._authTab('login');
+      this._authMsg(messages[error] || 'تعذّر تسجيل الدخول.', 'error');
+      return true;
+    }
+
+    this._authBusy(true, 'login');
+    this.net.send({ t: 'auth.ticket', ticket });
+    return true;
+  }
+
   _authTab(tab) {
+    // Guarantees the sign-in form is reachable: nothing may sit on top of it.
+    Modal.close();
+    this._authBusy(false);
     for (const b of $$('[data-auth-tab]')) b.classList.toggle('on', b.dataset.authTab === tab);
     $('#form-login').classList.toggle('hidden', tab !== 'login');
     $('#form-register').classList.toggle('hidden', tab !== 'register');
@@ -12083,6 +12207,39 @@ class UI {
     const node = $('#auth-msg');
     node.textContent = text || '';
     node.className = `auth-msg ${kind || ''} ${text ? 'show' : ''}`;
+  }
+
+  /**
+   * Disables the submit button and shows progress while the server answers, so
+   * a click can never look like it did nothing. A timeout restores the form if
+   * the reply never arrives.
+   */
+  _authBusy(busy, which) {
+    const buttons = [
+      $('#form-login button[type=submit]'),
+      $('#form-register button[type=submit]'),
+      $('#form-recover button[type=submit]'),
+    ].filter(Boolean);
+    for (const b of buttons) {
+      if (busy) {
+        if (!b.dataset.label) b.dataset.label = b.textContent;
+        b.disabled = true;
+      } else {
+        b.disabled = false;
+        if (b.dataset.label) b.textContent = b.dataset.label;
+      }
+    }
+    if (busy && which) {
+      const target = which === 'login' ? $('#form-login button[type=submit]') : $('#form-register button[type=submit]');
+      if (target) target.textContent = t('auth.working', 'جارٍ التحقق…');
+    }
+    if (this._authTimer) clearTimeout(this._authTimer);
+    if (busy) {
+      this._authTimer = setTimeout(() => {
+        this._authBusy(false);
+        this._authMsg(t('auth.timeout', 'لم يستجب الخادم. تحقق من الاتصال وحاول مرة أخرى.'), 'error');
+      }, 12000);
+    }
   }
 
   _renderStats(m) {
@@ -12758,19 +12915,47 @@ class UI {
     } else if (sec === 'account') {
       const p = this.app.profile;
       body.appendChild(row('الاسم', p?.name, el('button', { class: 'btn btn-sm', onclick: () => this.goPage('armoury') }, 'تغيير')));
-      body.appendChild(row('البريد الإلكتروني', p?.email, el('span', { class: 'dim tiny' }, '')));
-      body.appendChild(row('تغيير كلمة المرور', null, el('button', {
-        class: 'btn btn-sm',
-        onclick: () => {
-          const cur = el('input', { class: 'input', type: 'password', placeholder: 'كلمة المرور الحالية' });
-          const nw = el('input', { class: 'input', type: 'password', placeholder: 'كلمة المرور الجديدة' });
-          Modal.open(el('form', { class: 'col gap-16', onsubmit: (e) => {
-            e.preventDefault();
-            this.net.send({ t: 'auth.changePassword', current: cur.value, password: nw.value });
-            Modal.close();
-          } }, cur, nw, el('button', { class: 'btn btn-primary btn-block', type: 'submit' }, 'حفظ')), { title: 'تغيير كلمة المرور' });
-        },
-      }, 'تغيير')));
+      body.appendChild(row('البريد الإلكتروني', p?.email || '—', el('span', { class: 'dim tiny' }, '')));
+
+      if (p && p.hasPassword === false) {
+        // Social accounts start without one; offer to add it so the player
+        // keeps a way in even if they unlink the provider later.
+        body.appendChild(row('تعيين كلمة مرور', 'حسابك يسجّل الدخول عبر مزوّد خارجي. أضف كلمة مرور لتتمكن من الدخول بها أيضاً.',
+          el('button', {
+            class: 'btn btn-sm btn-primary',
+            onclick: () => {
+              const nw = el('input', { class: 'input', type: 'password', placeholder: 'كلمة المرور الجديدة' });
+              Modal.open(el('form', { class: 'col gap-16', onsubmit: (e) => {
+                e.preventDefault();
+                this.net.send({ t: 'auth.setPassword', password: nw.value });
+                Modal.close();
+              } }, nw, el('button', { class: 'btn btn-primary btn-block', type: 'submit' }, 'حفظ')), { title: 'تعيين كلمة مرور' });
+            },
+          }, 'تعيين')));
+      } else {
+        body.appendChild(row('تغيير كلمة المرور', null, el('button', {
+          class: 'btn btn-sm',
+          onclick: () => {
+            const cur = el('input', { class: 'input', type: 'password', placeholder: 'كلمة المرور الحالية' });
+            const nw = el('input', { class: 'input', type: 'password', placeholder: 'كلمة المرور الجديدة' });
+            Modal.open(el('form', { class: 'col gap-16', onsubmit: (e) => {
+              e.preventDefault();
+              this.net.send({ t: 'auth.changePassword', current: cur.value, password: nw.value });
+              Modal.close();
+            } }, cur, nw, el('button', { class: 'btn btn-primary btn-block', type: 'submit' }, 'حفظ')), { title: 'تغيير كلمة المرور' });
+          },
+        }, 'تغيير')));
+      }
+
+      // Linked sign-in providers
+      const linked = p?.linked || {};
+      for (const [key, label] of [['google', 'Google'], ['facebook', 'Facebook']]) {
+        const isLinked = !!linked[key];
+        body.appendChild(row(`تسجيل الدخول عبر ${label}`, isLinked ? 'مرتبط بحسابك.' : 'غير مرتبط.',
+          isLinked
+            ? el('button', { class: 'btn btn-sm btn-danger', onclick: () => this.net.send({ t: 'auth.unlink', provider: key }) }, 'إلغاء الربط')
+            : el('button', { class: 'btn btn-sm', onclick: () => { location.href = `/auth/${key}/start`; } }, 'ربط')));
+      }
       body.appendChild(row('تسجيل الخروج', 'إنهاء الجلسة على هذا الجهاز.',
         el('button', { class: 'btn btn-sm btn-danger', onclick: () => this.net.send({ t: 'auth.logout' }) }, 'خروج')));
     }
@@ -13497,9 +13682,13 @@ class App {
 
     I18N.set(Store.get('lang', this.settings.language || 'ar'));
 
-    const token = Store.get('token');
-    if (token) this.net.send({ t: 'auth.token', token });
-    else this.ui.show('auth');
+    this.ui.show('auth');
+    // A social sign-in redirect wins over a stored token: the player just
+    // chose an account, so honour that choice.
+    if (!this.ui.consumeAuthRedirect()) {
+      const token = Store.get('token');
+      if (token) this.net.send({ t: 'auth.token', token });
+    }
 
     this._loop();
   }
@@ -13579,12 +13768,12 @@ class App {
     Store.set('token', m.token);
     // Server-side settings win: they follow the player across devices.
     this.applyServerSettings(m.profile.settings);
-    // Ask for the microphone the very first time only.
-    if (this.profile.settings.micEnabled === null) {
-      setTimeout(() => this.promptMicrophone(), 900);
-    } else if (this.profile.settings.micEnabled === true) {
-      this.requestMic(false);
-    }
+    // Ask for the microphone the very first time only, and only once the
+    // player is actually settled in the lobby with nothing else on screen.
+    // A timer that fires blindly can drop a blocking dialog onto the sign-in
+    // screen and swallow every click on it.
+    if (this.profile.settings.micEnabled === null) this._scheduleMicPrompt();
+    else if (this.profile.settings.micEnabled === true) this.requestMic(false);
     this.net.send({ t: 'match.lobbies' });
   }
 
@@ -13651,6 +13840,25 @@ class App {
   }
 
   /* ------------------------------------------------------------- voice -- */
+  _scheduleMicPrompt(delay = 1500) {
+    this.cancelMicPrompt();
+    this._micPromptTimer = setTimeout(() => {
+      this._micPromptTimer = null;
+      if (!this.profile || this.profile.settings.micEnabled !== null) return;
+      // Wait for a quiet moment: signed in, in the lobby, no other dialog.
+      if (this.ui.screen !== 'lobby' || Modal.isOpen) {
+        this._scheduleMicPrompt(4000);
+        return;
+      }
+      this.promptMicrophone();
+    }, delay);
+  }
+
+  cancelMicPrompt() {
+    if (this._micPromptTimer) clearTimeout(this._micPromptTimer);
+    this._micPromptTimer = null;
+  }
+
   promptMicrophone() {
     Modal.open(el('div', { class: 'col gap-16' },
       el('div', { class: 'muted' },

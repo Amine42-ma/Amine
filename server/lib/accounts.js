@@ -170,7 +170,7 @@ function defaultSettings() {
 class Accounts {
   constructor(store) {
     this.store = store;
-    this.users = store.collection('users', { indices: ['nameLower', 'emailLower'] });
+    this.users = store.collection('users', { indices: ['nameLower', 'emailLower', 'oauthGoogle', 'oauthFacebook'] });
     this.sessions = store.collection('sessions', { indices: ['tokenHash'] });
     this.clans = store.collection('clans', { indices: ['nameLower', 'tagLower'] });
     this.recovery = new Map(); // email -> {codeHash, expires, attempts}
@@ -193,18 +193,27 @@ class Accounts {
   }
 
   // -- rate limiting ---------------------------------------------------------
-  _throttle(key, maxAttempts = 8, windowMs = 5 * 60 * 1000) {
+  /**
+   * Returns the number of seconds the caller must wait, or 0 when allowed.
+   * Only *failed* attempts are recorded (see _throttleFail); a correct password
+   * must never be refused because the player mistyped it a few times first.
+   */
+  _throttleCheck(key, maxAttempts = 10, windowMs = 10 * 60 * 1000) {
     const rec = this.loginAttempts.get(key);
     const now = nowMs();
-    if (rec && rec.until > now && rec.count >= maxAttempts) {
-      return Math.ceil((rec.until - now) / 1000);
-    }
     if (!rec || rec.until <= now) {
-      this.loginAttempts.set(key, { count: 1, until: now + windowMs });
-    } else {
-      rec.count++;
+      if (rec) this.loginAttempts.delete(key);
+      return 0;
     }
+    if (rec.count >= maxAttempts) return Math.ceil((rec.until - now) / 1000);
     return 0;
+  }
+
+  _throttleFail(key, windowMs = 10 * 60 * 1000) {
+    const now = nowMs();
+    const rec = this.loginAttempts.get(key);
+    if (!rec || rec.until <= now) this.loginAttempts.set(key, { count: 1, until: now + windowMs });
+    else rec.count++;
   }
 
   _clearThrottle(key) {
@@ -239,15 +248,16 @@ class Accounts {
 
   // -- lifecycle -------------------------------------------------------------
   register({ name, email, password }, ip) {
-    const wait = this._throttle(`reg:${ip}`, 6, 10 * 60 * 1000);
+    const key = `reg:${ip}`;
+    const wait = this._throttleCheck(key, 8, 10 * 60 * 1000);
     if (wait) return { error: `Too many sign-up attempts. Try again in ${wait}s.` };
 
     const nameErr = this.validateName(name);
-    if (nameErr) return { error: nameErr };
+    if (nameErr) { this._throttleFail(key); return { error: nameErr }; }
     const emailErr = this.validateEmail(email);
-    if (emailErr) return { error: emailErr };
+    if (emailErr) { this._throttleFail(key); return { error: emailErr }; }
     const passErr = this.validatePassword(password);
-    if (passErr) return { error: passErr };
+    if (passErr) { this._throttleFail(key); return { error: passErr }; }
 
     const displayName = name.trim();
     const mail = email.trim();
@@ -285,7 +295,7 @@ class Accounts {
       nameChanges: 0,
     };
     this.users.put(user);
-    this._clearThrottle(`reg:${ip}`);
+    this._clearThrottle(key);
 
     const session = this.createSession(user.id);
     return { user, token: session.token, recoveryCode };
@@ -293,22 +303,34 @@ class Accounts {
 
   login({ login, password }, ip) {
     const key = `login:${ip}:${String(login || '').toLowerCase()}`;
-    const wait = this._throttle(key, 10, 10 * 60 * 1000);
-    if (wait) return { error: `Too many attempts. Try again in ${wait}s.` };
+    const wait = this._throttleCheck(key, 12, 10 * 60 * 1000);
+    if (wait) return { error: `Too many failed attempts. Try again in ${wait}s.` };
 
     if (typeof login !== 'string' || typeof password !== 'string') {
       return { error: 'Enter your name or email and password.' };
     }
     const ident = login.trim();
-    const user = ident.includes('@') ? this.users.by('emailLower', ident) : this.users.by('nameLower', ident);
+    // A player may sign in with either identifier, and neither is
+    // case-sensitive - both indexes are lower-cased.
+    const user = ident.includes('@')
+      ? this.users.by('emailLower', ident)
+      : this.users.by('nameLower', ident) || this.users.by('emailLower', ident);
 
     // Always run a hash to keep timing uniform for unknown accounts.
     if (!user) {
       hashPassword(password, 'decoy-salt-value');
-      return { error: 'Incorrect credentials.' };
+      this._throttleFail(key);
+      return { error: 'No account matches that name or email.' };
     }
     if (user.banned) return { error: 'This account is suspended.' };
-    if (!verifyPassword(password, user.salt, user.hash)) return { error: 'Incorrect credentials.' };
+    if (!user.hash) {
+      const via = user.oauthGoogle ? 'Google' : user.oauthFacebook ? 'Facebook' : 'a linked provider';
+      return { error: `This account signs in with ${via}. Use that button, or set a password from Settings once signed in.` };
+    }
+    if (!verifyPassword(password, user.salt, user.hash)) {
+      this._throttleFail(key);
+      return { error: 'Incorrect password.' };
+    }
 
     this._clearThrottle(key);
     user.lastSeen = nowMs();
@@ -316,6 +338,129 @@ class Accounts {
     this.users.put(user);
     const session = this.createSession(user.id);
     return { user, token: session.token };
+  }
+
+  /**
+   * Resolves a social sign-in to an account, in priority order:
+   *   1. an account already linked to this provider id
+   *   2. an existing account with the same verified email  -> link it
+   *   3. a brand new account with no password
+   *
+   * @param {string} providerKey 'google' | 'facebook'
+   * @param {object} profile {id, email, name}
+   */
+  findOrCreateFromProvider(providerKey, profile) {
+    const field = providerKey === 'google' ? 'oauthGoogle' : providerKey === 'facebook' ? 'oauthFacebook' : null;
+    if (!field) return { error: 'Unsupported provider.' };
+    if (!profile || !profile.id) return { error: 'The provider returned no account id.' };
+
+    const providerId = String(profile.id);
+
+    // 1. already linked
+    let user = this.users.by(field, providerId);
+    if (user) {
+      if (user.banned) return { error: 'This account is suspended.' };
+      user.lastSeen = nowMs();
+      this._grantDailyBonus(user);
+      this.users.put(user);
+      return { user, linked: false };
+    }
+
+    // 2. link to an existing account that owns the same email
+    if (profile.email) {
+      const existing = this.users.by('emailLower', profile.email.trim());
+      if (existing) {
+        if (existing.banned) return { error: 'This account is suspended.' };
+        existing[field] = providerId;
+        existing.lastSeen = nowMs();
+        this._grantDailyBonus(existing);
+        this.users.put(existing);
+        return { user: existing, linked: true };
+      }
+    }
+
+    // 3. create a fresh account. Social accounts have no password until the
+    //    player sets one, so `hash` and `salt` stay empty.
+    const displayName = this._uniqueNameFrom(profile.name || providerKey);
+    const recoveryCode = generateRecoveryCode();
+    const now = nowMs();
+    const created = {
+      id: newId('u'),
+      name: displayName,
+      nameLower: displayName.toLowerCase(),
+      email: profile.email || '',
+      emailLower: profile.email ? profile.email.trim().toLowerCase() : '',
+      salt: '',
+      hash: '',
+      recoveryHash: sha256(recoveryCode),
+      recoveryUsed: false,
+      [field]: providerId,
+      createdAt: now,
+      lastSeen: now,
+      lastLoginDay: 0,
+      xp: 0,
+      level: 1,
+      coins: 500,
+      gems: 0,
+      avatar: defaultAvatar(),
+      cosmetics: defaultCosmetics(),
+      settings: defaultSettings(),
+      stats: defaultStats(),
+      achievements: {},
+      friends: [],
+      friendRequestsIn: [],
+      friendRequestsOut: [],
+      blocked: [],
+      clanId: null,
+      banned: false,
+      nameChanges: 0,
+    };
+    this.users.put(created);
+    return { user: created, created: true, recoveryCode };
+  }
+
+  /** Derives a valid, unused display name from a provider's profile name. */
+  _uniqueNameFrom(raw) {
+    let base = String(raw || 'Hunter')
+      .replace(/[^A-Za-z0-9_ .\u0600-\u06ff-]/gu, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 16);
+    if (base.length < 3) base = 'Hunter';
+    if (RESERVED_NAMES.has(base.toLowerCase())) base = `${base} Prime`;
+    if (!this.users.by('nameLower', base)) return base;
+    for (let i = 0; i < 200; i++) {
+      const suffix = String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+      const candidate = `${base.slice(0, 15)}${suffix}`;
+      if (!this.users.by('nameLower', candidate)) return candidate;
+    }
+    return `Hunter${Date.now().toString(36).slice(-6)}`;
+  }
+
+  /** Lets a social account add a password without knowing an old one. */
+  setInitialPassword(user, newPassword) {
+    if (user.hash) return { error: 'This account already has a password. Use "change password" instead.' };
+    const passErr = this.validatePassword(newPassword);
+    if (passErr) return { error: passErr };
+    const { salt, hash } = hashPassword(newPassword);
+    user.salt = salt;
+    user.hash = hash;
+    this.users.put(user);
+    return { ok: true };
+  }
+
+  /** Unlinks a provider, refusing to leave the account with no way in. */
+  unlinkProvider(user, providerKey) {
+    const field = providerKey === 'google' ? 'oauthGoogle' : providerKey === 'facebook' ? 'oauthFacebook' : null;
+    if (!field) return { error: 'Unsupported provider.' };
+    if (!user[field]) return { error: 'That provider is not linked.' };
+    const others = ['oauthGoogle', 'oauthFacebook'].filter((f) => f !== field && user[f]).length;
+    if (!user.hash && others === 0) {
+      return { error: 'Set a password first, otherwise you would lose access to this account.' };
+    }
+    user[field] = null;
+    this.users.put(user);
+    return { ok: true };
   }
 
   loginWithToken(token) {
@@ -381,8 +526,10 @@ class Accounts {
    * wiring an SMTP provider only requires replacing the delivery step.
    */
   requestRecovery(email, ip) {
-    const wait = this._throttle(`rec:${ip}`, 5, 15 * 60 * 1000);
+    const key = `rec:${ip}`;
+    const wait = this._throttleCheck(key, 6, 15 * 60 * 1000);
     if (wait) return { error: `Too many recovery requests. Try again in ${wait}s.` };
+    this._throttleFail(key, 15 * 60 * 1000);
     if (typeof email !== 'string' || !EMAIL_RE.test(email.trim())) return { error: 'Enter a valid email address.' };
 
     const user = this.users.by('emailLower', email.trim());
@@ -742,6 +889,11 @@ class Accounts {
       achievements: this.achievementProgress(user),
       createdAt: user.createdAt,
       nameChanges: user.nameChanges,
+      hasPassword: !!user.hash,
+      linked: {
+        google: !!user.oauthGoogle,
+        facebook: !!user.oauthFacebook,
+      },
       clan: clan
         ? {
             id: clan.id,
