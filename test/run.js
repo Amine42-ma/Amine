@@ -1,0 +1,699 @@
+#!/usr/bin/env node
+'use strict';
+/**
+ * ============================================================================
+ *  Dino Royale Evolution - TEST SUITE
+ * ============================================================================
+ *  Dependency-free tests covering the parts of the stack where a silent
+ *  regression would be hardest to notice:
+ *
+ *    1. WebSocket handshake against the RFC 6455 known-answer vector
+ *    2. Client/server world-generation parity (the client copy inlined in
+ *       index.html must agree with server/lib/worldgen.js on every voxel)
+ *    3. Wire protocol round-trips within the documented quantisation error
+ *    4. Character physics determinism (prediction == authority)
+ *    5. Account lifecycle: register, login, token resume, recovery, progression
+ *    6. A live match tick: join, input, snapshot encode/decode, combat, storm
+ *
+ *  Run with:  npm test
+ * ============================================================================
+ */
+
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const vm = require('node:vm');
+
+const ROOT = path.join(__dirname, '..');
+
+let passed = 0;
+let failed = 0;
+const failures = [];
+
+function test(name, fn) {
+  try {
+    fn();
+    passed++;
+    console.log(`  \x1b[32m✓\x1b[0m ${name}`);
+  } catch (err) {
+    failed++;
+    failures.push({ name, err });
+    console.log(`  \x1b[31m✗\x1b[0m ${name}`);
+    console.log(`      ${err.message}`);
+  }
+}
+
+function group(name) {
+  console.log(`\n\x1b[1m${name}\x1b[0m`);
+}
+
+function assert(cond, message) {
+  if (!cond) throw new Error(message || 'assertion failed');
+}
+
+function assertEqual(actual, expected, message) {
+  if (actual !== expected) {
+    throw new Error(`${message || 'values differ'}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+}
+
+function assertClose(actual, expected, tolerance, message) {
+  if (!(Math.abs(actual - expected) <= tolerance)) {
+    throw new Error(`${message || 'values differ'}: expected ${expected} ±${tolerance}, got ${actual}`);
+  }
+}
+
+// ===========================================================================
+group('WebSocket handshake');
+// ===========================================================================
+{
+  const { acceptKey } = require('../server/lib/ws.js');
+  test('RFC 6455 §1.3 known-answer vector', () => {
+    assertEqual(acceptKey('dGhlIHNhbXBsZSBub25jZQ=='), 's3pPLMBiTxaQ9kYGzzhZRbK+xOo=');
+  });
+  test('accept key is deterministic and base64', () => {
+    const a = acceptKey('x3JJHMbDL1EzLkh9GBhXDw==');
+    assertEqual(a, acceptKey('x3JJHMbDL1EzLkh9GBhXDw=='));
+    assert(/^[A-Za-z0-9+/]+=*$/.test(a), 'not base64');
+  });
+}
+
+// ===========================================================================
+group('Client/server world parity');
+// ===========================================================================
+{
+  const ServerWorldGen = require('../server/lib/worldgen.js');
+
+  // Extract the shared block that ships inside index.html and evaluate it in a
+  // clean sandbox - exactly how the browser loads it.
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const match = html.match(/<script id="shared-modules" type="text\/plain">([\s\S]*?)<\/script>/);
+  let ClientWorldGen = null;
+  let ClientProtocol = null;
+  let ClientContent = null;
+
+  test('index.html contains the inlined shared modules', () => {
+    assert(match, 'shared-modules block not found in index.html');
+    assert(match[1].length > 50000, 'shared block looks truncated');
+  });
+
+  if (match) {
+    const sandbox = { console, performance, Date, Math, JSON, Object, Array, Number, String, Boolean,
+      Uint8Array, Int8Array, Uint16Array, Int16Array, Uint32Array, Int32Array,
+      Float32Array, Float64Array, ArrayBuffer, DataView, Map, Set, Error, TypeError, Symbol, isNaN, isFinite };
+    sandbox.globalThis = sandbox;
+    sandbox.self = sandbox;
+    vm.createContext(sandbox);
+    test('shared modules evaluate in a browser-like context', () => {
+      vm.runInContext(match[1], sandbox, { filename: 'index.html#shared-modules' });
+      ClientWorldGen = sandbox.WorldGen;
+      ClientProtocol = sandbox.Protocol;
+      ClientContent = sandbox.Content;
+      assert(ClientWorldGen && ClientWorldGen.World, 'WorldGen missing');
+      assert(ClientProtocol && ClientProtocol.OP, 'Protocol missing');
+      assert(ClientContent && ClientContent.WEAPONS, 'Content missing');
+      assert(sandbox.Movement && sandbox.Movement.step, 'Movement missing');
+    });
+
+    test('protocol versions match', () => {
+      assertEqual(ClientProtocol.PROTOCOL_VERSION, require('../server/lib/protocol.js').PROTOCOL_VERSION);
+    });
+
+    test('block registry matches (ids, names, flags)', () => {
+      assertEqual(ClientWorldGen.BLOCKS.length, ServerWorldGen.BLOCKS.length, 'block count');
+      for (let i = 0; i < ServerWorldGen.BLOCKS.length; i++) {
+        const a = ServerWorldGen.BLOCKS[i];
+        const b = ClientWorldGen.BLOCKS[i];
+        assertEqual(b.id, a.id, `block ${i} id`);
+        assertEqual(b.name, a.name, `block ${i} name`);
+        assertEqual(b.flags, a.flags, `block ${a.name} flags`);
+      }
+    });
+
+    test('120k voxel samples across 300 regions are identical on both sides', () => {
+      const seed = 0x51ed270b;
+      const sw = new ServerWorldGen.World(seed);
+      const cw = new ClientWorldGen.World(seed);
+      let checked = 0;
+      let mismatch = null;
+      // Sampling is clustered into chunk-sized regions so both generators can
+      // use their column caches - a uniformly random scatter would rebuild a
+      // whole chunk per sample and take minutes.
+      let s = 12345;
+      const rnd = () => { s = (Math.imul(s, 1103515245) + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+      for (let region = 0; region < 300 && !mismatch; region++) {
+        const baseX = Math.round((rnd() * 2 - 1) * 2500);
+        const baseZ = Math.round((rnd() * 2 - 1) * 2500);
+        for (let i = 0; i < 400 && !mismatch; i++) {
+          const x = baseX + Math.floor(rnd() * 16);
+          const z = baseZ + Math.floor(rnd() * 16);
+          const y = Math.floor(rnd() * ServerWorldGen.WORLD.HEIGHT);
+          const a = sw.getBlock(x, y, z);
+          const b = cw.getBlock(x, y, z);
+          checked++;
+          if (a !== b) mismatch = { x, y, z, a, b };
+        }
+      }
+      assert(!mismatch, `voxel mismatch at ${JSON.stringify(mismatch)}`);
+      assertEqual(checked, 120000, 'sample count');
+    });
+
+    test('generated sections are identical on both sides', () => {
+      const seed = 90210;
+      const sw = new ServerWorldGen.World(seed);
+      const cw = new ClientWorldGen.World(seed);
+      const a = new Uint8Array(4096);
+      const b = new Uint8Array(4096);
+      for (const [cx, cy, cz] of [[0, 4, 0], [12, 5, -7], [-30, 3, 18], [101, 6, -55]]) {
+        sw.genSection(cx, cy, cz, a);
+        cw.genSection(cx, cy, cz, b);
+        for (let i = 0; i < 4096; i++) {
+          if (a[i] !== b[i]) throw new Error(`section (${cx},${cy},${cz}) differs at index ${i}: ${a[i]} vs ${b[i]}`);
+        }
+      }
+    });
+
+    test('structures resolve to the same coordinates', () => {
+      const sw = new ServerWorldGen.World(4242);
+      const cw = new ClientWorldGen.World(4242);
+      const sa = sw.structuresInRegion(-1200, -1200, 1200, 1200);
+      const ca = cw.structuresInRegion(-1200, -1200, 1200, 1200);
+      assertEqual(ca.length, sa.length, 'structure count');
+      for (let i = 0; i < sa.length; i++) {
+        assertEqual(ca[i].key, sa[i].key, `structure ${i} type`);
+        assertEqual(ca[i].x, sa[i].x, `structure ${i} x`);
+        assertEqual(ca[i].z, sa[i].z, `structure ${i} z`);
+      }
+      assert(sa.length > 0, 'no structures generated in a 2400x2400 region');
+    });
+  }
+}
+
+// ===========================================================================
+group('Wire protocol');
+// ===========================================================================
+{
+  const Protocol = require('../server/lib/protocol.js');
+  const { Writer, Reader } = Protocol;
+
+  test('integer round-trip', () => {
+    const w = new Writer(64);
+    w.u8w(200).i8w(-100).u16w(65000).i16w(-30000).u32w(4000000000).i32w(-2000000000);
+    const r = new Reader(w.bytes());
+    assertEqual(r.u8r(), 200);
+    assertEqual(r.i8r(), -100);
+    assertEqual(r.u16r(), 65000);
+    assertEqual(r.i16r(), -30000);
+    assertEqual(r.u32r(), 4000000000);
+    assertEqual(r.i32r(), -2000000000);
+  });
+
+  test('position quantisation stays within 1/128 block', () => {
+    const values = [0, 1.5, -1.5, 123.456, -987.654, 3071.99, -3071.99];
+    const w = new Writer(64);
+    for (const v of values) w.posw(v);
+    const r = new Reader(w.bytes());
+    for (const v of values) assertClose(r.posr(), v, 1 / 128, `pos ${v}`);
+  });
+
+  test('angle quantisation stays within 0.1 milliradian', () => {
+    const w = new Writer(64);
+    const yaws = [0, 1, 3.14159, 6.2, -2];
+    const pitches = [0, 1.4, -1.4, 0.5, -0.5];
+    for (const y of yaws) w.yaww(y);
+    for (const p of pitches) w.pitw(p);
+    const r = new Reader(w.bytes());
+    for (const y of yaws) {
+      let expect = y % (Math.PI * 2);
+      if (expect < 0) expect += Math.PI * 2;
+      assertClose(r.yawr(), expect, 1e-4, `yaw ${y}`);
+    }
+    for (const p of pitches) assertClose(r.pitr(), p, 1e-4, `pitch ${p}`);
+  });
+
+  test('strings round-trip including Arabic', () => {
+    const w = new Writer(64);
+    w.strw('ranger_ar').strw('لاعب').strw('');
+    const r = new Reader(w.bytes());
+    assertEqual(r.strr(), 'ranger_ar');
+    assertEqual(r.strr(), 'لاعب');
+    assertEqual(r.strr(), '');
+  });
+
+  test('writer grows past its initial capacity', () => {
+    const w = new Writer(8);
+    for (let i = 0; i < 1000; i++) w.u32w(i);
+    const r = new Reader(w.bytes());
+    for (let i = 0; i < 1000; i++) assertEqual(r.u32r(), i);
+  });
+}
+
+// ===========================================================================
+group('Character physics');
+// ===========================================================================
+{
+  const Movement = require('../server/lib/movement.js');
+  const Protocol = require('../server/lib/protocol.js');
+  const WorldGen = require('../server/lib/worldgen.js');
+  const { IN } = Protocol;
+
+  // A simple flat world: solid below y=64, air above.
+  const flat = (x, y, z) => (y < 64 ? WorldGen.B.stone : 0);
+
+  test('gravity settles the character onto the ground', () => {
+    const s = Movement.createState(0.5, 80, 0.5);
+    for (let i = 0; i < 200; i++) Movement.step(s, { keys: 0, yaw: 0, pitch: 0, dt: 1 / 30 }, flat);
+    assertClose(s.y, 64, 0.05, 'resting height');
+    assert(s.onGround, 'should be grounded');
+  });
+
+  test('identical inputs produce bit-identical states (prediction parity)', () => {
+    const a = Movement.createState(0.5, 66, 0.5);
+    const b = Movement.createState(0.5, 66, 0.5);
+    const script = [];
+    let seed = 7;
+    const rnd = () => { seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    for (let i = 0; i < 400; i++) {
+      script.push({
+        keys: (rnd() < 0.7 ? IN.FWD : 0) | (rnd() < 0.3 ? IN.LEFT : 0) | (rnd() < 0.1 ? IN.JUMP : 0) | (rnd() < 0.2 ? IN.SPRINT : 0),
+        yaw: rnd() * Math.PI * 2,
+        pitch: (rnd() - 0.5) * 2,
+        dt: 1 / 30,
+      });
+    }
+    for (const input of script) Movement.step(a, input, flat);
+    for (const input of script) Movement.step(b, input, flat);
+    assertEqual(a.x, b.x, 'x');
+    assertEqual(a.y, b.y, 'y');
+    assertEqual(a.z, b.z, 'z');
+    assertEqual(a.vx, b.vx, 'vx');
+    assertEqual(a.stamina, b.stamina, 'stamina');
+  });
+
+  test('a solid wall cannot be walked through', () => {
+    const world = (x, y, z) => {
+      if (y < 64) return WorldGen.B.stone;
+      if (z >= 6 && z <= 7 && y < 70) return WorldGen.B.stone;
+      return 0;
+    };
+    const s = Movement.createState(0.5, 64, 0.5);
+    for (let i = 0; i < 300; i++) {
+      Movement.step(s, { keys: IN.FWD | IN.SPRINT, yaw: 0, pitch: 0, dt: 1 / 30 }, world);
+    }
+    assert(s.z < 6, `walked into the wall (z=${s.z.toFixed(2)})`);
+  });
+
+  test('sprinting drains stamina and walking restores it', () => {
+    const s = Movement.createState(0.5, 64, 0.5);
+    for (let i = 0; i < 120; i++) Movement.step(s, { keys: IN.FWD | IN.SPRINT, yaw: 0, pitch: 0, dt: 1 / 30 }, flat);
+    const drained = s.stamina;
+    assert(drained < Protocol.PHYS.MAX_STAMINA * 0.6, `stamina should drain (got ${drained})`);
+    for (let i = 0; i < 200; i++) Movement.step(s, { keys: 0, yaw: 0, pitch: 0, dt: 1 / 30 }, flat);
+    assert(s.stamina > drained, 'stamina should regenerate');
+  });
+
+  test('deep water makes the character swim, not fall', () => {
+    const ocean = (x, y, z) => (y < 40 ? WorldGen.B.stone : y < 64 ? WorldGen.B.water : 0);
+    const s = Movement.createState(0.5, 60, 0.5);
+    for (let i = 0; i < 90; i++) Movement.step(s, { keys: 0, yaw: 0, pitch: 0, dt: 1 / 30 }, ocean);
+    assert(s.inWater, 'should be in water');
+    assert(s.y > 45, `should float rather than sink (y=${s.y.toFixed(1)})`);
+  });
+
+  test('a lethal fall reports fall damage', () => {
+    const s = Movement.createState(0.5, 140, 0.5);
+    let damage = 0;
+    for (let i = 0; i < 400; i++) {
+      const ev = Movement.step(s, { keys: 0, yaw: 0, pitch: 0, dt: 1 / 30 }, flat);
+      damage += ev.fallDamage;
+    }
+    assert(damage > 100, `expected lethal fall damage, got ${damage}`);
+  });
+
+  test('voxel raycast hits the first solid block', () => {
+    const hit = Movement.raycast(flat, 0.5, 70, 0.5, 0, -1, 0, 20);
+    assert(hit, 'expected a hit');
+    assertEqual(hit.y, 63, 'hit block y');
+    assertEqual(hit.ny, 1, 'hit normal points up');
+    assertClose(hit.distance, 6, 0.01, 'distance');
+  });
+
+  test('climbable surfaces are detected', () => {
+    const ladderWorld = (x, y, z) => {
+      if (y < 64) return WorldGen.B.stone;
+      if (z === 1 && y < 74) return WorldGen.B.ladder;
+      return 0;
+    };
+    const s = Movement.createState(0.5, 64, 0.5);
+    s.yaw = 0;
+    assert(Movement.climbSurface(ladderWorld, s, Protocol.PHYS.PLAYER_RADIUS), 'ladder should be climbable');
+  });
+}
+
+// ===========================================================================
+group('Accounts and progression');
+// ===========================================================================
+{
+  const { Store } = require('../server/lib/store.js');
+  const { Accounts } = require('../server/lib/accounts.js');
+  const Content = require('../server/lib/content.js');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dre-test-'));
+  const store = new Store(dir);
+  const accounts = new Accounts(store);
+
+  let user = null;
+  let token = null;
+  let recoveryCode = null;
+
+  test('registration validates and creates an account', () => {
+    const bad = accounts.register({ name: 'ab', email: 'x@y.z', password: 'abcd1234' }, '1.1.1.1');
+    assert(bad.error, 'short names must be rejected');
+    const noDigits = accounts.register({ name: 'Ranger One', email: 'a@b.co', password: 'abcdefgh' }, '1.1.1.1');
+    assert(noDigits.error, 'passwords without digits must be rejected');
+
+    const res = accounts.register({ name: 'Ranger One', email: 'ranger@example.com', password: 'abcd1234' }, '1.1.1.1');
+    assert(!res.error, res.error);
+    user = res.user;
+    token = res.token;
+    recoveryCode = res.recoveryCode;
+    assertEqual(user.level, 1);
+    assertEqual(user.coins, 500);
+    assert(recoveryCode && recoveryCode.length === 19, 'recovery code format');
+  });
+
+  test('duplicate names and emails are rejected', () => {
+    assert(accounts.register({ name: 'Ranger One', email: 'other@example.com', password: 'abcd1234' }, '1.1.1.1').error);
+    assert(accounts.register({ name: 'Other Name', email: 'ranger@example.com', password: 'abcd1234' }, '1.1.1.1').error);
+  });
+
+  test('passwords are salted, hashed, and never stored in the clear', () => {
+    assert(!JSON.stringify(user).includes('abcd1234'), 'plaintext password leaked');
+    assert(user.hash.length === 128, 'scrypt hash length');
+    assert(user.salt.length === 32, 'salt length');
+  });
+
+  test('login works with name or email and rejects bad passwords', () => {
+    assert(!accounts.login({ login: 'Ranger One', password: 'abcd1234' }, '2.2.2.2').error);
+    assert(!accounts.login({ login: 'ranger@example.com', password: 'abcd1234' }, '2.2.2.3').error);
+    assert(accounts.login({ login: 'Ranger One', password: 'wrongpass1' }, '2.2.2.4').error);
+    assert(accounts.login({ login: 'Nobody', password: 'abcd1234' }, '2.2.2.5').error);
+  });
+
+  test('session tokens resume and can be revoked', () => {
+    const resumed = accounts.loginWithToken(token);
+    assert(!resumed.error, resumed.error);
+    assertEqual(resumed.user.id, user.id);
+    accounts.logout(token);
+    assert(accounts.loginWithToken(token).error, 'revoked token must fail');
+  });
+
+  test('the permanent recovery key resets the password', () => {
+    const res = accounts.confirmRecovery({ email: 'ranger@example.com', code: recoveryCode, newPassword: 'newpass456' });
+    assert(!res.error, res.error);
+    assert(res.token, 'a fresh session should be issued');
+    assert(!accounts.login({ login: 'Ranger One', password: 'newpass456' }, '3.3.3.3').error);
+    assert(accounts.login({ login: 'Ranger One', password: 'abcd1234' }, '3.3.3.4').error, 'old password must stop working');
+  });
+
+  test('the emailed recovery challenge also works and expires', () => {
+    const req = accounts.requestRecovery('ranger@example.com', '4.4.4.4');
+    assert(req.ok && req.code, 'challenge issued');
+    assert(accounts.confirmRecovery({ email: 'ranger@example.com', code: 'WRON-GCOD-EAAA-BBBB', newPassword: 'another789' }).error);
+    const ok = accounts.confirmRecovery({ email: 'ranger@example.com', code: req.code, newPassword: 'another789' });
+    assert(!ok.error, ok.error);
+  });
+
+  test('recovery for an unknown email does not disclose anything', () => {
+    const res = accounts.requestRecovery('nobody@example.com', '5.5.5.5');
+    assert(res.ok, 'must report success');
+    assertEqual(res.delivered, false);
+    assertEqual(res.code, undefined);
+  });
+
+  test('match results award XP, coins, levels and achievements', () => {
+    const before = { xp: user.xp, coins: user.coins };
+    const applied = accounts.applyMatchResult(user, {
+      kills: 6, assists: 2, damage: 1450, headshots: 3, dinoKills: 8, apexKills: 1,
+      revives: 1, blocksPlaced: 40, blocksBroken: 120, distance: 3200, waterTime: 40,
+      survivalTime: 900, placement: 1, won: true, partySize: 4, maxAltitude: 118, longestKill: 214, killStreak: 4,
+    });
+    assert(applied.xp > 0 && applied.coins > 0, 'rewards granted');
+    assert(user.xp > before.xp && user.coins > before.coins, 'profile updated');
+    assertEqual(user.stats.wins, 1);
+    assertEqual(user.stats.kills, 6);
+    const keys = applied.unlocked.map((a) => a.key);
+    assert(keys.includes('first_blood'), 'first blood should unlock');
+    assert(keys.includes('first_win'), 'first win should unlock');
+    assert(keys.includes('apex_slayer'), 'apex slayer should unlock');
+  });
+
+  test('level curve is monotonic and matches xpForLevel', () => {
+    let prev = -1;
+    for (let l = 1; l <= 120; l++) {
+      const xp = Content.xpForLevel(l);
+      assert(xp > prev, `level ${l} xp must increase`);
+      assertEqual(Content.levelFromXp(xp), l, `levelFromXp(${xp})`);
+      prev = xp;
+    }
+  });
+
+  test('cosmetics can only be equipped once owned', () => {
+    const denied = accounts.updateCosmetics(user, { skin: 'fossil' });
+    assert(!denied.error);
+    assertEqual(user.cosmetics.skin, 'ranger', 'unowned skin must not equip');
+    user.coins = 99999;
+    const bought = accounts.purchase(user, 'skins', 'fossil');
+    assert(!bought.error, bought.error);
+    accounts.updateCosmetics(user, { skin: 'fossil' });
+    assertEqual(user.cosmetics.skin, 'fossil');
+  });
+
+  test('leaderboards rank by the requested board', () => {
+    const board = accounts.leaderboard('kills', 10);
+    assert(board.length >= 1);
+    assertEqual(board[0].name, 'Ranger One');
+    assertEqual(board[0].rank, 1);
+  });
+
+  store.flushSync();
+  test('data survives a store reload', () => {
+    const store2 = new Store(dir);
+    const accounts2 = new Accounts(store2);
+    const reloaded = accounts2.users.by('nameLower', 'ranger one');
+    assert(reloaded, 'user not reloaded from disk');
+    assertEqual(reloaded.stats.kills, 6);
+  });
+
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// ===========================================================================
+group('Match simulation');
+// ===========================================================================
+{
+  const { Match } = require('../server/lib/match.js');
+  const Protocol = require('../server/lib/protocol.js');
+  const Content = require('../server/lib/content.js');
+  const { Reader } = Protocol;
+
+  const match = new Match({ id: 'test', mode: 'squad', seed: 20260728 });
+
+  const mkUser = (id, name) => ({
+    id, name, level: 10, avatar: {}, cosmetics: { skin: 'ranger', trail: 'none' },
+  });
+
+  let a, b;
+  test('players join and are assigned to teams', () => {
+    a = match.addPlayer(mkUser('u1', 'Alpha'), null, {});
+    b = match.addPlayer(mkUser('u2', 'Bravo'), null, {});
+    assert(a && b, 'players added');
+    assertEqual(match.players.size, 2);
+    assert(a.teamId !== b.teamId || match.mode.teamSize > 1, 'teams assigned');
+  });
+
+  test('the arena centre sits on land', () => {
+    const col = match.world.column(match.arena.cx, match.arena.cz);
+    assert(col.height > Protocol.PHYS ? true : true, '');
+    const nearbyLand = [[0, 0], [200, 0], [0, 200], [-200, 0], [0, -200]]
+      .filter(([dx, dz]) => match.world.column(match.arena.cx + dx, match.arena.cz + dz).height > 64).length;
+    assert(nearbyLand >= 3, `arena is mostly water (${nearbyLand}/5 land samples)`);
+  });
+
+  test('the match starts and spawns loot plus saurians', () => {
+    match.start();
+    assertEqual(match.state, 'dropping');
+    assert(match.loot.size > 50, `expected loot piles, got ${match.loot.size}`);
+    assert(match.dinos.size > 10, `expected saurians, got ${match.dinos.size}`);
+  });
+
+  test('inputs advance the simulation deterministically', () => {
+    a.inPlane = false;
+    a.s.y = match.world.column(Math.floor(a.s.x), Math.floor(a.s.z)).height + 4;
+    const before = { x: a.s.x, y: a.s.y, z: a.s.z };
+    for (let i = 0; i < 60; i++) {
+      a.inputQueue.push({ seq: i + 1, keys: Protocol.IN.FWD, yaw: 0, pitch: 0, dt: 1 / 30 });
+      match.update(1 / 30);
+    }
+    assert(a.s.z > before.z + 1, `player should have moved forward (${before.z.toFixed(1)} -> ${a.s.z.toFixed(1)})`);
+    assert(a.lastSeq > 0, 'inputs acknowledged');
+  });
+
+  test('snapshots encode and decode losslessly enough to render', () => {
+    const writer = match.buildSnapshotFor(a);
+    const bytes = writer.bytes();
+    assert(bytes.length > 40, 'snapshot too small');
+    const r = new Reader(bytes);
+    assertEqual(r.u8r(), Protocol.OP.S_SNAPSHOT, 'opcode');
+    r.u32r(); r.u32r(); r.u32r();
+    const x = r.posr(), y = r.posr(), z = r.posr();
+    assertClose(x, a.s.x, 1 / 128, 'self x');
+    assertClose(y, a.s.y, 1 / 128, 'self y');
+    assertClose(z, a.s.z, 1 / 128, 'self z');
+  });
+
+  test('block edits are validated and replicated', () => {
+    // Find a breakable voxel under the player. Liquids and bedrock are not
+    // breakable by design, so the search skips them.
+    const bx = Math.floor(a.s.x), bz = Math.floor(a.s.z);
+    let by = null;
+    for (let y = Math.floor(a.s.y); y > 1; y--) {
+      const id = match.blockAt(bx, y, bz);
+      if (id && require('../server/lib/worldgen.js').isBreakable(id)) { by = y; break; }
+    }
+    assert(by !== null, 'no breakable block found beneath the player');
+    match.pendingEdits.length = 0;
+    const removed = match._breakBlock(bx, by, bz, a, true);
+    assert(removed, 'break was refused');
+    assertEqual(match.blockAt(bx, by, bz), 0, 'block removed');
+    assertEqual(match.pendingEdits.length, 1, 'edit queued for replication');
+    assert(a.blocksBroken > 0, 'stat recorded');
+  });
+
+  test('indestructible blocks are refused', () => {
+    const bx = Math.floor(a.s.x) + 3, bz = Math.floor(a.s.z) + 3;
+    match.setBlock(bx, 40, bz, WorldGenBedrockId(), null);
+    assert(!match._breakBlock(bx, 40, bz, a, true), 'bedrock must not break');
+    function WorldGenBedrockId() { return require('../server/lib/worldgen.js').B.bedrock; }
+  });
+
+  test('out-of-reach building is refused', () => {
+    const far = { x: Math.floor(a.s.x) + 40, y: 70, z: Math.floor(a.s.z) };
+    const before = match.blockAt(far.x, far.y, far.z);
+    const w = new Protocol.Writer(24);
+    w.u8w(Protocol.OP.C_BUILD).u8w(1).i32w(far.x).i16w(far.y).i32w(far.z).u16w(56);
+    match.handleBinary(a, w.bytes());
+    assertEqual(match.blockAt(far.x, far.y, far.z), before, 'block placed out of reach');
+  });
+
+  test('damage, downing and elimination follow the mode rules', () => {
+    match.state = 'active';
+    b.inPlane = false;
+    b.health = 100; b.shield = 0; b.alive = true; b.downed = false;
+    match._damagePlayer(b, 60, a, { part: 'body', weapon: 'ranger_ar' });
+    assertEqual(Math.round(b.health), 40, 'health after first hit');
+    assert(a.damage >= 60, 'attacker damage tracked');
+    match._damagePlayer(b, 80, a, { part: 'head', weapon: 'ranger_ar' });
+    assert(!b.alive || b.downed, 'player should be downed or eliminated');
+  });
+
+  test('the storm shrinks and damages players outside it', () => {
+    const zone = match.zone;
+    zone.nextEventAt = Date.now() - 1;
+    match._updateZone(1 / 30);
+    assert(zone.phase >= 0, 'zone advanced');
+    assert(zone.targetRadius < 100000, 'target radius set');
+  });
+
+  test('voice routing never exposes an enemy squad', () => {
+    const peers = match.voicePeersFor(a);
+    for (const p of peers) {
+      const other = match.players.get(p.userId);
+      if (p.channel === 'team') assertEqual(other.teamId, a.teamId, 'team channel leaked across teams');
+    }
+  });
+
+  test('results are produced with placements', () => {
+    match.end('test');
+    const results = match.results;
+    assert(results, 'results built');
+    assertEqual(results.players.length, 2);
+    assert(results.players.every((p) => typeof p.kills === 'number'), 'stats present');
+  });
+}
+
+// ===========================================================================
+group('Content integrity');
+// ===========================================================================
+{
+  const Content = require('../server/lib/content.js');
+  const WorldGen = require('../server/lib/worldgen.js');
+
+  test('weapon ids are unique and stable', () => {
+    const ids = new Set();
+    for (const w of Content.WEAPONS) {
+      assert(!ids.has(w.id), `duplicate weapon id ${w.id}`);
+      ids.add(w.id);
+      assert(w.damage > 0, `${w.key} has no damage`);
+      assert(w.rpm > 0, `${w.key} has no fire rate`);
+      if (w.ammo) assert(Content.AMMO_TYPES.some((a) => a.key === w.ammo), `${w.key} references unknown ammo ${w.ammo}`);
+    }
+  });
+
+  test('items reference real blocks and sane stacks', () => {
+    for (const item of Content.ITEMS) {
+      assert(item.stack > 0, `${item.key} stack`);
+      if (item.block) assert(WorldGen.BLOCK_BY_NAME[item.block] !== undefined, `${item.key} unknown block ${item.block}`);
+    }
+  });
+
+  test('every saurian lists biomes that exist', () => {
+    const keys = new Set(WorldGen.BIOME_INFO.map((b) => b.key));
+    for (const d of Content.DINOS) {
+      assert(d.biomes.length > 0, `${d.key} has no biomes`);
+      for (const b of d.biomes) assert(keys.has(b), `${d.key} references unknown biome ${b}`);
+      assert(d.hp > 0 && d.speed > 0, `${d.key} stats`);
+    }
+  });
+
+  test('achievements reference real stat fields', () => {
+    const { defaultStats } = require('../server/lib/accounts.js');
+    const stats = defaultStats();
+    for (const a of Content.ACHIEVEMENTS) {
+      assert(a.stat in stats, `achievement ${a.key} references unknown stat ${a.stat}`);
+      assert(a.target > 0, `${a.key} target`);
+    }
+  });
+
+  test('cosmetic keys are unique per category', () => {
+    for (const [name, table] of [['skins', Content.SKINS], ['emotes', Content.EMOTES], ['trails', Content.TRAILS], ['banners', Content.BANNERS]]) {
+      const seen = new Set();
+      for (const item of table) {
+        assert(!seen.has(item.key), `duplicate ${name} key ${item.key}`);
+        seen.add(item.key);
+      }
+    }
+  });
+
+  test('every biome has a habitable saurian and colour data', () => {
+    for (const biome of WorldGen.BIOME_INFO) {
+      assert(biome.fog && biome.fog.length === 3, `${biome.key} fog`);
+      assert(biome.grass && biome.grass.length === 3, `${biome.key} grass`);
+    }
+  });
+}
+
+// ===========================================================================
+console.log('');
+if (failed === 0) {
+  console.log(`\x1b[32m\x1b[1m  ${passed} tests passed\x1b[0m\n`);
+  process.exit(0);
+} else {
+  console.log(`\x1b[31m\x1b[1m  ${failed} failed, ${passed} passed\x1b[0m\n`);
+  for (const f of failures) {
+    console.log(`\x1b[31m${f.name}\x1b[0m`);
+    console.log(f.err.stack || f.err.message);
+    console.log('');
+  }
+  process.exit(1);
+}

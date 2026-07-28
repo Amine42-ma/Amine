@@ -1,0 +1,30 @@
+{
+  "name": "dino-royale-evolution",
+  "version": "1.0.0",
+  "description": "Dino Royale Evolution - AAA-grade online first-person block-style survival battle royale. Original IP, zero third-party assets.",
+  "main": "server/server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js",
+    "build": "node tools/build-client.js",
+    "test": "node test/run.js && node test/integration.js",
+    "test:unit": "node test/run.js",
+    "test:integration": "node test/integration.js",
+    "check": "node tools/build-client.js --check"
+  },
+  "keywords": [
+    "game",
+    "multiplayer",
+    "webgl2",
+    "voxel",
+    "battle-royale",
+    "authoritative-server"
+  ],
+  "license": "MIT",
+  "private": true,
+  "dependencies": {}
+}

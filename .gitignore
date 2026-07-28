@@ -1,7 +1,34 @@
+# ---------------------------------------------------------------------------
+# Dino Royale Evolution
+# ---------------------------------------------------------------------------
+
+# Runtime data written by the server (accounts, sessions, clans)
+/data/
+*.ndjson
+*.ndjson.tmp
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Local environment overrides
+.env
+.env.local
+
+# Logs
+*.log
+
 ### AL ###
 #Template for AL projects for Dynamics 365 Business Central
-#launch.json folder
-.vscode/
 #Cache folder
 .alcache/
 #Symbols folder
