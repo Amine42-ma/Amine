@@ -11000,6 +11000,7 @@ layout(location=2) in float aAO;
 layout(location=3) in float aLight;
 layout(location=4) in vec2 aUV;
 layout(location=5) in float aLayer;
+layout(location=6) in float aFlags;   // bit 0: foliage
 `;
 
 const NORMAL_TABLE = `
@@ -11028,8 +11029,9 @@ void main(){
   vec3 world = aPos + uChunkOrigin;
   int ni = int(aNormalIdx);
   vec3 n = NORMALS[ni];
-  // Foliage sway (layer flag encoded via light channel high bit).
-  if (aLight > 15.5) {
+  // Foliage sway. Must match the main pass exactly or the depth written
+  // here will not equal the depth tested there, and fragments drop out.
+  if (aFlags > 0.5) {
     float sway = sin(uTime*1.6 + world.x*0.6 + world.z*0.4) * 0.06 * uWindStrength;
     world.xz += sway * max(0.0, fract(aPos.y));
   }
@@ -11096,9 +11098,8 @@ void main(){
   vec3 n = NORMALS[ni];
   vec3 tg = TANGENTS[ni];
   float light = aLight;
-  bool foliage = light > 15.5;
+  bool foliage = aFlags > 0.5;
   if (foliage) {
-    light -= 16.0;
     float sway = sin(uTime*1.6 + world.x*0.6 + world.z*0.4) * 0.07 * uWindStrength
                + sin(uTime*2.7 + world.z*0.9) * 0.03 * uWindStrength;
     world.xz += sway * max(0.0, fract(aPos.y) + 0.35);
@@ -11281,7 +11282,7 @@ void main(){
     world.y += w - 0.09;
   }
   vWorld = world;
-  vSkyLight = floor(mod(aLight,16.0)/1.0)/15.0;
+  vSkyLight = floor(aLight/16.0)/15.0;
   gl_Position = uViewProj * vec4(world, 1.0);
 }`;
 
@@ -12630,6 +12631,7 @@ class Renderer {
     gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.UNSIGNED_BYTE, false, S, 14); // light
     gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 2, gl.UNSIGNED_BYTE, false, S, 16); // uv tiles
     gl.enableVertexAttribArray(5); gl.vertexAttribPointer(5, 1, gl.UNSIGNED_SHORT, false, S, 18);// layer
+    gl.enableVertexAttribArray(6); gl.vertexAttribPointer(6, 1, gl.UNSIGNED_BYTE, false, S, 15);  // flags
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
     gl.bindVertexArray(null);
 
@@ -12979,10 +12981,10 @@ class MeshBuilder {
     this.indices = [];
     this.count = 0;
   }
-  quad(p0, p1, p2, p3, normalIdx, ao, light, u, v, layer, flip) {
+  quad(p0, p1, p2, p3, normalIdx, ao, light, u, v, layer, flip, flags = 0) {
     const base = this.count;
     const push = (p, a, uu, vv) => {
-      this.verts.push(p[0], p[1], p[2], normalIdx, a, light, uu, vv, layer);
+      this.verts.push(p[0], p[1], p[2], normalIdx, a, light, uu, vv, layer, flags);
       this.count++;
     };
     push(p0, ao[0], 0, 0);
@@ -13004,14 +13006,17 @@ class MeshBuilder {
     const u8 = new Uint8Array(buf);
     const u16 = new Uint16Array(buf);
     for (let i = 0; i < n; i++) {
-      const s = i * 9;
+      const s = i * 10;
       f32[i * 5 + 0] = this.verts[s];
       f32[i * 5 + 1] = this.verts[s + 1];
       f32[i * 5 + 2] = this.verts[s + 2];
       u8[i * 20 + 12] = this.verts[s + 3];
       u8[i * 20 + 13] = this.verts[s + 4];
       u8[i * 20 + 14] = this.verts[s + 5];
-      u8[i * 20 + 15] = 0;
+      // Byte 15 was padding. It now carries the per-vertex flags, because
+      // the light byte it used to share has no spare bit: light is
+      // sky*16 + block, which already fills all eight.
+      u8[i * 20 + 15] = this.verts[s + 9];
       u8[i * 20 + 16] = this.verts[s + 6];
       u8[i * 20 + 17] = this.verts[s + 7];
       u16[i * 10 + 9] = this.verts[s + 8];
@@ -13217,8 +13222,8 @@ function meshChunk(cx, cz) {
         ];
         for (const qd of quads) {
           // Light channel bit 4 flags the vertex as wind-animated foliage.
-          cutout.quad(qd[0], qd[1], qd[2], qd[3], 2, ao, Math.min(255, light + 16), 1, 1, id, false);
-          cutout.quad(qd[3], qd[2], qd[1], qd[0], 3, ao, Math.min(255, light + 16), 1, 1, id, false);
+          cutout.quad(qd[0], qd[1], qd[2], qd[3], 2, ao, light, 1, 1, id, false, 1);
+          cutout.quad(qd[3], qd[2], qd[1], qd[0], 3, ao, light, 1, 1, id, false, 1);
         }
         if (y < minY) minY = y;
         if (y > maxY) maxY = y;

@@ -1064,6 +1064,50 @@ group('Chunk meshing');
     }
   });
 
+  // Foliage used to be flagged by adding 16 to the light byte, but light is
+  // sky*16 + block and already fills all eight bits - so every outdoor block
+  // read back as foliage, swaying like grass and losing a step of skylight.
+  // The flag lives in its own byte now; these assert the two never mix.
+  test('foliage is flagged separately from the light value', () => {
+    let foliageVerts = 0, solidVerts = 0, litSolid = 0;
+    for (const [cx, cz] of CHUNKS) {
+      const out = meshOf(cx, cz);
+      for (const part of ['opaque', 'cutout']) {
+        if (!out[part]) continue;
+        const u8 = new Uint8Array(out[part].vertices);
+        const n = out[part].vertices.byteLength / 20;
+        for (let v = 0; v < n; v++) {
+          const light = u8[v * 20 + 14];
+          const flags = u8[v * 20 + 15];
+          assert(flags === 0 || flags === 1, `flags byte is a flag, got ${flags}`);
+          if (flags & 1) foliageVerts++;
+          else {
+            solidVerts++;
+            // The old scheme mistook any of these for foliage.
+            if (light > 15) litSolid++;
+          }
+        }
+      }
+    }
+    assert(solidVerts > 0, 'terrain vertices exist');
+    assert(litSolid > 0, 'daylit terrain exists, which the old encoding misread as foliage');
+    assert(foliageVerts > 0, 'foliage vertices exist and are flagged');
+  });
+
+  test('the light byte carries both sky and block levels intact', () => {
+    let maxLight = 0;
+    for (const [cx, cz] of CHUNKS) {
+      const out = meshOf(cx, cz);
+      if (!out.opaque) continue;
+      const u8 = new Uint8Array(out.opaque.vertices);
+      const n = out.opaque.vertices.byteLength / 20;
+      for (let v = 0; v < n; v++) maxLight = Math.max(maxLight, u8[v * 20 + 14]);
+    }
+    // Full daylight is sky 15, block 0 => 240. Anything capped below that
+    // would mean the channel is being clamped or shared again.
+    assertEqual(maxLight, 240, 'brightest surface reaches full skylight');
+  });
+
   test('no triangle is degenerate', () => {
     let degenerate = 0;
     for (const [cx, cz] of CHUNKS) {
