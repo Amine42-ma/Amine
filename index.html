@@ -341,6 +341,27 @@ html[dir="ltr"] .switch input:checked ~ .thumb{transform:translateX(20px);}
   direction:ltr;
 }
 
+.conn-banner{
+  display:none;margin-bottom:18px;padding:13px 15px;border-radius:var(--r-md);
+  border:1px solid rgba(255,178,56,.35);background:rgba(255,178,56,.08);font-size:13px;
+}
+.conn-banner.show{display:block;animation:slideDown .22s ease;}
+.conn-banner.error{border-color:rgba(255,77,94,.45);background:rgba(255,77,94,.10);}
+.conn-banner.ok{border-color:rgba(61,220,132,.4);background:rgba(61,220,132,.09);}
+.cb-head{display:flex;align-items:center;gap:8px;font-weight:800;font-size:13.5px;}
+.cb-dot{width:9px;height:9px;border-radius:50%;background:var(--amber);flex:none;animation:pulse 1.2s infinite;}
+.conn-banner.error .cb-dot{background:var(--crimson);animation:none;}
+.conn-banner.ok .cb-dot{background:var(--jade);animation:none;}
+.cb-body{color:var(--text-dim);margin-top:6px;line-height:1.55;}
+.cb-steps{margin-top:9px;display:none;}
+.cb-steps.show{display:block;}
+.cb-steps ol{margin:0;padding-inline-start:20px;color:var(--text-dim);line-height:1.9;}
+.cb-steps code{
+  font-family:var(--font-mono);font-size:12px;background:rgba(0,0,0,.45);
+  padding:2px 7px;border-radius:5px;color:#ffd79a;display:inline-block;direction:ltr;
+}
+.cb-actions{display:flex;gap:6px;margin-top:11px;}
+
 .social-auth{margin-bottom:18px;}
 .social-buttons{display:flex;flex-direction:column;gap:9px;}
 .btn-social{
@@ -847,6 +868,18 @@ html[dir="ltr"] .toast{animation-name:toastInL;}
         <button data-auth-tab="login" class="on" data-i18n="auth.signIn">تسجيل الدخول</button>
         <button data-auth-tab="register" data-i18n="auth.createAccount">إنشاء حساب</button>
         <button data-auth-tab="recover" data-i18n="auth.recover">استرجاع</button>
+      </div>
+
+      <!-- Connection state. Nothing on this screen can work without the
+           server, so the reason is spelled out instead of failing silently. -->
+      <div class="conn-banner" id="conn-banner">
+        <div class="cb-head"><span class="cb-dot"></span><span id="cb-title">جارٍ الاتصال بالخادم…</span></div>
+        <div class="cb-body" id="cb-body"></div>
+        <div class="cb-steps" id="cb-steps"></div>
+        <div class="cb-actions">
+          <button class="btn btn-xs" id="cb-retry" type="button">إعادة المحاولة</button>
+          <button class="btn btn-xs btn-ghost" id="cb-change" type="button">تغيير عنوان الخادم</button>
+        </div>
       </div>
 
       <div class="auth-msg" id="auth-msg"></div>
@@ -12104,15 +12137,29 @@ class UI {
     net.on('reconnecting', (info) => {
       $('#conn-status').textContent = '●';
       $('#conn-status').style.color = '#ffb238';
+      // One blip is a retry; several in a row means the server is not running,
+      // and the player deserves the real explanation.
+      this.setConnectionState(info.attempt >= 2 ? 'down' : 'reconnecting', info);
       if (info.attempt === 1) Toast.info('Connection lost', 'Reconnecting…');
     });
     net.on('open', () => {
       $('#conn-status').style.color = '#3ddc84';
+      this.setConnectionState('connecting');
       const token = Store.get('token');
-      if (token && !this.app.profile) this.net.send({ t: 'auth.token', token });
-      else if (token) this.net.send({ t: 'auth.token', token });
+      if (token) this.net.send({ t: 'auth.token', token });
     });
-    net.on('close', () => { $('#conn-status').style.color = '#ff4d5e'; });
+    net.on('close', () => {
+      $('#conn-status').style.color = '#ff4d5e';
+      this.setConnectionState('down');
+    });
+    net.on('hello', () => this.setConnectionState('ready'));
+
+    $('#cb-retry').onclick = () => {
+      this.setConnectionState('connecting');
+      this.net.reconnectAttempt = 0;
+      this.net.connect();
+    };
+    $('#cb-change').onclick = () => this.promptServerAddress();
 
     setInterval(() => {
       $('#stat-ping').textContent = this.net.ping ? `${this.net.ping} ms` : '—';
@@ -12190,6 +12237,129 @@ class UI {
     this._authBusy(true, 'login');
     this.net.send({ t: 'auth.ticket', ticket });
     return true;
+  }
+
+  /**
+   * Drives the banner on the sign-in screen. Every failure mode gets a
+   * specific explanation - "could not connect" on its own tells the player
+   * nothing they can act on.
+   */
+  setConnectionState(state, info) {
+    const banner = $('#conn-banner');
+    const title = $('#cb-title');
+    const body = $('#cb-body');
+    const steps = $('#cb-steps');
+    if (!banner) return;
+
+    this.connectionState = state;
+    banner.classList.remove('error', 'ok');
+    steps.classList.remove('show');
+    steps.innerHTML = '';
+    const url = this.app._serverUrl();
+    const ar = I18N.lang === 'ar';
+
+    const showSteps = (items) => {
+      steps.classList.add('show');
+      const ol = el('ol');
+      for (const item of items) {
+        const li = el('li');
+        li.innerHTML = item;
+        ol.appendChild(li);
+      }
+      steps.appendChild(ol);
+    };
+
+    switch (state) {
+      case 'ready':
+        banner.classList.add('ok');
+        banner.classList.remove('show');
+        this._setAuthEnabled(true);
+        return;
+
+      case 'connecting':
+        banner.classList.add('show');
+        title.textContent = ar ? 'جارٍ الاتصال بالخادم…' : 'Connecting to the server…';
+        body.textContent = url;
+        this._setAuthEnabled(false);
+        return;
+
+      case 'reconnecting':
+        banner.classList.add('show');
+        title.textContent = ar ? 'انقطع الاتصال — إعادة المحاولة…' : 'Connection lost — retrying…';
+        body.textContent = ar
+          ? `المحاولة رقم ${info?.attempt || 1} · ${url}`
+          : `Attempt ${info?.attempt || 1} · ${url}`;
+        this._setAuthEnabled(false);
+        return;
+
+      case 'down':
+      default:
+        banner.classList.add('show', 'error');
+        this._setAuthEnabled(false);
+
+        if (this.app.openedFromDisk) {
+          // The single most common mistake: double-clicking the HTML file.
+          title.textContent = ar ? 'اللعبة تحتاج تشغيل الخادم' : 'The game needs its server running';
+          body.textContent = ar
+            ? 'فتحت الملف مباشرة من القرص. هذه لعبة أونلاين بالكامل: الحسابات والمباريات وأزرار جوجل/فيسبوك كلها تأتي من الخادم.'
+            : 'You opened the file straight from disk. This is a fully online game: accounts, matches and the Google/Facebook buttons all come from the server.';
+          showSteps(ar ? [
+            'شغّل الخادم بالنقر المزدوج على <code>start.bat</code> (ويندوز) أو <code>start.sh</code> (ماك/لينكس)،<br>أو من الطرفية: <code>npm start</code>',
+            'افتح المتصفح على <code>http://localhost:8080</code>',
+            'لا تفتح <code>index.html</code> بالنقر المزدوج بعد الآن.',
+          ] : [
+            'Start the server: double-click <code>start.bat</code> (Windows) or <code>start.sh</code> (macOS/Linux), or run <code>npm start</code>',
+            'Open <code>http://localhost:8080</code> in your browser',
+            'Do not open <code>index.html</code> by double-clicking it.',
+          ]);
+        } else {
+          title.textContent = ar ? 'تعذّر الاتصال بالخادم' : 'Cannot reach the server';
+          body.textContent = ar
+            ? `لم يستجب ${url} — تأكد أن الخادم يعمل.`
+            : `${url} did not respond — make sure the server is running.`;
+          showSteps(ar ? [
+            'في مجلد اللعبة شغّل: <code>npm start</code>',
+            'يجب أن تظهر رسالة <code>server online</code> في الطرفية.',
+            'إن كان الخادم على جهاز آخر، اضغط «تغيير عنوان الخادم».',
+          ] : [
+            'In the game folder run: <code>npm start</code>',
+            'The terminal should print <code>server online</code>.',
+            'If the server runs elsewhere, use "change server address".',
+          ]);
+        }
+    }
+  }
+
+  /** Sign-in controls are pointless without a server, so they are disabled. */
+  _setAuthEnabled(enabled) {
+    for (const sel of ['#form-login button[type=submit]', '#form-register button[type=submit]',
+                       '#form-recover button[type=submit]', '#btn-request-code']) {
+      const node = $(sel);
+      if (node) node.disabled = !enabled;
+    }
+    for (const b of $$('.btn-social')) b.disabled = !enabled;
+  }
+
+  promptServerAddress() {
+    const current = Store.get('serverUrl') || this.app._serverUrl();
+    Modal.prompt({
+      title: I18N.lang === 'ar' ? 'عنوان الخادم' : 'Server address',
+      label: I18N.lang === 'ar'
+        ? 'مثال: ws://192.168.1.20:8080/ws — اتركه فارغاً للعودة للوضع التلقائي'
+        : 'e.g. ws://192.168.1.20:8080/ws — leave empty to reset',
+      value: current,
+      maxlength: 200,
+      confirmText: I18N.lang === 'ar' ? 'اتصال' : 'Connect',
+      onConfirm: (value) => {
+        const v = value.trim();
+        if (!v) Store.del('serverUrl');
+        else {
+          const normalised = /^wss?:\/\//.test(v) ? v : `ws://${v.replace(/^https?:\/\//, '')}`;
+          Store.set('serverUrl', normalised.endsWith('/ws') ? normalised : `${normalised.replace(/\/+$/, '')}/ws`);
+        }
+        location.reload();
+      },
+    });
   }
 
   _authTab(tab) {
@@ -13679,6 +13849,9 @@ class App {
 
     this._loadingTip('جاهز', 1);
     $('#loading').classList.add('hide');
+    // If the greeting never arrived the server is unreachable; say so on the
+    // sign-in screen rather than leaving dead controls behind.
+    this.ui.setConnectionState(this.net.protocol ? 'ready' : 'down');
 
     I18N.set(Store.get('lang', this.settings.language || 'ar'));
 
@@ -13694,9 +13867,18 @@ class App {
   }
 
   _serverUrl() {
+    // An explicit override lets the client talk to a server on another
+    // machine, or to a local server when the page itself was opened from disk.
+    const custom = Store.get('serverUrl');
+    if (custom) return custom;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = location.host || 'localhost:8080';
     return `${proto}//${host}/ws`;
+  }
+
+  /** True when the page was opened straight from disk instead of the server. */
+  get openedFromDisk() {
+    return location.protocol === 'file:';
   }
 
   _frame() { return new Promise((r) => requestAnimationFrame(() => r())); }
