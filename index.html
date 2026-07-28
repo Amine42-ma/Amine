@@ -13038,23 +13038,56 @@ class UI {
     if (quick) quick.disabled = !enabled;
   }
 
+  /**
+   * Turns whatever the player pasted into a WebSocket URL.
+   *
+   * People paste the address bar, not a socket URL - and a hosted game is
+   * always https, where a ws:// socket is blocked outright by the browser as
+   * mixed content. So the scheme has to follow the host: https and public
+   * domains get wss, plain http and addresses on the local network get ws.
+   */
+  static normaliseServerUrl(raw) {
+    let v = String(raw).trim().replace(/\/+$/, '');
+    let scheme = '';
+    if (/^wss?:\/\//i.test(v)) {
+      scheme = v.slice(0, v.indexOf(':')).toLowerCase();
+      v = v.replace(/^wss?:\/\//i, '');
+    } else if (/^https:\/\//i.test(v)) {
+      scheme = 'wss';
+      v = v.replace(/^https:\/\//i, '');
+    } else if (/^http:\/\//i.test(v)) {
+      scheme = 'ws';
+      v = v.replace(/^http:\/\//i, '');
+    }
+    if (!scheme) {
+      // A bare host: anything on the local network is plain http, anything
+      // else is a hosted address and will be behind TLS.
+      const host = v.split('/')[0].split(':')[0];
+      const local = host === 'localhost'
+        || /\.local$/i.test(host)
+        || /^\d{1,3}(\.\d{1,3}){3}$/.test(host)
+        || /^\[?::1\]?$/.test(host);
+      scheme = local ? 'ws' : 'wss';
+    }
+    const path = v.includes('/') ? v.slice(v.indexOf('/')) : '';
+    const host = v.includes('/') ? v.slice(0, v.indexOf('/')) : v;
+    return `${scheme}://${host}${path.endsWith('/ws') ? path : `${path}/ws`}`;
+  }
+
   promptServerAddress() {
     const current = Store.get('serverUrl') || this.app._serverUrl();
     Modal.prompt({
       title: I18N.lang === 'ar' ? 'عنوان الخادم' : 'Server address',
       label: I18N.lang === 'ar'
-        ? 'مثال: ws://192.168.1.20:8080/ws — اتركه فارغاً للعودة للوضع التلقائي'
-        : 'e.g. ws://192.168.1.20:8080/ws — leave empty to reset',
+        ? 'الصق عنوان خادمك، مثل https://dino-royale.onrender.com أو 192.168.1.20:8080 — اتركه فارغاً للعودة للوضع التلقائي'
+        : 'Paste your server address, e.g. https://dino-royale.onrender.com or 192.168.1.20:8080 — leave empty to reset',
       value: current,
       maxlength: 200,
       confirmText: I18N.lang === 'ar' ? 'اتصال' : 'Connect',
       onConfirm: (value) => {
         const v = value.trim();
         if (!v) Store.del('serverUrl');
-        else {
-          const normalised = /^wss?:\/\//.test(v) ? v : `ws://${v.replace(/^https?:\/\//, '')}`;
-          Store.set('serverUrl', normalised.endsWith('/ws') ? normalised : `${normalised.replace(/\/+$/, '')}/ws`);
-        }
+        else Store.set('serverUrl', UI.normaliseServerUrl(v));
         location.reload();
       },
     });
