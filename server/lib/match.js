@@ -3035,6 +3035,8 @@ class Match {
         teamId: p.teamId,
         skin: p.skin,
         trail: p.trail,
+        // The character the player designed, so everyone renders the same one.
+        avatar: p.avatar || null,
         level: p.level,
         alive: p.alive,
       })),

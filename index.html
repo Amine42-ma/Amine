@@ -8609,6 +8609,8 @@ class Match {
         teamId: p.teamId,
         skin: p.skin,
         trail: p.trail,
+        // The character the player designed, so everyone renders the same one.
+        avatar: p.avatar || null,
         level: p.level,
         alive: p.alive,
       })),
@@ -11259,7 +11261,7 @@ function drawHeroFigure(canvas, { skin = 'ranger', weapon = null, avatar = null 
  *
  * Returns false if the model could not be built, so callers can fall back.
  */
-function drawHeroModel(canvas, { skin = 'ranger', weapon = null, yaw = 0.62, time = 0, height = null } = {}) {
+function drawHeroModel(canvas, { skin = 'ranger', weapon = null, avatar = null, yaw = 0.62, time = 0, height = null } = {}) {
   const box = Math.min(canvas.clientWidth || 260, canvas.clientHeight || 260);
   const size = Math.max(140, Math.min(420, box || 260));
   const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -11279,7 +11281,7 @@ function drawHeroModel(canvas, { skin = 'ranger', weapon = null, yaw = 0.62, tim
       vx: 0, vy: 0, vz: 0,
       state: Protocol.MOVE.IDLE ?? 0, flags: 0,
       height: height || Protocol.PHYS.PLAYER_HEIGHT,
-      anim: canvas._heroAnim, skin, dt: 1 / 60,
+      anim: canvas._heroAnim, skin, avatar, dt: 1 / 60,
       weaponId: weapon ? weapon.id : 0,
       teamColour: null,
     }, time);
@@ -16496,6 +16498,128 @@ const TEAM_COLOURS = ['#4aa8ff', '#3ddc84', '#ffb238', '#b06bff', '#ff5a5a', '#6
  * @param {Rig} rig
  * @param {object} e  {x,y,z,yaw,pitch,state,flags,height,anim,skin,teamColour}
  */
+/**
+ * The head, assembled from the character the player designed.
+ *
+ * Every field the appearance editor offers has to land on something visible
+ * here, or the editor is decoration: skin tone on the face and ears, hair
+ * style and colour on top, eye colour in the eyes, war paint across them, and
+ * the accessory over or around them. `avatar` may be missing entirely - bots
+ * and older saves have none - in which case this falls back to the suited,
+ * visored head the game used to give everybody.
+ */
+function buildHead(rig, avatar, pal, C) {
+  const { light, dark, accent } = pal;
+  if (!avatar) {
+    rig.box(0, 0.16, 0, 0.34, 0.34, 0.34, C(light));
+    rig.box(0, 0.20, 0.175, 0.24, 0.10, 0.02, C([0.06, 0.07, 0.09]), { rough: 0.25, metal: 0.6 });
+    rig.box(0, 0.33, 0, 0.36, 0.06, 0.36, C(dark));
+    return;
+  }
+
+  const flesh = hexToRgb(SKIN_TONES[(avatar.skinTone || 0) % SKIN_TONES.length]);
+  const hairCol = hexToRgb(avatar.hairColor || '#3b2a1e');
+  const eyeCol = hexToRgb(avatar.eyeColor || '#3f6fa8');
+  const markCol = hexToRgb(avatar.markingColor || '#c8a24b');
+  const hair = HAIR_STYLES[(avatar.hair || 0) % HAIR_STYLES.length];
+  const eyes = EYE_STYLES[(avatar.eyes || 0) % EYE_STYLES.length];
+  const mark = MARKINGS[(avatar.marking || 0) % MARKINGS.length];
+  const acc = ACCESSORIES[(avatar.accessory || 0) % ACCESSORIES.length];
+
+  // Face. Slightly narrower than deep so the profile does not read as a cube.
+  rig.box(0, 0.16, 0, 0.33, 0.34, 0.32, C(flesh));
+  rig.box(0.17, 0.15, -0.02, 0.03, 0.10, 0.09, C(flesh));   // ears
+  rig.box(-0.17, 0.15, -0.02, 0.03, 0.10, 0.09, C(flesh));
+
+  // Eyes. The style changes the shape, the colour is the player's own.
+  const eyeY = 0.19, eyeZ = 0.163;
+  // Sized so the iris is still legible on a phone-sized lobby figure - at the
+  // proportions a real face wants, the chosen eye colour was a handful of
+  // pixels and the setting looked like it did nothing.
+  const eyeW = eyes === 'wide' ? 0.115 : eyes === 'sharp' ? 0.10 : 0.105;
+  const eyeH = eyes === 'sharp' ? 0.05 : eyes === 'wide' ? 0.10 : 0.08;
+  if (eyes === 'visor') {
+    rig.box(0, eyeY, eyeZ, 0.28, 0.075, 0.02, C(eyeCol, 0.95), { rough: 0.18, metal: 0.5, emissive: 0.35 });
+  } else {
+    for (const side of [-1, 1]) {
+      rig.box(side * 0.082, eyeY, eyeZ, eyeW, eyeH, 0.02, C([0.94, 0.94, 0.96]));
+      rig.box(side * 0.082, eyeY, eyeZ + 0.009, eyeW * 0.72, eyeH * 0.86, 0.016, C(eyeCol), { emissive: 0.16 });
+      rig.box(side * 0.082, eyeY, eyeZ + 0.014, eyeW * 0.34, eyeH * 0.46, 0.012, C([0.05, 0.05, 0.07]));
+    }
+    if (eyes === 'scar') rig.box(0.09, 0.24, eyeZ, 0.02, 0.13, 0.02, C([0.55, 0.3, 0.28]));
+  }
+  // Brow and mouth give the face a front, so you can tell which way it faces.
+  rig.box(0, 0.255, eyeZ, 0.27, 0.025, 0.018, C(hairCol, 0.9));
+  rig.box(0, 0.072, eyeZ, 0.10, 0.02, 0.018, C([flesh[0] * 0.55, flesh[1] * 0.5, flesh[2] * 0.5]));
+
+  // War paint. Sits on the cheeks and brow rather than across the eyes, so it
+  // reads alongside the iris colour instead of burying it.
+  if (mark === 'warpaint') {
+    for (const side of [-1, 1]) rig.box(side * 0.082, 0.122, eyeZ, 0.12, 0.042, 0.016, C(markCol, 0.95));
+    rig.box(0, 0.283, eyeZ, 0.24, 0.03, 0.016, C(markCol, 0.95));
+  } else if (mark === 'stripes') {
+    for (const i of [-1, 0, 1]) rig.box(i * 0.09, 0.19, eyeZ, 0.025, 0.20, 0.016, C(markCol, 0.95));
+  } else if (mark === 'dots') {
+    for (const side of [-1, 1]) {
+      rig.box(side * 0.11, 0.23, eyeZ, 0.035, 0.035, 0.016, C(markCol, 0.95));
+      rig.box(side * 0.11, 0.13, eyeZ, 0.035, 0.035, 0.016, C(markCol, 0.95));
+    }
+  } else if (mark === 'tribal') {
+    rig.box(0, 0.29, eyeZ, 0.19, 0.03, 0.016, C(markCol, 0.95));
+    for (const side of [-1, 1]) rig.box(side * 0.13, 0.20, eyeZ, 0.03, 0.16, 0.016, C(markCol, 0.95));
+  }
+
+  // Hair, or the thing worn instead of it.
+  if (hair === 'short') {
+    rig.box(0, 0.335, 0, 0.35, 0.06, 0.34, C(hairCol));
+    rig.box(0, 0.28, -0.16, 0.35, 0.13, 0.03, C(hairCol));
+  } else if (hair === 'long') {
+    rig.box(0, 0.335, 0, 0.35, 0.06, 0.34, C(hairCol));
+    rig.box(0, 0.13, -0.17, 0.34, 0.42, 0.05, C(hairCol));
+    for (const side of [-1, 1]) rig.box(side * 0.175, 0.16, -0.02, 0.04, 0.34, 0.30, C(hairCol));
+  } else if (hair === 'mohawk') {
+    rig.box(0, 0.30, 0, 0.35, 0.03, 0.34, C([hairCol[0] * 0.5, hairCol[1] * 0.5, hairCol[2] * 0.5]));
+    rig.box(0, 0.40, 0, 0.09, 0.16, 0.32, C(hairCol));
+  } else if (hair === 'bun') {
+    rig.box(0, 0.335, 0, 0.35, 0.06, 0.34, C(hairCol));
+    rig.box(0, 0.40, -0.16, 0.16, 0.16, 0.16, C(hairCol));
+  } else if (hair === 'cap') {
+    rig.box(0, 0.35, 0, 0.37, 0.09, 0.36, C(accent));
+    rig.box(0, 0.32, 0.24, 0.30, 0.03, 0.14, C(accent));   // peak
+  } else if (hair === 'hood') {
+    rig.box(0, 0.34, -0.02, 0.40, 0.12, 0.40, C(dark));
+    for (const side of [-1, 1]) rig.box(side * 0.19, 0.19, -0.04, 0.05, 0.30, 0.34, C(dark));
+    rig.box(0, 0.16, -0.19, 0.36, 0.34, 0.05, C(dark));
+  } else if (hair === 'helmet') {
+    rig.box(0, 0.34, 0, 0.39, 0.13, 0.38, C(dark), { rough: 0.35, metal: 0.55 });
+    for (const side of [-1, 1]) rig.box(side * 0.185, 0.20, -0.02, 0.04, 0.24, 0.34, C(dark), { rough: 0.35, metal: 0.55 });
+    rig.box(0, 0.41, 0, 0.07, 0.05, 0.36, C(accent));
+  } else {
+    rig.box(0, 0.335, 0, 0.34, 0.04, 0.33, C(flesh));
+  }
+
+  // Accessory.
+  if (acc === 'goggles') {
+    rig.box(0, 0.215, 0.175, 0.34, 0.09, 0.03, C([0.10, 0.11, 0.13]), { rough: 0.3, metal: 0.5 });
+    for (const side of [-1, 1]) rig.box(side * 0.08, 0.215, 0.19, 0.11, 0.07, 0.02, C(eyeCol, 0.9), { rough: 0.12, metal: 0.3, emissive: 0.25 });
+    rig.box(0, 0.215, -0.17, 0.34, 0.05, 0.03, C([0.10, 0.11, 0.13]));
+  } else if (acc === 'mask') {
+    rig.box(0, 0.09, 0.15, 0.28, 0.16, 0.07, C(dark), { rough: 0.6 });
+    rig.box(0, 0.09, 0.19, 0.10, 0.10, 0.03, C([0.2, 0.22, 0.24]), { metal: 0.6, rough: 0.3 });
+  } else if (acc === 'headset') {
+    for (const side of [-1, 1]) rig.box(side * 0.185, 0.17, 0, 0.05, 0.13, 0.13, C([0.12, 0.13, 0.15]), { rough: 0.4 });
+    rig.box(0, 0.345, 0, 0.40, 0.04, 0.06, C([0.12, 0.13, 0.15]));
+    rig.box(0.10, 0.10, 0.14, 0.14, 0.03, 0.03, C(accent), { emissive: 0.3 });   // boom mic
+  } else if (acc === 'bandana') {
+    rig.box(0, 0.30, 0, 0.36, 0.07, 0.35, C(markCol, 0.95));
+    rig.box(0, 0.28, -0.19, 0.10, 0.16, 0.04, C(markCol, 0.95));
+  } else if (acc === 'scope') {
+    rig.box(0.10, 0.255, 0.16, 0.09, 0.09, 0.10, C([0.12, 0.13, 0.15]), { metal: 0.7, rough: 0.25 });
+    rig.box(0.10, 0.255, 0.22, 0.06, 0.06, 0.02, C(eyeCol, 0.9), { emissive: 0.4 });
+    rig.box(0, 0.30, 0, 0.36, 0.05, 0.34, C(dark));
+  }
+}
+
 function buildHumanoid(rig, e, time) {
   const p = paletteFor(e.skin);
   const main = hexToRgb(p[0]);
@@ -16605,12 +16729,14 @@ function buildHumanoid(rig, e, time) {
   }
 
   // ---- head
+  //
+  // Built from the avatar the player designed rather than from the suit
+  // palette alone. Before, every character in the game shared one head and the
+  // whole appearance editor changed nothing you could see in a match.
   rig.push();
   rig.translate(0, torsoH + 0.12 * bodyScale, 0);
   rig.rotate(0, -pitch * 0.85, anim.lean * 0.12);
-  rig.box(0, 0.16, 0, 0.34, 0.34, 0.34, C(light));
-  rig.box(0, 0.20, 0.175, 0.24, 0.10, 0.02, C([0.06, 0.07, 0.09]), { rough: 0.25, metal: 0.6 }); // visor
-  rig.box(0, 0.33, 0, 0.36, 0.06, 0.36, C(dark));
+  buildHead(rig, e.avatar, { main, light, dark, accent }, C);
   rig.pop();
 
   // ---- weapon in hands
@@ -17978,7 +18104,7 @@ class Game {
         x: it.x, y: it.y, z: it.z, yaw: it.yaw, pitch: it.pitch,
         vx: it.vx, vy: it.vy, vz: it.vz,
         state: e.state, flags: e.flags, height: e.height,
-        anim: e.anim, skin: meta.skin, dt,
+        anim: e.anim, skin: meta.skin, avatar: meta.avatar, dt,
         weaponId: e.weaponId,
         teamColour: isMate ? TEAM_COLOURS[(e.teamId - 1) % TEAM_COLOURS.length] : null,
       }, this.time);
