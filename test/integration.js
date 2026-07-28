@@ -40,6 +40,7 @@ function check(name, cond, detail) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
 async function waitFor(predicate, timeoutMs, label) {
   const started = Date.now();
@@ -194,10 +195,17 @@ class TestClient {
   send(obj) { this.ws.send(JSON.stringify(obj)); }
   sendBin(w) { this.ws.send(w.bytes()); }
 
-  input(keys, yaw = 0, pitch = 0) {
+  /**
+   * One input record, protocol v8 layout. moveX/moveY are the analog stick
+   * quantised to int8; a keyboard client leaves them at zero and the server
+   * falls back to the digital direction keys.
+   */
+  input(keys, yaw = 0, pitch = 0, moveX = 0, moveY = 0) {
     this.seq++;
     const w = new Writer(32);
-    w.u8w(OP.C_INPUT).u8w(1).u32w(this.seq).u16w(keys).yaww(yaw).pitw(pitch).u8w(33);
+    w.u8w(OP.C_INPUT).u8w(1).u32w(this.seq).u16w(keys).yaww(yaw).pitw(pitch).u8w(33)
+      .i8w(Math.round(clamp(moveX, -1, 1) * 127))
+      .i8w(Math.round(clamp(moveY, -1, 1) * 127));
     this.sendBin(w);
   }
 
@@ -362,6 +370,32 @@ class TestClient {
     check('server acknowledges input sequence numbers', alpha.lastAck > 0, `ack=${alpha.lastAck}`);
     check('authoritative movement advances the player', travelled > 1,
       `moved ${travelled.toFixed(2)} m from ${startPos ? `${startPos.x.toFixed(0)},${startPos.z.toFixed(0)}` : '?'}`);
+
+    // The phone pad sends no direction keys at all - movement rides entirely
+    // on the analog fields, and a half-deflected stick must produce a slower
+    // walk than a full one. Both are measured from the same spot so terrain
+    // cannot favour one over the other.
+    const stickRun = async (mx, my) => {
+      const from = { ...alpha.self };
+      for (let i = 0; i < 40; i++) { alpha.input(0, 0, 0, mx, my); await sleep(33); }
+      await sleep(350);
+      return Math.hypot(alpha.self.x - from.x, alpha.self.z - from.z);
+    };
+    let stickFull = 0;
+    let stickHalf = 0;
+    for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+      const heading = { x: Math.sin(yaw), y: Math.cos(yaw) };
+      const full = await stickRun(heading.x, heading.y);
+      if (full <= 1) continue;                      // blocked by terrain, try another bearing
+      stickFull = full;
+      stickHalf = await stickRun(heading.x * 0.45, heading.y * 0.45);
+      break;
+    }
+    check('the analog stick alone drives authoritative movement', stickFull > 1,
+      `moved ${stickFull.toFixed(2)} m with no direction keys`);
+    check('partial stick deflection walks slower than full deflection',
+      stickFull > 1 && stickHalf < stickFull * 0.8,
+      `full=${stickFull.toFixed(2)} m half=${stickHalf.toFixed(2)} m`);
 
     check('world contains saurians near the players',
       (alpha.maxDinos || 0) + (bravo.maxDinos || 0) > 0,

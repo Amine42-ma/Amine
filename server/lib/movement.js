@@ -384,6 +384,14 @@
     const cosY = Math.cos(s.yaw);
     let inX = (wantRight ? 1 : 0) - (wantLeft ? 1 : 0);
     let inZ = (wantFwd ? 1 : 0) - (wantBack ? 1 : 0);
+    // An analog stick (touch or gamepad) overrides the digital keys, giving
+    // 360-degree movement and speed proportional to how far it is pushed.
+    // Both sides receive the same quantised values, so prediction still
+    // reconciles exactly.
+    if (input.moveX !== undefined && (Math.abs(input.moveX) > 0.04 || Math.abs(input.moveY) > 0.04)) {
+      inX = input.moveX;
+      inZ = input.moveY;
+    }
     const inLen = Math.hypot(inX, inZ);
     if (inLen > 1) {
       inX /= inLen;
@@ -393,6 +401,8 @@
     const wishX = inZ * sinY + inX * cosY;
     const wishZ = inZ * cosY - inX * sinY;
     const hasInput = inLen > 0.01;
+    // How hard the stick is pushed, used to scale the target speed.
+    const inputMagnitude = Math.min(1, inLen);
 
     // -- climbing ------------------------------------------------------------
     const nearClimb = climbSurface(q, s, radius);
@@ -497,8 +507,8 @@
       const control = s.onGround ? 1 : PHYS.AIR_CONTROL;
 
       if (hasInput && !s.sliding) {
-        const targetX = wishX * maxSpeed;
-        const targetZ = wishZ * maxSpeed;
+        const targetX = wishX * maxSpeed * inputMagnitude;
+        const targetZ = wishZ * maxSpeed * inputMagnitude;
         s.vx += (targetX - s.vx) * Math.min(1, accel * control * dt * 0.16);
         s.vz += (targetZ - s.vz) * Math.min(1, accel * control * dt * 0.16);
       } else if (s.onGround && !s.sliding) {

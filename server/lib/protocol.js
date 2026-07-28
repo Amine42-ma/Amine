@@ -23,7 +23,7 @@
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.Protocol = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  const PROTOCOL_VERSION = 7;
+  const PROTOCOL_VERSION = 8;
 
   // --- binary opcodes --------------------------------------------------------
   const OP = {

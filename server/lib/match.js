@@ -812,15 +812,21 @@ class Match {
     const count = r.u8r();
     if (count > Protocol.MAX_INPUTS_PER_PACKET) return;
     for (let i = 0; i < count; i++) {
-      if (r.remaining < 11) break;
+      if (r.remaining < 13) break;
       const seq = r.u32r();
       const keys = r.u16r();
       const yaw = r.yawr();
       const pitch = r.pitr();
       const dtMs = r.u8r();
+      // Analog stick, clamped to the unit disc so a crafted packet cannot
+      // request more than full speed.
+      let moveX = r.i8r() / 127;
+      let moveY = r.i8r() / 127;
+      const mag = Math.hypot(moveX, moveY);
+      if (mag > 1) { moveX /= mag; moveY /= mag; }
       if (seq <= player.lastSeq) continue; // stale or duplicate
       const dt = clamp(dtMs / 1000, 0.004, 0.1);
-      player.inputQueue.push({ seq, keys, yaw, pitch, dt });
+      player.inputQueue.push({ seq, keys, yaw, pitch, dt, moveX, moveY });
     }
     // Keep the queue ordered even if packets arrive out of order.
     player.inputQueue.sort((a, b) => a.seq - b.seq);

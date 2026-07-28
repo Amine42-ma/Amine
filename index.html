@@ -831,6 +831,71 @@ html[dir="ltr"] .toast{animation-name:toastInL;}
 }
 .perf-overlay.show{display:block;}
 
+/* ==========================================================================
+   TOUCH CONTROLS
+   Only mounted on touch devices. Laid out for landscape, with every control
+   inside comfortable thumb reach and nothing overlapping the crosshair.
+   ========================================================================== */
+#touch-controls{position:absolute;inset:0;display:none;touch-action:none;z-index:20;}
+#touch-controls.on{display:block;}
+#touch-look{position:absolute;inset:0;touch-action:none;}
+
+.tc-btn{
+  position:absolute;display:grid;place-items:center;
+  border-radius:50%;border:1.5px solid rgba(255,255,255,.28);
+  background:rgba(12,16,22,.42);backdrop-filter:blur(6px);
+  color:#fff;font-weight:800;font-size:13px;line-height:1.05;text-align:center;
+  user-select:none;-webkit-user-select:none;touch-action:none;
+  transition:transform .08s, background .12s, border-color .12s;
+  text-shadow:0 1px 3px rgba(0,0,0,.9);
+}
+.tc-btn.pressed{background:rgba(255,178,56,.55);border-color:#ffd79a;transform:scale(.92);}
+.tc-btn.toggled{background:rgba(255,178,56,.32);border-color:rgba(255,214,140,.8);}
+.tc-btn .tc-ico{font-size:20px;}
+.tc-btn .tc-lbl{font-size:9.5px;opacity:.85;letter-spacing:.02em;}
+.tc-btn.sq{border-radius:14px;}
+
+/* movement stick */
+#tc-stick{
+  position:absolute;border-radius:50%;
+  border:2px solid rgba(255,255,255,.22);background:rgba(12,16,22,.3);
+  touch-action:none;
+}
+#tc-stick .knob{
+  position:absolute;border-radius:50%;
+  background:rgba(255,255,255,.34);border:2px solid rgba(255,255,255,.5);
+  box-shadow:0 4px 14px rgba(0,0,0,.5);
+  transform:translate(-50%,-50%);pointer-events:none;
+}
+#tc-stick .ring{position:absolute;inset:0;border-radius:50%;pointer-events:none;
+  background:conic-gradient(from 0deg, transparent 0 100%);}
+
+.tc-slots{position:absolute;display:flex;gap:6px;}
+.tc-slot{
+  min-width:52px;padding:6px 8px;border-radius:11px;
+  border:1.5px solid rgba(255,255,255,.24);background:rgba(12,16,22,.46);
+  font-size:11px;font-weight:700;text-align:center;color:#fff;
+  user-select:none;touch-action:none;
+}
+.tc-slot.on{border-color:var(--accent);background:rgba(255,178,56,.28);}
+
+.tc-top{position:absolute;display:flex;gap:6px;}
+.tc-mini{
+  width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+  border:1.5px solid rgba(255,255,255,.22);background:rgba(12,16,22,.46);
+  font-size:16px;color:#fff;user-select:none;touch-action:none;
+}
+.tc-mini.pressed{background:rgba(255,178,56,.5);}
+
+.rotate-hint{
+  position:absolute;inset:0;z-index:60;display:none;
+  flex-direction:column;align-items:center;justify-content:center;gap:16px;
+  background:rgba(5,7,10,.94);text-align:center;padding:30px;
+}
+.rotate-hint.show{display:flex;}
+.rotate-hint .icon{font-size:54px;animation:rotHint 2s ease-in-out infinite;}
+@keyframes rotHint{0%,100%{transform:rotate(0deg);}50%{transform:rotate(90deg);}}
+
 .voice-hud{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);display:flex;gap:8px;align-items:center;}
 .voice-chip{
   display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:999px;
@@ -1384,6 +1449,26 @@ html[dir="ltr"] .toast{animation-name:toastInL;}
       </div>
     </div>
   </div>
+</div>
+
+<!-- =======================================================================
+     TOUCH CONTROLS
+     --------------------------------------------------------------------
+     Deliberately a sibling of #hud rather than a child: the HUD is a dense
+     stack of absolutely positioned widgets, and a phone thumb must never
+     land on a health bar instead of the fire button. Living outside it with
+     its own stacking context guarantees every tap reaches the pad.
+     Buttons are built at runtime and mounted only on touch devices.
+     ======================================================================= -->
+<div id="touch-controls">
+  <div id="touch-look"></div>
+  <div id="tc-stick"><div class="ring"></div><div class="knob"></div></div>
+</div>
+
+<div class="rotate-hint" id="rotate-hint">
+  <div class="icon">📱</div>
+  <div style="font-weight:800;font-size:18px">أدر الهاتف أفقياً</div>
+  <div class="muted" style="max-width:30ch">اللعبة مصمّمة للوضع الأفقي. أدر جهازك للحصول على مساحة رؤية وأزرار مريحة.</div>
 </div>
 
 <!-- =======================================================================
@@ -2848,7 +2933,7 @@ html[dir="ltr"] .toast{animation-name:toastInL;}
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.Protocol = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  const PROTOCOL_VERSION = 7;
+  const PROTOCOL_VERSION = 8;
 
   // --- binary opcodes --------------------------------------------------------
   const OP = {
@@ -4454,6 +4539,14 @@ html[dir="ltr"] .toast{animation-name:toastInL;}
     const cosY = Math.cos(s.yaw);
     let inX = (wantRight ? 1 : 0) - (wantLeft ? 1 : 0);
     let inZ = (wantFwd ? 1 : 0) - (wantBack ? 1 : 0);
+    // An analog stick (touch or gamepad) overrides the digital keys, giving
+    // 360-degree movement and speed proportional to how far it is pushed.
+    // Both sides receive the same quantised values, so prediction still
+    // reconciles exactly.
+    if (input.moveX !== undefined && (Math.abs(input.moveX) > 0.04 || Math.abs(input.moveY) > 0.04)) {
+      inX = input.moveX;
+      inZ = input.moveY;
+    }
     const inLen = Math.hypot(inX, inZ);
     if (inLen > 1) {
       inX /= inLen;
@@ -4463,6 +4556,8 @@ html[dir="ltr"] .toast{animation-name:toastInL;}
     const wishX = inZ * sinY + inX * cosY;
     const wishZ = inZ * cosY - inX * sinY;
     const hasInput = inLen > 0.01;
+    // How hard the stick is pushed, used to scale the target speed.
+    const inputMagnitude = Math.min(1, inLen);
 
     // -- climbing ------------------------------------------------------------
     const nearClimb = climbSurface(q, s, radius);
@@ -4567,8 +4662,8 @@ html[dir="ltr"] .toast{animation-name:toastInL;}
       const control = s.onGround ? 1 : PHYS.AIR_CONTROL;
 
       if (hasInput && !s.sliding) {
-        const targetX = wishX * maxSpeed;
-        const targetZ = wishZ * maxSpeed;
+        const targetX = wishX * maxSpeed * inputMagnitude;
+        const targetZ = wishZ * maxSpeed * inputMagnitude;
         s.vx += (targetX - s.vx) * Math.min(1, accel * control * dt * 0.16);
         s.vz += (targetZ - s.vz) * Math.min(1, accel * control * dt * 0.16);
       } else if (s.onGround && !s.sliding) {
@@ -9263,6 +9358,387 @@ class InputManager {
   }
 }
 /* ==========================================================================
+   TOUCH CONTROLS
+   --------------------------------------------------------------------------
+   A phone has no pointer lock and no keyboard, so the whole input surface is
+   rebuilt: an analog stick for movement, a drag region for looking, and
+   buttons that map onto the same input bits the keyboard produces. The rest
+   of the game does not know the difference.
+   ========================================================================== */
+class TouchControls {
+  constructor(app) {
+    this.app = app;
+    this.enabled = false;
+    this.mounted = false;
+
+    this.moveX = 0;       // -1..1, analog
+    this.moveY = 0;
+    this.lookDX = 0;      // consumed each frame
+    this.lookDY = 0;
+    this.held = new Set();      // momentary buttons currently pressed
+    this.toggled = new Set();   // sticky buttons (sprint, crouch, aim, build)
+    this.tapped = new Set();    // one-shot presses, cleared each frame
+
+    this.sensitivity = 1.0;
+    this.scale = 1.0;
+    this.leftHanded = false;
+    this.aimAssist = true;
+    this.gyro = false;
+
+    this._stickPointer = null;
+    this._lookPointer = null;
+    this._lookLast = { x: 0, y: 0 };
+    this._stickCentre = { x: 0, y: 0 };
+    this._stickRadius = 70;
+    this._buttons = new Map();
+  }
+
+  /**
+   * Pointer capture keeps a thumb bound to the control it started on even
+   * when it slides past the edge - but the call throws if the pointer has
+   * already been released or was never real. It is a convenience, never a
+   * requirement, so a failure must not abort the press it belongs to.
+   */
+  static _capture(node, pointerId) {
+    try { node.setPointerCapture?.(pointerId); } catch { /* pointer already gone */ }
+  }
+
+  /** Touch is the primary input when the device has no fine pointer. */
+  static detect() {
+    if (typeof window === 'undefined') return false;
+    const coarse = window.matchMedia?.('(pointer: coarse)').matches;
+    const touch = (navigator.maxTouchPoints || 0) > 0;
+    const mobileUA = /Android|iPhone|iPad|iPod|Mobile|Silk|Kindle/i.test(navigator.userAgent);
+    return !!(touch && (coarse || mobileUA));
+  }
+
+  /**
+   * Shows the pad. The DOM is built on the very first call and reused for
+   * every match after that - rebuilding would leak one listener set per
+   * match, and tearing it down would throw away the player's toggle states
+   * between rounds.
+   */
+  mount() {
+    this.enabled = true;
+    const host = $('#touch-controls');
+    host.classList.add('on');
+    if (!this.mounted) this._build(host);
+    this.layout();
+  }
+
+  _build(host) {
+    this.mounted = true;
+
+    // --- movement stick -----------------------------------------------------
+    const stick = $('#tc-stick');
+    stick.addEventListener('pointerdown', (e) => this._stickDown(e), { passive: false });
+    stick.addEventListener('pointermove', (e) => this._stickMove(e), { passive: false });
+    stick.addEventListener('pointerup', (e) => this._stickUp(e), { passive: false });
+    stick.addEventListener('pointercancel', (e) => this._stickUp(e), { passive: false });
+
+    // --- look region --------------------------------------------------------
+    const look = $('#touch-look');
+    look.addEventListener('pointerdown', (e) => this._lookDown(e), { passive: false });
+    look.addEventListener('pointermove', (e) => this._lookMove(e), { passive: false });
+    look.addEventListener('pointerup', (e) => this._lookUp(e), { passive: false });
+    look.addEventListener('pointercancel', (e) => this._lookUp(e), { passive: false });
+
+    this._buildButtons();
+    window.addEventListener('resize', () => this.layout());
+    window.addEventListener('orientationchange', () => setTimeout(() => this.layout(), 250));
+
+    // The browser must not scroll, zoom or select while playing.
+    document.body.style.overscrollBehavior = 'none';
+    host.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  /**
+   * Hides the pad and drops every latched input, so a sprint toggle left on
+   * at the end of one match cannot leak into the next one.
+   */
+  unmount() {
+    this.enabled = false;
+    this.moveX = 0;
+    this.moveY = 0;
+    this.lookDX = 0;
+    this.lookDY = 0;
+    this._stickPointer = null;
+    this._lookPointer = null;
+    this.held.clear();
+    this.toggled.clear();
+    this.tapped.clear();
+    for (const { node } of this._buttons.values()) node.classList.remove('pressed', 'toggled');
+    this._resetKnob();
+    $('#touch-controls')?.classList.remove('on');
+    $('#rotate-hint')?.classList.remove('show');
+  }
+
+  /* --------------------------------------------------------------- buttons */
+  _addButton(id, { icon, label, size = 62, action, sticky = false, repeat = false }) {
+    const node = el('div', { class: 'tc-btn', id: `tc-${id}` },
+      el('span', { class: 'tc-ico' }, icon),
+      label ? el('span', { class: 'tc-lbl' }, label) : null);
+    node.style.width = `${size}px`;
+    node.style.height = `${size}px`;
+    $('#touch-controls').appendChild(node);
+
+    const press = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      TouchControls._capture(node, e.pointerId);
+      if (sticky) {
+        if (this.toggled.has(action)) this.toggled.delete(action);
+        else this.toggled.add(action);
+        node.classList.toggle('toggled', this.toggled.has(action));
+      } else {
+        this.held.add(action);
+        this.tapped.add(action);
+        node.classList.add('pressed');
+      }
+      this.app.audio?.ui?.('tick');
+    };
+    const release = (e) => {
+      e.preventDefault();
+      if (!sticky) {
+        this.held.delete(action);
+        node.classList.remove('pressed');
+      }
+    };
+    node.addEventListener('pointerdown', press, { passive: false });
+    node.addEventListener('pointerup', release, { passive: false });
+    node.addEventListener('pointercancel', release, { passive: false });
+    node.addEventListener('pointerleave', release, { passive: false });
+
+    this._buttons.set(id, { node, size, action, sticky, repeat });
+    return node;
+  }
+
+  _buildButtons() {
+    this._addButton('fire', { icon: '🔫', size: 82, action: 'fire' });
+    this._addButton('aim', { icon: '🎯', label: 'تصويب', size: 60, action: 'aim', sticky: true });
+    this._addButton('jump', { icon: '⬆', label: 'قفز', size: 58, action: 'jump' });
+    this._addButton('crouch', { icon: '⬇', label: 'انحناء', size: 54, action: 'crouch', sticky: true });
+    this._addButton('sprint', { icon: '⚡', label: 'ركض', size: 54, action: 'sprint', sticky: true });
+    this._addButton('reload', { icon: '↻', label: 'تعبئة', size: 54, action: 'reload' });
+    this._addButton('use', { icon: '✋', label: 'تفاعل', size: 60, action: 'use' });
+    this._addButton('build', { icon: '🧱', label: 'بناء', size: 50, action: 'build', sticky: true });
+    this._addButton('heal', { icon: '✚', label: 'علاج', size: 50, action: 'heal' });
+    this._addButton('melee', { icon: '🗡', label: 'ضرب', size: 50, action: 'melee' });
+
+    // weapon slots
+    const slots = el('div', { class: 'tc-slots', id: 'tc-slots' });
+    for (let i = 0; i < 3; i++) {
+      const slot = el('div', { class: 'tc-slot', id: `tc-slot-${i}` }, `${i + 1}`);
+      slot.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.tapped.add(`slot${i}`);
+        this.app.audio?.ui?.('tick');
+      }, { passive: false });
+      slots.appendChild(slot);
+    }
+    $('#touch-controls').appendChild(slots);
+
+    // small utility row
+    const top = el('div', { class: 'tc-top', id: 'tc-top' });
+    for (const [id, icon, action] of [
+      ['map', '🗺', 'scoreboard'], ['ping', '📍', 'ping'],
+      ['emote', '😀', 'emote'], ['chat', '💬', 'chat'], ['menu', '⏸', 'menu'],
+    ]) {
+      const b = el('div', { class: 'tc-mini', id: `tc-mini-${id}` }, icon);
+      b.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        b.classList.add('pressed');
+        this.tapped.add(action);
+        if (action === 'scoreboard') this.held.add('scoreboard');
+        this.app.audio?.ui?.('click');
+      }, { passive: false });
+      const rel = (e) => { e.preventDefault(); b.classList.remove('pressed'); this.held.delete('scoreboard'); };
+      b.addEventListener('pointerup', rel, { passive: false });
+      b.addEventListener('pointercancel', rel, { passive: false });
+      top.appendChild(b);
+    }
+    $('#touch-controls').appendChild(top);
+  }
+
+  /** Positions everything for the current screen size and handedness. */
+  layout() {
+    if (!this.mounted) return;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const portrait = h > w;
+    $('#rotate-hint')?.classList.toggle('show', portrait && this.app.ui?.screen === 'match');
+
+    const k = this.scale * M.clamp(Math.min(w, h) / 400, 0.78, 1.5);
+    const pad = 16 * k;
+    const mirror = this.leftHanded;
+
+    // movement stick, bottom outer corner
+    const stickSize = 150 * k;
+    this._stickRadius = stickSize / 2;
+    const stick = $('#tc-stick');
+    stick.style.width = `${stickSize}px`;
+    stick.style.height = `${stickSize}px`;
+    stick.style.bottom = `${pad}px`;
+    stick.style.left = mirror ? '' : `${pad}px`;
+    stick.style.right = mirror ? `${pad}px` : '';
+    const knob = stick.querySelector('.knob');
+    knob.style.width = `${stickSize * 0.42}px`;
+    knob.style.height = `${stickSize * 0.42}px`;
+    this._resetKnob();
+
+    const place = (id, x, y, sizeOverride) => {
+      const entry = this._buttons.get(id);
+      if (!entry) return;
+      const size = (sizeOverride || entry.size) * k;
+      entry.node.style.width = `${size}px`;
+      entry.node.style.height = `${size}px`;
+      entry.node.style.bottom = `${y}px`;
+      if (mirror) { entry.node.style.left = `${x}px`; entry.node.style.right = ''; }
+      else { entry.node.style.right = `${x}px`; entry.node.style.left = ''; }
+    };
+
+    // Action cluster in the opposite bottom corner.
+    place('fire', pad, pad + 18 * k);
+    place('aim', pad + 92 * k, pad + 74 * k);
+    place('jump', pad + 96 * k, pad);
+    place('crouch', pad + 160 * k, pad + 6 * k);
+    place('reload', pad + 8 * k, pad + 116 * k);
+    place('use', pad + 76 * k, pad + 146 * k);
+    place('melee', pad + 152 * k, pad + 84 * k);
+    place('build', pad + 210 * k, pad + 62 * k);
+    place('heal', pad + 210 * k, pad + 124 * k);
+    place('sprint', pad + stickSize * 0.92, pad + 96 * k);
+
+    const slots = $('#tc-slots');
+    slots.style.bottom = `${pad + 210 * k}px`;
+    slots.style[mirror ? 'left' : 'right'] = `${pad}px`;
+    slots.style[mirror ? 'right' : 'left'] = '';
+
+    const top = $('#tc-top');
+    top.style.top = `${pad + 46 * k}px`;
+    top.style[mirror ? 'left' : 'right'] = `${pad}px`;
+    top.style[mirror ? 'right' : 'left'] = '';
+  }
+
+  _resetKnob() {
+    const stick = $('#tc-stick');
+    const knob = stick?.querySelector('.knob');
+    if (knob) { knob.style.left = '50%'; knob.style.top = '50%'; }
+  }
+
+  /* ----------------------------------------------------------- stick input */
+  _stickDown(e) {
+    e.preventDefault();
+    if (this._stickPointer !== null) return;
+    this._stickPointer = e.pointerId;
+    const rect = $('#tc-stick').getBoundingClientRect();
+    this._stickCentre = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    // A hidden or not-yet-laid-out pad would give a zero radius and turn
+    // every later division into NaN; fall back to the nominal size.
+    this._stickRadius = rect.width > 4 ? rect.width / 2 : 70;
+    TouchControls._capture($('#tc-stick'), e.pointerId);
+    this._stickMove(e);
+  }
+
+  _stickMove(e) {
+    if (this._stickPointer !== e.pointerId) return;
+    e.preventDefault();
+    let dx = e.clientX - this._stickCentre.x;
+    let dy = e.clientY - this._stickCentre.y;
+    const dist = Math.hypot(dx, dy);
+    const max = this._stickRadius * 0.82;
+    if (dist > max) { dx = (dx / dist) * max; dy = (dy / dist) * max; }
+
+    // Small dead zone stops resting thumbs from creeping forward.
+    const dead = this._stickRadius * 0.16;
+    const mag = Math.hypot(dx, dy);
+    if (mag < dead) { this.moveX = 0; this.moveY = 0; }
+    else {
+      const scaled = (mag - dead) / (max - dead);
+      this.moveX = (dx / mag) * scaled;
+      this.moveY = (-dy / mag) * scaled;   // screen up = forward
+    }
+    const knob = $('#tc-stick').querySelector('.knob');
+    knob.style.left = `${50 + (dx / this._stickRadius) * 50}%`;
+    knob.style.top = `${50 + (dy / this._stickRadius) * 50}%`;
+  }
+
+  _stickUp(e) {
+    if (this._stickPointer !== e.pointerId) return;
+    e.preventDefault();
+    this._stickPointer = null;
+    this.moveX = 0;
+    this.moveY = 0;
+    this._resetKnob();
+  }
+
+  /* ------------------------------------------------------------ look input */
+  _lookDown(e) {
+    e.preventDefault();
+    if (this._lookPointer !== null) return;
+    this._lookPointer = e.pointerId;
+    this._lookLast = { x: e.clientX, y: e.clientY };
+    this._lookStart = { x: e.clientX, y: e.clientY, t: performance.now() };
+    TouchControls._capture($('#touch-look'), e.pointerId);
+  }
+
+  _lookMove(e) {
+    if (this._lookPointer !== e.pointerId) return;
+    e.preventDefault();
+    const k = 0.0032 * this.sensitivity;
+    this.lookDX += (e.clientX - this._lookLast.x) * k;
+    this.lookDY += (e.clientY - this._lookLast.y) * k;
+    this._lookLast = { x: e.clientX, y: e.clientY };
+  }
+
+  _lookUp(e) {
+    if (this._lookPointer !== e.pointerId) return;
+    e.preventDefault();
+    this._lookPointer = null;
+    // A quick tap that barely moved is a melee/interact style poke; keep it
+    // out of the way of aiming so it never fires by accident.
+    const dt = performance.now() - (this._lookStart?.t || 0);
+    const moved = Math.hypot(e.clientX - (this._lookStart?.x || 0), e.clientY - (this._lookStart?.y || 0));
+    if (dt < 220 && moved < 12) this.tapped.add('look-tap');
+  }
+
+  /* ------------------------------------------------------------- per frame */
+  consumeLook() {
+    const out = { dx: this.lookDX, dy: this.lookDY };
+    this.lookDX = 0;
+    this.lookDY = 0;
+    return out;
+  }
+
+  isDown(action) { return this.held.has(action) || this.toggled.has(action); }
+  wasTapped(action) { return this.tapped.has(action); }
+  endFrame() { this.tapped.clear(); }
+
+  applySettings(s) {
+    this.sensitivity = s.touchSensitivity ?? 1;
+    this.scale = s.touchScale ?? 1;
+    this.leftHanded = !!s.touchLeftHanded;
+    this.aimAssist = s.aimAssist !== false;
+    if (this.mounted) this.layout();
+  }
+
+  /** Reflects the live weapon selection onto the slot buttons. */
+  syncSlots(inv) {
+    if (!this.mounted || !inv) return;
+    for (let i = 0; i < 3; i++) {
+      const node = $(`#tc-slot-${i}`);
+      if (!node) continue;
+      const w = inv.weapons[i];
+      const def = w ? Content.WEAPON_BY_ID[w.id] : null;
+      node.textContent = def ? def.name.split(' ')[0] : '—';
+      node.classList.toggle('on', inv.slot === i);
+    }
+  }
+}
+
+/* ==========================================================================
    NETWORK CLIENT
    --------------------------------------------------------------------------
    One WebSocket carries two planes:
@@ -9706,16 +10182,20 @@ class MatchState {
   }
 
   /* ------------------------------------------------------------ output -- */
-  sendInput(keys, yaw, pitch, dt) {
+  sendInput(keys, yaw, pitch, dt, moveX = 0, moveY = 0) {
     this.inputSeq++;
-    const input = { seq: this.inputSeq, keys, yaw, pitch, dt };
+    // Quantise before storing so replayed prediction uses exactly the value
+    // the server received.
+    const qx = M.clamp(Math.round(moveX * 127), -127, 127);
+    const qy = M.clamp(Math.round(moveY * 127), -127, 127);
+    const input = { seq: this.inputSeq, keys, yaw, pitch, dt, moveX: qx / 127, moveY: qy / 127, qx, qy };
     this.pendingInputs.push(input);
     if (this.pendingInputs.length > 200) this.pendingInputs.shift();
 
     // Redundantly resend the last few inputs so a dropped packet does not
     // stall the server's simulation of this player.
     const redundancy = Math.min(Protocol.MAX_INPUTS_PER_PACKET, this.pendingInputs.length);
-    const w = new Protocol.Writer(16 + redundancy * 12);
+    const w = new Protocol.Writer(16 + redundancy * 14);
     w.u8w(Protocol.OP.C_INPUT);
     w.u8w(redundancy);
     for (let i = this.pendingInputs.length - redundancy; i < this.pendingInputs.length; i++) {
@@ -9725,6 +10205,8 @@ class MatchState {
       w.yaww(p.yaw);
       w.pitw(p.pitch);
       w.u8w(M.clamp(Math.round(p.dt * 1000), 1, 255));
+      w.i8w(p.qx || 0);
+      w.i8w(p.qy || 0);
     }
     this.net.sendBinary(w);
     return input;
@@ -10982,18 +11464,28 @@ class Game {
   /* -------------------------------------------------------------- input -- */
   _gatherInput(dt) {
     const input = this.input;
+    const touch = this.app.touch;
     const s = this.state.self;
     const IN = Protocol.IN;
 
     const mouse = input.consumeMouse();
+    let lookDX = mouse.dx;
+    let lookDY = mouse.dy;
+    if (touch && touch.enabled) {
+      const t = touch.consumeLook();
+      lookDX += t.dx;
+      lookDY += t.dy;
+    }
+
     const weapon = this.currentWeaponDef();
     const sensScale = this.aiming ? (this.app.settings.adsSensitivity ?? 0.72) * (weapon?.adsFov ?? 0.8) / 0.8 : 1;
-    s.yaw -= mouse.dx * sensScale;
-    s.pitch = M.clamp(s.pitch - mouse.dy * sensScale, -Math.PI / 2 + 0.01, Math.PI / 2 - 0.01);
-    while (s.yaw > Math.PI) s.yaw -= Math.PI * 2;
-    while (s.yaw < -Math.PI) s.yaw += Math.PI * 2;
+    s.yaw -= lookDX * sensScale;
+    s.pitch = M.clamp(s.pitch - lookDY * sensScale, -Math.PI / 2 + 0.01, Math.PI / 2 - 0.01);
 
     let keys = 0;
+    let moveX = 0;
+    let moveY = 0;
+
     if (input.isDown('forward')) keys |= IN.FWD;
     if (input.isDown('back')) keys |= IN.BACK;
     if (input.isDown('left')) keys |= IN.LEFT;
@@ -11007,17 +11499,117 @@ class Game {
     if (input.isDown('leanRight')) keys |= IN.LEAN_R;
     if (input.isDown('interact')) keys |= IN.CLIMB;
     if (input.isDown('jump') && s.inWater) keys |= IN.SWIM_UP;
-    if (input.mouse.right) { keys |= IN.AIM; }
+    if (input.mouse.right) keys |= IN.AIM;
     if (input.mouse.left) keys |= IN.FIRE;
 
+    // --- touch overlay contributes the same bits, plus an analog stick
+    if (touch && touch.enabled) {
+      moveX = touch.moveX;
+      moveY = touch.moveY;
+      // Digital bits stay in sync so anything reading them still behaves.
+      if (moveY > 0.15) keys |= IN.FWD;
+      if (moveY < -0.15) keys |= IN.BACK;
+      if (moveX > 0.15) keys |= IN.RIGHT;
+      if (moveX < -0.15) keys |= IN.LEFT;
+      if (touch.isDown('jump')) keys |= IN.JUMP | (s.inWater ? IN.SWIM_UP : 0);
+      if (touch.isDown('sprint') && Math.hypot(moveX, moveY) > 0.5) keys |= IN.SPRINT;
+      if (touch.isDown('crouch')) keys |= IN.CROUCH;
+      if (touch.isDown('aim')) keys |= IN.AIM;
+      if (touch.isDown('fire')) keys |= IN.FIRE;
+      if (touch.isDown('use')) keys |= IN.CLIMB;
+    }
+
     this.aiming = (keys & IN.AIM) !== 0 && !this.buildMode;
-    return keys;
+
+    // --- aim assist (touch only)
+    // Nudges the view toward a target the player is already close to. It never
+    // snaps and never fires by itself; the server still validates every hit.
+    if (touch && touch.enabled && touch.aimAssist && (this.aiming || touch.isDown('fire'))) {
+      this._applyAimAssist(dt);
+    }
+
+    while (s.yaw > Math.PI) s.yaw -= Math.PI * 2;
+    while (s.yaw < -Math.PI) s.yaw += Math.PI * 2;
+
+    return { keys, moveX, moveY };
+  }
+
+  /** Gentle rotational pull toward the nearest target inside a narrow cone. */
+  _applyAimAssist(dt) {
+    const s = this.state.self;
+    const cam = this.camera;
+    const maxAngle = this.aiming ? M.rad(7) : M.rad(4.5);
+    const maxRange = 90;
+
+    let best = null;
+    let bestScore = Infinity;
+    const consider = (x, y, z, isPlayer) => {
+      const dx = x - cam.pos.x, dy = y - cam.pos.y, dz = z - cam.pos.z;
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist < 2 || dist > maxRange) return;
+      const dot = (dx * cam.forward.x + dy * cam.forward.y + dz * cam.forward.z) / dist;
+      if (dot <= 0) return;
+      const angle = Math.acos(M.clamp(dot, -1, 1));
+      if (angle > maxAngle) return;
+      // Prefer whatever is closest to the crosshair, then closest in space.
+      const score = angle * 100 + dist * 0.01 - (isPlayer ? 0.5 : 0);
+      if (score < bestScore) { bestScore = score; best = { x, y, z, angle }; }
+    };
+
+    const renderTime = this.state.renderTime();
+    for (const [id, e] of this.state.players) {
+      if (e.teamId === this.state.teamId) continue;
+      if (e.flags & Protocol.EF.DEAD) continue;
+      const it = this.state.interpolate(e, renderTime);
+      if (it) consider(it.x, it.y + e.height * 0.62, it.z, true);
+    }
+    for (const d of this.state.dinos.values()) {
+      if (d.state === Content.DINO_STATE.DEAD) continue;
+      const it = this.state.interpolate(d, renderTime);
+      const def = Content.DINO_BY_ID[d.typeId];
+      if (it && def) consider(it.x, it.y + def.size[1] * 0.6, it.z, false);
+    }
+    if (!best) return;
+
+    // Line of sight: never help through a wall.
+    const dx = best.x - cam.pos.x, dy = best.y - cam.pos.y, dz = best.z - cam.pos.z;
+    const dist = Math.hypot(dx, dy, dz);
+    if (Movement.raycast(this.app.blockQuery, cam.pos.x, cam.pos.y, cam.pos.z, dx, dy, dz, dist - 0.6)) return;
+
+    const targetYaw = Math.atan2(dx, dz);
+    const targetPitch = Math.asin(M.clamp(dy / dist, -1, 1));
+    // Strength falls off as the crosshair approaches the target, so it settles
+    // instead of locking on.
+    const strength = (1 - best.angle / maxAngle) * (this.aiming ? 5.2 : 3.4);
+    s.yaw = M.lerpAngle(s.yaw, targetYaw, M.clamp(strength * dt, 0, 0.5));
+    s.pitch = M.lerp(s.pitch, targetPitch, M.clamp(strength * dt, 0, 0.5));
   }
 
   _handleActions(dt, keys) {
     const input = this.input;
+    const touch = this.app.touch;
     const s = this.state.self;
     if (this.dead || this.state.downed) return;
+
+    // --- touch buttons mapped onto the same actions as the keyboard
+    if (touch && touch.enabled) {
+      for (let i = 0; i < 3; i++) if (touch.wasTapped(`slot${i}`)) this._selectSlot(i);
+      if (touch.wasTapped('reload')) this._tryReload();
+      if (touch.wasTapped('use')) this._interact();
+      if (touch.wasTapped('melee')) this._tryMelee();
+      if (touch.wasTapped('heal')) this._useBest(['medkit', 'bandage', 'shield_cell', 'shield_core']);
+      if (touch.wasTapped('build')) {
+        this.buildMode = touch.isDown('build');
+        DRE.bus.emit('hud.buildMode', this.buildMode);
+      }
+      if (touch.wasTapped('jump') && this.state.inPlane) this.state.sendInteract(0, 1);
+      else if (touch.wasTapped('jump') && !s.onGround && !this.state.inPlane && s.y > 40 && !s.inWater) {
+        this.state.sendInteract(0, 0);
+      }
+      if (touch.wasTapped('ping')) this.confirmPing(0);
+      if (touch.wasTapped('emote')) this.state.sendEmote(0);
+      touch.syncSlots(this.state.inventory);
+    }
 
     // --- weapon slots
     if (input.wasPressed('slot1')) this._selectSlot(0);
@@ -11038,11 +11630,14 @@ class Game {
     // --- fire / build placement
     const weapon = this.currentWeaponDef();
     if (this.buildMode) {
-      if (input.mousePressed.left) this._placeBlock();
-      if (input.mousePressed.right) this._breakBlock();
+      if (input.mousePressed.left || (touch && touch.wasTapped('fire'))) this._placeBlock();
+      if (input.mousePressed.right || (touch && touch.wasTapped('melee'))) this._breakBlock();
     } else if (weapon) {
       const auto = weapon.fireMode === 'auto';
-      const wantFire = auto ? input.mouse.left : input.mousePressed.left;
+      const touchFire = touch && touch.enabled
+        ? (auto ? touch.isDown('fire') : touch.wasTapped('fire'))
+        : false;
+      const wantFire = (auto ? input.mouse.left : input.mousePressed.left) || touchFire;
       if (wantFire) this._tryFire(weapon);
       if (input.mousePressed.right && weapon.fireMode === 'melee') this._tryMelee();
     }
@@ -11645,15 +12240,21 @@ class Game {
 
     // --- input + prediction
     let keys = 0;
-    if (this.input.locked && !this.input.textMode) {
-      keys = this._gatherInput(dt);
+    let moveX = 0;
+    let moveY = 0;
+    const touchActive = this.app.touch?.enabled;
+    // Touch needs no pointer lock; a mouse player must have captured the
+    // cursor before their input counts.
+    if ((this.input.locked || touchActive) && !this.input.textMode) {
+      const gathered = this._gatherInput(dt);
+      keys = gathered.keys;
+      moveX = gathered.moveX;
+      moveY = gathered.moveY;
       this._handleActions(dt, keys);
-    } else {
-      s.yaw = s.yaw; // keep angles, no movement while unlocked
     }
 
     if (!this.state.inPlane) {
-      const ev = Movement.step(s, { keys, yaw: s.yaw, pitch: s.pitch, dt }, this.app.blockQuery, {});
+      const ev = Movement.step(s, { keys, yaw: s.yaw, pitch: s.pitch, dt, moveX, moveY }, this.app.blockQuery, {});
       if (ev.footstep) {
         const below = this.app.blockQuery(Math.floor(s.x), Math.floor(s.y - 0.2), Math.floor(s.z));
         const name = WorldGen.BLOCKS[below]?.name || 'dirt';
@@ -11670,7 +12271,7 @@ class Game {
       if (ev.splash) this.audio.splash(this.camera.pos, 0.8);
     }
     this.state.decayCorrection(dt);
-    this.state.sendInput(keys, s.yaw, s.pitch, dt);
+    this.state.sendInput(keys, s.yaw, s.pitch, dt, moveX, moveY);
 
     // --- camera + viewmodel
     this._updateCamera(dt);
@@ -11806,6 +12407,10 @@ class UI {
     if (target) target.classList.add('active');
     this.screen = name;
     $('#hud').classList.toggle('active', name === 'match');
+    // The pad lives outside the HUD, so nothing hides it implicitly. Retire
+    // it on every route out of the match, not just the explicit leave button
+    // (disconnects and kicks take other paths back to the lobby).
+    if (name !== 'match' && this.app.touch?.enabled) this.app.touch.unmount();
     if (name === 'lobby') {
       this.app.audio.startMusic();
     } else {
@@ -12188,7 +12793,13 @@ class UI {
       $('#conn-status').style.color = '#ff4d5e';
       this.setConnectionState('down');
     });
-    net.on('hello', () => this.setConnectionState('ready'));
+    net.on('hello', (msg) => {
+      if (msg?.protocol && msg.protocol !== Protocol.PROTOCOL_VERSION) {
+        this.setConnectionState('outdated', { client: Protocol.PROTOCOL_VERSION, server: msg.protocol });
+        return;
+      }
+      this.setConnectionState('ready');
+    });
 
     $('#cb-retry').onclick = () => {
       this.setConnectionState('connecting');
@@ -12337,6 +12948,27 @@ class UI {
           ? `المحاولة رقم ${info?.attempt || 1} · ${url}`
           : `Attempt ${info?.attempt || 1} · ${url}`;
         this._setAuthEnabled(false);
+        return;
+
+      // A browser serving an old cached build against an updated server would
+      // otherwise connect happily and then drop every input on the floor -
+      // the player stands frozen with nothing to explain it. Say so instead.
+      case 'outdated':
+        banner.classList.add('show', 'error');
+        this._setAuthEnabled(false);
+        title.textContent = ar ? 'نسخة اللعبة قديمة' : 'This copy of the game is out of date';
+        body.textContent = ar
+          ? `المتصفح يعرض نسخة محفوظة (v${info?.client}) والخادم يعمل بـ v${info?.server}. حدّث الصفحة تحديثاً كاملاً.`
+          : `Your browser is showing a cached build (v${info?.client}) while the server runs v${info?.server}. Do a hard refresh.`;
+        showSteps(ar ? [
+          'ويندوز/لينكس: اضغط <code>Ctrl</code> + <code>Shift</code> + <code>R</code>',
+          'ماك: اضغط <code>Cmd</code> + <code>Shift</code> + <code>R</code>',
+          'الهاتف: من إعدادات المتصفح امسح ذاكرة التخزين المؤقت ثم افتح الرابط من جديد.',
+        ] : [
+          'Windows/Linux: press <code>Ctrl</code> + <code>Shift</code> + <code>R</code>',
+          'macOS: press <code>Cmd</code> + <code>Shift</code> + <code>R</code>',
+          'Phone: clear the browser cache in settings, then open the link again.',
+        ]);
         return;
 
       case 'down':
@@ -13124,6 +13756,15 @@ class UI {
       body.appendChild(row('حساسية التصويب', 'مضاعف الحساسية أثناء التصويب.', slider('adsSensitivity', 0.1, 2, 0.02, (v) => v.toFixed(2))));
       body.appendChild(row('عكس المحور الرأسي', null, toggle('invertY')));
       body.appendChild(el('div', { class: 'divider' }));
+
+      body.appendChild(el('div', { class: 'set-label', style: { marginBottom: '4px' } }, 'التحكّم باللمس (الهاتف)'));
+      body.appendChild(row('أزرار اللمس', 'تلقائي = تظهر على الأجهزة اللمسية فقط.',
+        select('touchControls', [['auto', 'تلقائي'], ['on', 'دائماً'], ['off', 'مغلقة']])));
+      body.appendChild(row('حساسية اللمس', null, slider('touchSensitivity', 0.2, 3, 0.05, (v) => v.toFixed(2))));
+      body.appendChild(row('حجم الأزرار', null, slider('touchScale', 0.7, 1.6, 0.05, (v) => `${Math.round(v * 100)}%`)));
+      body.appendChild(row('وضع الأعسر', 'يعكس مكان العصا والأزرار.', toggle('touchLeftHanded')));
+      body.appendChild(row('تصويب مساعد', 'يقرّب التصويب من الهدف باللمس فقط.', toggle('aimAssist')));
+      body.appendChild(el('div', { class: 'divider' }));
       const binds = this.app.input.binds;
       const labels = {
         forward: 'تقدم', back: 'تراجع', left: 'يسار', right: 'يمين', jump: 'قفز', sprint: 'ركض',
@@ -13330,6 +13971,7 @@ class HUD {
       else if (code === binds.emote) this.game?.openEmoteWheel(true);
       else if (code === binds.perf) $('#perf-overlay').classList.toggle('show');
       else if (code === 'Escape') this.app.openPauseMenu();
+      else if (code === 'F4') this.app.touch.enabled ? this.app.touch.unmount() : this.app.touch.mount();
       else if (code === 'KeyN') this.app.toggleMic();
     });
 
@@ -13949,6 +14591,7 @@ class App {
     this.net = new NetClient(this._serverUrl());
     this.matchState = new MatchState(this.net);
     this.voice = new VoiceClient(this.net, this.audio);
+    this.touch = new TouchControls(this);
     this.ui = new UI(this);
     this.hud = new HUD(this);
     this.game = new Game(this);
@@ -13964,8 +14607,11 @@ class App {
     this._loadingTip('جاهز', 1);
     $('#loading').classList.add('hide');
     // If the greeting never arrived the server is unreachable; say so on the
-    // sign-in screen rather than leaving dead controls behind.
-    this.ui.setConnectionState(this.net.protocol ? 'ready' : 'down');
+    // sign-in screen rather than leaving dead controls behind. A greeting from
+    // a server we cannot speak to is handled by the 'hello' listener, which
+    // has already put up the version-mismatch banner - do not clear it.
+    if (!this.net.protocol) this.ui.setConnectionState('down');
+    else if (this.ui.connectionState !== 'outdated') this.ui.setConnectionState('ready');
 
     I18N.set(Store.get('lang', this.settings.language || 'ar'));
 
@@ -14122,12 +14768,38 @@ class App {
 
     $('#loading').classList.add('hide');
     this.ui.show('match');
-    this.input.requestLock();
+
+    // Touch devices get the on-screen controls; everything else uses pointer
+    // lock as before.
+    if (this.settings.touchControls === 'on' || (this.settings.touchControls !== 'off' && TouchControls.detect())) {
+      this.touch.mount();
+      this.touch.applySettings(this.settings);
+      this.touch.layout();
+      // Landscape is far more playable, and most browsers only allow the
+      // request from a fullscreen context.
+      this._requestLandscape();
+    } else {
+      this.input.requestLock();
+    }
     this._resultsShown = false;
     this.hud._resultsShown = false;
   }
 
+  /** Best-effort fullscreen + landscape lock; failures are harmless. */
+  async _requestLandscape() {
+    try {
+      if (document.documentElement.requestFullscreen && !document.fullscreenElement) {
+        await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+      }
+      await screen.orientation?.lock?.('landscape');
+    } catch {
+      // Locking is not permitted on every browser; the rotate hint covers it.
+    }
+  }
+
   leaveMatch() {
+    this.touch.unmount();
+    try { screen.orientation?.unlock?.(); } catch { /* not supported */ }
     this.game.leaveMatch();
     this.net.send({ t: 'match.leave' });
     $('#results-screen').classList.remove('show');
@@ -14225,6 +14897,15 @@ class App {
       voice: s.voiceVolume, ambient: s.sfxVolume * 0.7,
     });
     this.voice.mode = s.voiceMode || 'ptt';
+    this.touch?.applySettings(s);
+    // Flipping the pad on or off from the pause menu should take effect at
+    // once rather than at the start of the next match.
+    if (this.touch && this.ui?.screen === 'match') {
+      const want = s.touchControls === 'on'
+        || (s.touchControls !== 'off' && TouchControls.detect());
+      if (want && !this.touch.enabled) this.touch.mount();
+      else if (!want && this.touch.enabled) this.touch.unmount();
+    }
     document.documentElement.style.setProperty('--hud-scale', String(s.hudScale || 1));
     if (this.game?.chunks) this.game.chunks.renderDistance = M.clamp(s.renderDistance || 10, 4, 20);
     if (s.language && s.language !== I18N.lang) I18N.set(s.language);
@@ -14267,6 +14948,7 @@ class App {
       }
 
       this.input.endFrame();
+      if (this.touch.enabled) this.touch.endFrame();
     };
     requestAnimationFrame(step);
   }
@@ -14282,6 +14964,9 @@ const DEFAULT_CLIENT_SETTINGS = {
   crosshair: 'dynamic', hudScale: 1.0, language: 'ar', showDamageNumbers: true,
   colorblind: 'none', headBob: 1.0, autoSprint: false, toggleAds: false, toggleCrouch: false,
   binds: null,
+  // Touch: 'auto' follows device detection, 'on'/'off' force it.
+  touchControls: 'auto', touchSensitivity: 1.0, touchScale: 1.0,
+  touchLeftHanded: false, aimAssist: true,
 };
 
 /* ------------------------------------------------------------------ start */
