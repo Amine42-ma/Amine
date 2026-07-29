@@ -5046,8 +5046,12 @@ const CharacterSystem = {
     const wp = e.worldPos(_ch0);
     // ground probe
     const foot = _ch1.copy(wp);
-    const groundY = Physics.groundHeight(foot.x, foot.z, scene, 500, e);
     const height = d.crouching ? d.height * .55 : d.height;
+    // Probe from just above the character's own head, never from the sky: a
+    // platform overhead is a ceiling, not the floor, and starting the ray at a
+    // fixed 500 made anything walking under a bridge get sucked up onto it.
+    const probeTop = wp.y + height + .5;
+    const groundY = Physics.groundHeight(foot.x, foot.z, scene, probeTop, e);
     const feetY = wp.y;
     const grounded = feetY - groundY < .12 + Math.abs(r.vel.y) * dt && r.vel.y <= .01;
     r.grounded = grounded;
@@ -5101,12 +5105,19 @@ const CharacterSystem = {
     const from = e.position.clone();
     e.position.add(step); e.markDirty();
     this.resolveWalls(c, e, scene, from);
-    // stick to ground
+    // Stick to the ground, and push out of it if we ended up underneath.
+    // Being below the surface is penetration, not a step-up: the old step-offset
+    // limit meant anyone who started inside a hill, or fell in fast enough to
+    // pass through in one frame, was left below ground with nothing to lift them
+    // out. Walking *onto* a ledge is the horizontal case, handled in
+    // resolveWalls, so the step limit does not belong here.
     const nw = e.worldPos(_ch9);
-    const gh = Physics.groundHeight(nw.x, nw.z, scene, 500, e);
+    const gh = Physics.groundHeight(nw.x, nw.z, scene, nw.y + height + .5, e);
     if (!swimming && !climbing && nw.y < gh) {
-      const dy = gh - nw.y;
-      if (dy < d.stepOffset + .4) { e.position.y += dy; r.vel.y = Math.max(0, r.vel.y); r.grounded = true; }
+      e.position.y += gh - nw.y;
+      r.vel.y = Math.max(0, r.vel.y);
+      r.grounded = true;
+      r.jumps = 0;
     }
     // facing
     if (d.faceMoveDir && dir.len2() > .001) {
