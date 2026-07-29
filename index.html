@@ -23345,6 +23345,15 @@ const JSScript = {
 (function installJS() {
   ScriptRuntime.jsInstances = [];
 
+  // A .js or .ts asset must never reach the NovaScript compiler. The original
+  // bind loop feeds every Script component to it, which turned each JS file
+  // into a pile of meaningless syntax errors in the console.
+  const origGetCompiled = ScriptRuntime.getCompiled.bind(ScriptRuntime);
+  ScriptRuntime.getCompiled = function (asset) {
+    if (asset && JSScript.langOf(asset)) return { program: null, diagnostics: [], version: asset.version || 0 };
+    return origGetCompiled(asset);
+  };
+
   const origBindEntity = ScriptRuntime.bindEntity.bind(ScriptRuntime);
   ScriptRuntime.bindEntity = function (e) {
     for (const c of e.components) {
@@ -23478,6 +23487,420 @@ class Enemy implements Damageable {
 
 NOVA.TSStrip = TSStrip;
 NOVA.JSScript = JSScript;
+</script>
+<script data-nova="editor">
+/* ============================================================================
+ * NOVA ENGINE — 43 · INSPECTOR 2.0
+ *
+ *   The inspector showed name, tag, layer, transform and components. This adds
+ *   the parts that were missing and the ones people reach for first:
+ *
+ *     · an object Type, chosen from a list, that also sets the object up
+ *     · Static, Visible and Enabled as plain switches
+ *     · one-line switches for Physics, Collision and Shadow instead of hunting
+ *       through component properties
+ *     · a Scripts section that holds several scripts, in a chosen order, each
+ *       one able to be disabled or removed on its own
+ *     · a component picker with descriptions instead of bare names
+ * ========================================================================= */
+
+/* --------------------------------------------------------- OBJECT TYPES -- */
+/**
+ * A type is a label plus a recipe. Choosing one tags the object and can add
+ * the components that kind of object almost always needs, so a beginner gets a
+ * working player or trigger in one click instead of assembling it.
+ */
+const OBJECT_TYPES = [
+  { id: "none", icon: "⬜", label: "بدون نوع", desc: "كائن عادي بلا إعداد خاص.", parts: [] },
+  {
+    id: "player", icon: "🧍", label: "Player", desc: "شخصية يتحكم بها اللاعب.", tag: "Player",
+    parts: [["CharacterController", {}], ["Collider", { shape: "capsule" }]]
+  },
+  {
+    id: "enemy", icon: "👾", label: "Enemy", desc: "عدو يطارد اللاعب.", tag: "Enemy",
+    parts: [["CharacterController", { autoInput: false }], ["Collider", { shape: "capsule" }], ["AIBrain", {}], ["NavAgent", {}]]
+  },
+  {
+    id: "npc", icon: "🧑‍🌾", label: "NPC", desc: "شخصية غير لاعبة يمكن التحدث إليها.", tag: "NPC",
+    parts: [["CharacterController", { autoInput: false }], ["Collider", { shape: "capsule" }]]
+  },
+  { id: "animal", icon: "🐾", label: "Animal", desc: "حيوان يتجول في العالم.", tag: "Animal", parts: [["AIBrain", {}], ["Collider", { shape: "box" }]] },
+  { id: "vehicle", icon: "🚗", label: "Vehicle", desc: "مركبة قابلة للقيادة.", tag: "Vehicle", parts: [["VehicleController", {}], ["Collider", { shape: "box" }]] },
+  { id: "building", icon: "🏢", label: "Building", desc: "مبنى ثابت لا يتحرك.", tag: "Building", parts: [["Collider", { shape: "box" }]], static: true },
+  { id: "terrain", icon: "⛰️", label: "Terrain", desc: "أرض قابلة للنحت.", tag: "Terrain", parts: [["Terrain", {}]], static: true },
+  { id: "tree", icon: "🌳", label: "Tree", desc: "شجرة أو نبات.", tag: "Tree", parts: [["Collider", { shape: "capsule" }]], static: true },
+  { id: "water", icon: "🌊", label: "Water", desc: "سطح ماء بأمواج.", tag: "Water", parts: [["Water", {}]], static: true },
+  { id: "sky", icon: "🌤️", label: "Sky", desc: "سماء تحيط بالمشهد.", tag: "Sky", parts: [], skybox: true },
+  { id: "decoration", icon: "🪴", label: "Decoration", desc: "زينة بلا تصادم.", tag: "Decoration", parts: [], static: true },
+  { id: "weapon", icon: "🗡️", label: "Weapon", desc: "سلاح يمكن حمله.", tag: "Weapon", parts: [["Collider", { shape: "box", isTrigger: true }]] },
+  { id: "item", icon: "🎒", label: "Item", desc: "غرض في المخزون.", tag: "Item", parts: [["Collider", { shape: "box", isTrigger: true }]] },
+  { id: "collectible", icon: "💎", label: "Collectible", desc: "غرض يُلتقط عند الاصطدام.", tag: "Collectible", parts: [["Collectible", {}], ["Collider", { shape: "sphere", isTrigger: true }]] },
+  { id: "trigger", icon: "🔲", label: "Trigger", desc: "منطقة تُطلق حدثًا عند الدخول.", tag: "Trigger", parts: [["Trigger", {}], ["Collider", { shape: "box", isTrigger: true }]], hideMesh: true },
+  { id: "spawn", icon: "📍", label: "Spawn Point", desc: "نقطة ظهور اللاعب أو الأعداء.", tag: "SpawnPoint", parts: [["Spawner", {}]], hideMesh: true },
+  { id: "camera", icon: "🎥", label: "Camera", desc: "كاميرا للمشهد.", tag: "Camera", parts: [["Camera", {}]], hideMesh: true },
+  { id: "light", icon: "💡", label: "Light", desc: "مصدر ضوء.", tag: "Light", parts: [["Light", {}]], hideMesh: true },
+  { id: "ui", icon: "🔳", label: "UI", desc: "عنصر واجهة على الشاشة.", tag: "UI", parts: [["UIElement", {}]], hideMesh: true }
+];
+
+const ObjectTypes = {
+  all() { return OBJECT_TYPES.concat(Project_.customTypes || []); },
+  get(id) { return this.all().find(t => t.id === id) || OBJECT_TYPES[0]; },
+  of(e) { return (e && e.userData && e.userData.type) || "none"; },
+
+  /** Register a user-defined type so it appears in the list from then on. */
+  addCustom(label, icon, desc) {
+    Project_.customTypes = Project_.customTypes || [];
+    const id = "custom_" + label.toLowerCase().replace(/\s+/g, "_");
+    if (this.all().some(t => t.id === id)) return id;
+    Project_.customTypes.push({ id, icon: icon || "✨", label, desc: desc || "نوع مخصص", tag: label, parts: [], custom: true });
+    return id;
+  },
+
+  /** Apply a type to an entity, adding only what is genuinely missing. */
+  apply(e, id) {
+    const t = this.get(id);
+    const before = {
+      type: this.of(e), tag: e.tag, static: !!(e.userData && e.userData.static),
+      added: []
+    };
+    e.userData.type = t.id;
+    if (t.tag && !e.tag) e.tag = t.tag;
+    if (t.static) e.userData.static = true;
+    for (const [name, data] of t.parts || []) {
+      if (e.getComponent(name)) continue;
+      const c = e.addComponent(name, data);
+      if (c) before.added.push(c);
+    }
+    if (t.skybox) e.userData.skybox = true;
+    Editor.scene.reindex();
+    return before;
+  },
+
+  /** Undo record for a type change. */
+  applyRecorded(e, id) {
+    const before = this.apply(e, id);
+    Editor.history.push({
+      label: "نوع الكائن",
+      do: () => { this.apply(e, id); Editor.refreshInspector(); Editor.refreshHierarchy(); },
+      undo: () => {
+        for (const c of before.added) e.removeComponent(c);
+        e.userData.type = before.type;
+        e.tag = before.tag;
+        e.userData.static = before.static;
+        Editor.scene.reindex();
+        Editor.refreshInspector(); Editor.refreshHierarchy();
+      }
+    });
+    Editor.markDirty();
+    Editor.refreshInspector();
+    Editor.refreshHierarchy();
+  }
+};
+
+/* --------------------------------------------------------- QUICK SWITCH -- */
+/** The handful of settings people toggle constantly, lifted out of components. */
+const QuickToggles = {
+  visible(e, v) {
+    if (v === undefined) {
+      const mr = e.getComponent("MeshRenderer") || e.getComponent("Sprite");
+      return mr ? mr.enabled !== false : e.active;
+    }
+    for (const c of e.components) if (["MeshRenderer", "Sprite", "TextRenderer"].includes(c.type)) c.enabled = v;
+    return v;
+  },
+  physics(e, v) {
+    const rb = e.getComponent("RigidBody");
+    if (v === undefined) return !!rb && rb.enabled !== false;
+    if (v && !rb) e.addComponent("RigidBody", {});
+    else if (rb) rb.enabled = v;
+    Physics.build(Editor.scene);
+    return v;
+  },
+  collision(e, v) {
+    const col = e.getComponent("Collider");
+    if (v === undefined) return !!col && col.enabled !== false;
+    if (v && !col) { const c = e.addComponent("Collider", { shape: "box" }); if (c) Physics.autoFit(c, e); }
+    else if (col) col.enabled = v;
+    Physics.build(Editor.scene);
+    return v;
+  },
+  shadow(e, v) {
+    const mr = e.getComponent("MeshRenderer");
+    if (v === undefined) return !!mr && mr.data.castShadow !== false;
+    if (mr) mr.data.castShadow = v;
+    return v;
+  },
+  isStatic(e, v) {
+    if (v === undefined) return !!(e.userData && e.userData.static);
+    e.userData.static = v;
+    return v;
+  }
+};
+
+/* ------------------------------------------------------- INSPECTOR 2.0 --- */
+(function extendInspector() {
+  const I = Panels.inspector;
+  const origRefresh = I.refresh.bind(I);
+
+  /** A labelled on/off switch row. */
+  function switchRow(host, label, hint, get, set) {
+    const row = el("div", { class: "row" });
+    const lab = el("label", { title: hint || label }, label);
+    const box = el("input", { type: "checkbox" });
+    box.checked = !!get();
+    box.onchange = () => { set(box.checked); Editor.markDirty(); };
+    row.appendChild(lab);
+    row.appendChild(el("div", { class: "fields" }, box));
+    host.appendChild(row);
+    return box;
+  }
+
+  I.buildIdentity = function (e) {
+    const wrap = el("div", { class: "comp open" });
+    const head = el("div", { class: "comp-head" },
+      el("span", { class: "arrow open" }, "▶"), el("span", { class: "ico" }, "🏷️"),
+      el("span", { class: "nm" }, "الهوية (Identity)"));
+    head.onclick = () => { wrap.classList.toggle("open"); head.querySelector(".arrow").classList.toggle("open"); };
+    const body = el("div", { class: "comp-body" });
+
+    // ---- type
+    const typeRow = el("div", { class: "row" });
+    typeRow.appendChild(el("label", { title: "تصنيف الكائن — يضيف المكوّنات المناسبة تلقائيًا" }, "النوع"));
+    const sel = el("select");
+    for (const t of ObjectTypes.all()) sel.appendChild(el("option", { value: t.id }, t.icon + "  " + t.label));
+    sel.value = ObjectTypes.of(e);
+    sel.onchange = () => {
+      if (sel.value === "__new") { this.promptCustomType(e); return; }
+      ObjectTypes.applyRecorded(e, sel.value);
+    };
+    sel.appendChild(el("option", { value: "__new" }, "＋  نوع جديد…"));
+    typeRow.appendChild(el("div", { class: "fields" }, sel));
+    body.appendChild(typeRow);
+    const t = ObjectTypes.get(ObjectTypes.of(e));
+    body.appendChild(el("div", { class: "hint", style: "margin:-2px 0 8px" }, t.desc));
+
+    // ---- switches
+    switchRow(body, "مفعّل (Enabled)", "إيقاف الكائن كليًا", () => e.active,
+      v => { e.active = v; Editor.refreshHierarchy(); });
+    switchRow(body, "ظاهر (Visible)", "إخفاء الشكل مع بقاء الكائن يعمل",
+      () => QuickToggles.visible(e), v => QuickToggles.visible(e, v));
+    switchRow(body, "ثابت (Static)", "لا يتحرك — يسمح للمحرك بتحسينه وبثّه تدريجيًا",
+      () => QuickToggles.isStatic(e), v => QuickToggles.isStatic(e, v));
+    switchRow(body, "فيزياء (Physics)", "جسم صلب يتأثر بالجاذبية والقوى",
+      () => QuickToggles.physics(e), v => { QuickToggles.physics(e, v); this.refresh(); });
+    switchRow(body, "تصادم (Collision)", "مصادم يمنع المرور عبر الكائن",
+      () => QuickToggles.collision(e), v => { QuickToggles.collision(e, v); this.refresh(); });
+    switchRow(body, "ظل (Shadow)", "يلقي ظلًا على ما حوله",
+      () => QuickToggles.shadow(e), v => QuickToggles.shadow(e, v));
+
+    wrap.appendChild(head); wrap.appendChild(body);
+    this.body.appendChild(wrap);
+  };
+
+  I.promptCustomType = function (e) {
+    Modal.prompt("نوع جديد", "اسم النوع", "MyType", name => {
+      const label = String(name || "").trim();
+      if (!label) { this.refresh(); return; }
+      const id = ObjectTypes.addCustom(label);
+      ObjectTypes.applyRecorded(e, id);
+      toast("تم إنشاء النوع", label, "ok");
+    });
+  };
+
+  /* ------------------------------------------------------- scripts ------ */
+  I.buildScripts = function (e) {
+    const wrap = el("div", { class: "comp open" });
+    const scripts = e.components.filter(c => c.type === "Script");
+    const head = el("div", { class: "comp-head" },
+      el("span", { class: "arrow open" }, "▶"), el("span", { class: "ico" }, "📜"),
+      el("span", { class: "nm" }, `السكربتات (${scripts.length})`));
+    head.onclick = () => { wrap.classList.toggle("open"); head.querySelector(".arrow").classList.toggle("open"); };
+    const body = el("div", { class: "comp-body" });
+
+    if (!scripts.length) body.appendChild(el("div", { class: "hint", style: "margin-bottom:8px" },
+      "لا توجد سكربتات. أضف واحدًا بالأسفل — JavaScript أو TypeScript أو NovaScript."));
+
+    scripts.forEach((c, idx) => {
+      const asset = Project_.scripts.get(c.data.script) || Assets.get(c.data.script);
+      const lang = asset ? (JSScript.langOf(asset) || "nova") : "?";
+      const card = el("div", { style: "border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin-bottom:6px" });
+      const row = el("div", { class: "flexrow", style: "gap:6px;align-items:center" });
+
+      const on = el("input", { type: "checkbox", title: "تعطيل/تفعيل هذا السكربت" });
+      on.checked = c.data.enabled !== false;
+      on.onchange = () => { c.data.enabled = on.checked; Editor.markDirty(); };
+      row.appendChild(on);
+
+      const badge = el("span", { class: "chip", style: "flex:none;font-size:10px" },
+        lang === "js" ? "JS" : lang === "ts" ? "TS" : "NOVA");
+      row.appendChild(badge);
+
+      const pick = el("select", { style: "flex:1" });
+      pick.appendChild(el("option", { value: "" }, "— اختر ملفًا —"));
+      for (const s of Project_.scripts.values()) pick.appendChild(el("option", { value: s.id }, s.name));
+      pick.value = c.data.script || "";
+      pick.onchange = () => { c.data.script = pick.value; Editor.markDirty(); this.refresh(); };
+      row.appendChild(pick);
+
+      const openBtn = el("span", { class: "chip", title: "فتح في محرر الكود" }, "✎");
+      openBtn.onclick = () => { if (asset) { Dock.openPanel("code"); CodeEditor.openScript(asset.id); } };
+      row.appendChild(openBtn);
+
+      const up = el("span", { class: "chip", title: "تقديم في ترتيب التنفيذ" }, "▲");
+      up.onclick = () => this.moveScript(e, c, -1);
+      const down = el("span", { class: "chip", title: "تأخير في ترتيب التنفيذ" }, "▼");
+      down.onclick = () => this.moveScript(e, c, 1);
+      if (idx === 0) up.style.opacity = ".3";
+      if (idx === scripts.length - 1) down.style.opacity = ".3";
+      row.appendChild(up); row.appendChild(down);
+
+      const del = el("span", { class: "chip", title: "إزالة" }, "🗑");
+      del.onclick = () => {
+        const at = e.components.indexOf(c);
+        Editor.history.push({
+          label: "إزالة سكربت",
+          do: () => { e.removeComponent(c); Editor.scene.reindex(); this.refresh(); },
+          undo: () => { e.components.splice(at, 0, c); c.entity = e; Editor.scene.reindex(); this.refresh(); }
+        });
+        e.removeComponent(c); Editor.scene.reindex();
+        Editor.markDirty(); this.refresh();
+      };
+      row.appendChild(del);
+      card.appendChild(row);
+
+      // values the script exposes, editable here
+      const inst = c.runtime && c.runtime.jsInstance;
+      const vars = c.data.vars || [];
+      if (inst && inst.obj) {
+        const skip = new Set(["entity", "transform", "self", "comp", "scene", "time", "dt"]);
+        const fields = Object.keys(inst.obj).filter(k => !skip.has(k) && ["number", "string", "boolean"].includes(typeof inst.obj[k]));
+        for (const k of fields) {
+          const r = el("div", { class: "row" });
+          r.appendChild(el("label", null, k));
+          const val = inst.obj[k];
+          let input;
+          if (typeof val === "boolean") {
+            input = el("input", { type: "checkbox" }); input.checked = val;
+            input.onchange = () => { inst.obj[k] = input.checked; this.setScriptVar(c, k, input.checked); };
+          } else {
+            input = el("input", { class: "in", type: typeof val === "number" ? "number" : "text", value: val });
+            input.oninput = () => {
+              const nv = typeof val === "number" ? parseFloat(input.value) || 0 : input.value;
+              inst.obj[k] = nv; this.setScriptVar(c, k, nv);
+            };
+          }
+          r.appendChild(el("div", { class: "fields" }, input));
+          card.appendChild(r);
+        }
+      } else if (vars.length) {
+        for (const v of vars) {
+          const r = el("div", { class: "row" });
+          r.appendChild(el("label", null, v.name));
+          const input = el("input", { class: "in", value: v.value });
+          input.oninput = () => { v.value = isNaN(+input.value) ? input.value : +input.value; Editor.markDirty(); };
+          r.appendChild(el("div", { class: "fields" }, input));
+          card.appendChild(r);
+        }
+      }
+      body.appendChild(card);
+    });
+
+    const bar = el("div", { class: "flexrow", style: "gap:6px;margin-top:4px" });
+    const mk = (label, lang, title) => {
+      const b = el("button", { class: "btn", style: "flex:1;padding:4px", title }, label);
+      b.onclick = () => this.newScriptFor(e, lang);
+      return b;
+    };
+    bar.appendChild(mk("＋ JavaScript", "js", "ينشئ ملف .js ويربطه بهذا الكائن"));
+    bar.appendChild(mk("＋ TypeScript", "ts", "ينشئ ملف .ts ويربطه بهذا الكائن"));
+    bar.appendChild(mk("＋ NovaScript", "nova", "ينشئ ملف .nova ويربطه بهذا الكائن"));
+    body.appendChild(bar);
+
+    const attach = el("button", { class: "btn ghost", style: "width:100%;margin-top:6px", title: "يربط ملفًا موجودًا بهذا الكائن" }, "🔗 ربط سكربت موجود");
+    attach.onclick = () => {
+      const items = [...Project_.scripts.values()].map(s => ({
+        label: s.name, icon: "📜",
+        action: () => { e.addComponent("Script", { script: s.id, enabled: true }); Editor.markDirty(); this.refresh(); }
+      }));
+      if (!items.length) { toast("لا توجد ملفات بعد", "أنشئ واحدًا أولًا", "warn"); return; }
+      const r = attach.getBoundingClientRect();
+      ContextMenu.show(r.left, Math.max(60, r.top - Math.min(300, items.length * 30)), items);
+    };
+    body.appendChild(attach);
+
+    wrap.appendChild(head); wrap.appendChild(body);
+    this.body.appendChild(wrap);
+  };
+
+  I.setScriptVar = function (c, name, value) {
+    c.data.vars = c.data.vars || [];
+    const hit = c.data.vars.find(v => v.name === name);
+    if (hit) hit.value = value; else c.data.vars.push({ name, value });
+    Editor.markDirty();
+  };
+
+  /** Execution order is component order, so moving the component moves it. */
+  I.moveScript = function (e, c, dir) {
+    const list = e.components;
+    const i = list.indexOf(c);
+    const scripts = list.filter(x => x.type === "Script");
+    const si = scripts.indexOf(c);
+    const target = scripts[si + dir];
+    if (!target) return;
+    const j = list.indexOf(target);
+    list[i] = target; list[j] = c;
+    Editor.scene.reindex();
+    Editor.markDirty();
+    this.refresh();
+  };
+
+  I.newScriptFor = function (e, lang) {
+    const base = (e.name || "Object").replace(/[^\w]/g, "") || "Object";
+    const ext = lang === "js" ? ".js" : lang === "ts" ? ".ts" : ".nova";
+    let name = base + ext, n = 2;
+    while (Project_.scriptByName(name)) name = base + (n++) + ext;
+    const code = lang === "js" ? JS_SAMPLE.replace("Spinner", base)
+      : lang === "ts" ? TS_SAMPLE.replace("Enemy", base)
+        : SAMPLE_SCRIPT;
+    const s = { id: uid("s"), name, code, version: 0, type: lang };
+    Project_.scripts.set(s.id, s);
+    e.addComponent("Script", { script: s.id, enabled: true });
+    Editor.refreshProject();
+    Editor.markDirty();
+    this.refresh();
+    Dock.openPanel("code");
+    CodeEditor.openScript(s.id);
+    toast("تم إنشاء " + name, "مرتبط بـ " + e.name, "ok");
+  };
+
+  /* Insert the two new sections, and describe components in the add menu. */
+  I.refresh = function () {
+    origRefresh();
+    const e = Editor.selected;
+    if (!e || !this.body) return;
+    const addBtn = this.body.querySelector(".addcomp");
+    this.buildIdentity(e);
+    this.buildScripts(e);
+    if (addBtn) this.body.appendChild(addBtn);       // keep it last
+  };
+})();
+
+/* Component picker: show what each component is for, not just its name. */
+(function describeComponents() {
+  const origShow = ContextMenu.show.bind(ContextMenu);
+  ContextMenu.show = function (x, y, items) {
+    for (const it of items || []) {
+      if (it && it.label && !it.hint) {
+        const def = ComponentRegistry.get(it.label);
+        if (def && def.doc) it.hint = def.doc;
+      }
+    }
+    return origShow(x, y, items);
+  };
+})();
+
+NOVA.ObjectTypes = ObjectTypes;
+NOVA.QuickToggles = QuickToggles;
 </script>
 <script data-nova="editor">
 /* ============================================================================
