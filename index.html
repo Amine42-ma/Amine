@@ -22250,6 +22250,363 @@ Panels.sprite2d = Dock.register({
   }
 });
 </script>
+<script>
+/* ============================================================================
+ * NOVA ENGINE — 40 · LOCOMOTION & CAMERA MODES
+ *
+ *   Walk · Run · Sprint · Jump · Crouch · Slide · Swim · Climb · Fly
+ *   plus camera lock, free camera, and instant first/third person switching.
+ *
+ *   The controller already had walk, run, crouch, jump, swim and ladder climb.
+ *   This adds the missing states and the state machine that arbitrates them, so
+ *   only one can be active and each has a defined way in and out.
+ * ========================================================================= */
+
+/* Extra properties on the existing controller rather than a parallel component,
+ * so every scene and script that already uses CharacterController gains these. */
+(function extendCharacter() {
+  const def = CR.get("CharacterController");
+  if (!def) return;
+  const add = [
+    P("sprintMul", "number", 2.6, { label: "مضاعف العدو" }),
+    P("sprintStamina", "number", 5, { label: "طاقة العدو (ثانية، 0 = بلا حد)" }),
+    P("staminaRegen", "number", 3, { label: "استعادة الطاقة/ثانية" }),
+    P("canSlide", "bool", true, { label: "الانزلاق" }),
+    P("slideSpeed", "number", 11, { label: "سرعة الانزلاق" }),
+    P("slideTime", "number", .85, { label: "مدة الانزلاق" }),
+    P("slideCooldown", "number", .5, { label: "تهدئة الانزلاق" }),
+    P("canFly", "bool", false, { label: "وضع الطيران" }),
+    P("flySpeed", "number", 12, { label: "سرعة الطيران" }),
+    P("flyVertical", "number", 8, { label: "سرعة الصعود/الهبوط" })
+  ];
+  const have = new Set(def.props.map(p => p.key));
+  for (const p of add) if (!have.has(p.key)) def.props.push(p);
+})();
+
+/* Actions the new states need. Added to the input map so they are rebindable
+ * and appear in the touch layout editor like any other action. */
+(function extendInputMap() {
+  const wanted = [
+    { name: "sprint", type: "button", keys: ["ShiftLeft", "ShiftRight"], gpButton: 10 },
+    { name: "slide", type: "button", keys: ["KeyC", "ControlLeft"], gpButton: 1 },
+    { name: "fly", type: "button", keys: ["KeyF"], gpButton: 3 },
+    { name: "ascend", type: "button", keys: ["Space"], gpButton: 0 },
+    { name: "descend", type: "button", keys: ["ShiftLeft", "KeyC"], gpButton: 2 },
+    { name: "viewToggle", type: "button", keys: ["KeyV"], gpButton: 9 },
+    { name: "camLock", type: "button", keys: ["KeyL"], gpButton: 8 }
+  ];
+  const install = () => {
+    const map = typeof Project_ !== "undefined" && Project_ && Project_.inputMap;
+    if (!map || !Array.isArray(map.actions)) return false;
+    const have = new Set(map.actions.map(a => a.name));
+    for (const a of wanted) if (!have.has(a.name)) map.actions.push(a);
+    return true;
+  };
+  // the project may not exist yet at load time, and a loaded project brings its
+  // own input map, so top these up on every project change too
+  if (!install()) setTimeout(install, 0);
+  NOVA.installLocomotionActions = install;
+  if (typeof Bootstrap !== "undefined" && Bootstrap.loadProjectData) {
+    const orig = Bootstrap.loadProjectData.bind(Bootstrap);
+    Bootstrap.loadProjectData = async function (j) { const r = await orig(j); install(); return r; };
+  }
+})();
+
+/* -------------------------------------------------------- LOCOMOTION FSM - */
+/**
+ * Decides which movement state the character is in. Exactly one wins, and each
+ * transition is explicit, so states cannot overlap the way ad-hoc flags do.
+ *
+ *   fly > climb > swim > slide > crouch > sprint > run > walk > idle
+ */
+const Locomotion = {
+  states: ["idle", "walk", "run", "sprint", "crouch", "slide", "jump", "fall", "swim", "climb", "fly"],
+
+  init(r) {
+    if (r.loco) return r.loco;
+    return (r.loco = {
+      state: "idle", stamina: Infinity, slideT: 0, slideCd: 0,
+      flying: false, prevFly: false, wasGrounded: true
+    });
+  },
+
+  /** Read the extra buttons. Called before the controller integrates. */
+  gather(c, r) {
+    const d = c.data, i = r.input;
+    if (!d.autoInput) return;
+    i.sprint = Input.down("sprint");
+    i.slidePressed = Input.pressed("slide");
+    i.flyPressed = Input.pressed("fly");
+    i.ascend = Input.down("ascend") || Input.down("jump");
+    i.descend = Input.down("descend") || Input.down("crouch");
+  },
+
+  /** Advance the state machine. Returns a speed multiplier for the mover. */
+  update(c, e, dt, ctx) {
+    const d = c.data, r = c.runtime, L = this.init(r), i = r.input || {};
+    const moving = i.move && i.move.len2() > .0001;
+
+    // --- fly toggle -------------------------------------------------------
+    if (d.canFly && i.flyPressed) {
+      L.flying = !L.flying;
+      r.vel.set(0, 0, 0);
+      ScriptRuntime.sendEvent(e, L.flying ? "flyOn" : "flyOff");
+    }
+    if (!d.canFly) L.flying = false;
+
+    // --- stamina ----------------------------------------------------------
+    const maxStam = d.sprintStamina > 0 ? d.sprintStamina : Infinity;
+    if (L.stamina === Infinity && maxStam !== Infinity) L.stamina = maxStam;
+    if (maxStam === Infinity) L.stamina = Infinity;
+
+    // --- slide ------------------------------------------------------------
+    L.slideCd = Math.max(0, L.slideCd - dt);
+    if (L.slideT > 0) {
+      L.slideT -= dt;
+      if (L.slideT <= 0) { L.slideCd = d.slideCooldown; d.crouching = false; }
+    } else if (d.canSlide && i.slidePressed && ctx.grounded && !L.flying && L.slideCd <= 0
+      && moving && (r.speed || 0) > d.speed * .8) {
+      // a slide has to be earned: you must already be moving at pace
+      L.slideT = d.slideTime;
+      d.crouching = true;
+      ScriptRuntime.sendEvent(e, "slide");
+    }
+
+    // --- pick the state ---------------------------------------------------
+    let mul = 1, state;
+    if (L.flying) { state = "fly"; mul = d.flySpeed / Math.max(.01, d.speed); }
+    else if (ctx.climbing) state = "climb";
+    else if (ctx.swimming) { state = "swim"; mul = .7; }
+    else if (L.slideT > 0) { state = "slide"; mul = d.slideSpeed / Math.max(.01, d.speed); }
+    else if (!ctx.grounded) state = r.vel.y > .2 ? "jump" : "fall";
+    else if (i.crouch) { state = "crouch"; mul = d.crouchMul; }
+    else if (moving && i.sprint && L.stamina > 0) { state = "sprint"; mul = d.sprintMul; }
+    else if (moving && i.run) { state = "run"; mul = d.runMul; }
+    else if (moving) state = "walk";
+    else state = "idle";
+
+    // Drain while sprinting; refill only once the button is actually released.
+    // Regenerating on any non-sprint frame let a single airborne frame top the
+    // bar back up, so sprint never ran out.
+    if (maxStam !== Infinity) {
+      if (state === "sprint") L.stamina = Math.max(0, L.stamina - dt);
+      else if (!i.sprint) L.stamina = Math.min(maxStam, L.stamina + d.staminaRegen * dt);
+    }
+
+    if (state !== L.state) {
+      const prev = L.state;
+      L.state = state;
+      ScriptRuntime.sendEvent(e, "stateChange", null, state);
+      if (state === "jump" && prev !== "jump") ScriptRuntime.sendEvent(e, "jump");
+      if ((prev === "fall" || prev === "jump") && ctx.grounded) ScriptRuntime.sendEvent(e, "land");
+    }
+    L.wasGrounded = ctx.grounded;
+    return { state, mul };
+  },
+
+  /** Free movement with no gravity, used while flying. */
+  flyMove(c, e, dt) {
+    const d = c.data, r = c.runtime, i = r.input || {};
+    const cam = Engine.activeCamera;
+    const dir = _locA.set(0, 0, 0);
+    if (i.move && i.move.len2() > .0001) {
+      if (d.cameraRelative && cam) {
+        const f = _locB.set(0, 0, -1).applyQuat(cam.rotation);
+        const rt = _locC.set(1, 0, 0).applyQuat(cam.rotation);
+        dir.addS(f, i.move.y).addS(rt, i.move.x);
+      } else dir.set(i.move.x, 0, -i.move.y);
+    }
+    if (i.ascend) dir.y += 1;
+    if (i.descend) dir.y -= 1;
+    if (dir.len2() > 1e-6) dir.norm();
+    const target = _locD.copy(dir).mulS(d.flySpeed);
+    target.y = dir.y * d.flyVertical;
+    r.vel.x = M.damp(r.vel.x, target.x, 10, dt);
+    r.vel.y = M.damp(r.vel.y, target.y, 10, dt);
+    r.vel.z = M.damp(r.vel.z, target.z, 10, dt);
+    e.position.addS(r.vel, dt);
+    e.markDirty();
+    r.speed = Math.hypot(r.vel.x, r.vel.z);
+    r.grounded = false;
+  }
+};
+const _locA = new Vec3(), _locB = new Vec3(), _locC = new Vec3(), _locD = new Vec3();
+
+/* Wrap the controller: gather the extra input, run the state machine, and take
+ * over entirely while flying. Everything else stays as it was. */
+(function hookCharacter() {
+  const orig = CharacterSystem.update.bind(CharacterSystem);
+  CharacterSystem.update = function (c, e, dt, scene) {
+    const r = c.runtime;
+    if (!r.input) r.input = { move: new Vec2(), jump: false, run: false, crouch: false };
+    const L = Locomotion.init(r);
+    Locomotion.gather(c, r);
+
+    // Exactly one state-machine tick per frame. Running it twice meant a fly
+    // key press toggled on and immediately back off in the same frame.
+    const ctx = {
+      grounded: L.flying ? false : !!r.grounded,
+      swimming: r.state === "swim",
+      climbing: r.state === "climb"
+    };
+    const st = Locomotion.update(c, e, dt, ctx);
+    r.input.flyPressed = false;                 // edge consumed
+
+    if (L.flying) { Locomotion.flyMove(c, e, dt); r.state = "fly"; r.loco = L; r.stamina = L.stamina; return; }
+
+    const before = c.data.speed;
+    if (st.state === "sprint" || st.state === "slide") c.data.speed = before * st.mul;
+    try { orig(c, e, dt, scene); } finally { c.data.speed = before; }
+
+    // the original sets r.state from its own reduced set; keep the richer one
+    if (L.slideT > 0) r.state = "slide";
+    else if (st.state === "sprint" && r.grounded) r.state = "sprint";
+    r.loco = L;
+    r.stamina = L.stamina;
+  };
+})();
+
+/* ------------------------------------------------------------ CAMERA ----- */
+/**
+ * Instant perspective switching. Swapping the mode alone leaves the rig
+ * interpolating from wherever it was, which reads as a lurch; this snaps the
+ * rig so the change lands on the very next frame.
+ */
+const CameraModes = {
+  order: ["first", "third", "topdown", "isometric", "side", "free", "cinematic"],
+  locked: false,
+
+  comp() { return Runtime.camComp || (Engine.scene && Engine.scene.components("Camera")[0]) || null; },
+
+  set(mode, opts = {}) {
+    const c = this.comp();
+    if (!c) return false;
+    if (!this.order.includes(mode)) return false;
+    c.data.mode = mode;
+    const rt = c.runtime || (c.runtime = {});
+    rt.snap = true;                       // rigs honour this to skip smoothing
+    rt.blend = 0;
+    // put the rig where the new mode wants it immediately
+    const cam = Runtime.camera || Engine.activeCamera;
+    const ent = Runtime.cameraEntity || c.entity;
+    if (cam && ent && !opts.smooth) {
+      try { CameraRig.update(c, ent, cam, 0, Engine.scene); } catch (e) { }
+    }
+    ScriptRuntime.broadcast("cameraMode", mode);
+    return true;
+  },
+
+  /** First <-> third with one call, the common in-game toggle. */
+  toggleView() {
+    const c = this.comp();
+    if (!c) return null;
+    const next = c.data.mode === "first" ? "third" : "first";
+    this.set(next);
+    return next;
+  },
+
+  cycle() {
+    const c = this.comp();
+    if (!c) return null;
+    const i = this.order.indexOf(c.data.mode);
+    const next = this.order[(i + 1) % this.order.length];
+    this.set(next);
+    return next;
+  },
+
+  /** Camera lock: freeze the rig where it is and ignore look input. */
+  lock(on) {
+    this.locked = on === undefined ? !this.locked : !!on;
+    const c = this.comp();
+    if (c) { c.runtime = c.runtime || {}; c.runtime.locked = this.locked; }
+    return this.locked;
+  },
+
+  /** Free camera: detach from the target and fly with the movement keys. */
+  free(on) {
+    const c = this.comp();
+    if (!c) return false;
+    if (on === undefined) on = c.data.mode !== "free";
+    if (on) { c.runtime = c.runtime || {}; c.runtime.prevMode = c.data.mode; this.set("free"); }
+    else this.set((c.runtime && c.runtime.prevMode) || "third");
+    return on;
+  },
+
+  update() {
+    if (!Runtime.playing) return;
+    if (Input.pressed("viewToggle")) this.toggleView();
+    if (Input.pressed("camLock")) {
+      const on = this.lock();
+      Runtime.hudMessage && Runtime.hudMessage(on ? "🔒 الكاميرا مثبتة" : "🔓 الكاميرا حرة", 1.2);
+    }
+  }
+};
+
+/* Honour the lock: a locked rig keeps its transform. */
+(function hookRig() {
+  const orig = CameraRig.update.bind(CameraRig);
+  CameraRig.update = function (comp, ent, cam, dt, scene) {
+    if (comp && comp.runtime && comp.runtime.locked) return;
+    if (comp && comp.runtime && comp.runtime.snap) { comp.runtime.snap = false; return orig(comp, ent, cam, 0, scene); }
+    return orig(comp, ent, cam, dt, scene);
+  };
+})();
+
+const _simLoco = Engine.simulate.bind(Engine);
+Engine.simulate = function (dt, scene) { _simLoco(dt, scene); CameraModes.update(); };
+
+const _stopLoco = Runtime.stop.bind(Runtime);
+Runtime.stop = function () { CameraModes.locked = false; return _stopLoco(); };
+
+/* -------------------------------------------------------- SCRIPT ACCESS -- */
+(function wireLoco() {
+  const E = e => NovaAPI.entOf(e);
+  const S = v => v === null || v === undefined ? "" : String(v);
+  const cc = e => { const x = E(e); return x && x.getComponent("CharacterController"); };
+
+  const NS_Move = nsdef("Move", "الحركة", [
+    ["Move.state(entity)", e => { const c = cc(e); return c && c.runtime.loco ? c.runtime.loco.state : (c ? c.runtime.state || "idle" : ""); }, "حالة الحركة الحالية"],
+    ["Move.isGrounded(entity)", e => { const c = cc(e); return !!(c && c.runtime.grounded); }, "هل على الأرض"],
+    ["Move.speed(entity)", e => { const c = cc(e); return c ? c.runtime.speed || 0 : 0; }, "السرعة الأفقية"],
+    ["Move.stamina(entity)", e => { const c = cc(e); const L = c && c.runtime.loco; return L && L.stamina !== Infinity ? L.stamina : -1; }, "الطاقة المتبقية (-1 = بلا حد)"],
+    ["Move.walk(entity)", e => { const c = cc(e); if (c) { c.runtime.input.run = false; c.runtime.input.sprint = false; } }, "المشي"],
+    ["Move.run(entity, on)", (e, v) => { const c = cc(e); if (c) c.runtime.input.run = v === undefined ? true : truthy(v); }, "الجري"],
+    ["Move.sprint(entity, on)", (e, v) => { const c = cc(e); if (c) c.runtime.input.sprint = v === undefined ? true : truthy(v); }, "العدو السريع"],
+    ["Move.crouch(entity, on)", (e, v) => { const c = cc(e); if (c) { c.runtime.input.crouch = v === undefined ? true : truthy(v); c.data.crouching = c.runtime.input.crouch; } }, "الانحناء"],
+    ["Move.slide(entity)", e => { const c = cc(e); if (c) c.runtime.input.slidePressed = true; }, "انزلاق"],
+    ["Move.jump(entity)", e => { const c = cc(e); if (c) c.runtime.input.jump = true; }, "قفزة"],
+    ["Move.fly(entity, on)", (e, v) => {
+      const c = cc(e); if (!c) return false;
+      const L = Locomotion.init(c.runtime);
+      L.flying = v === undefined ? !L.flying : truthy(v);
+      c.data.canFly = true;
+      c.runtime.vel.set(0, 0, 0);
+      return L.flying;
+    }, "تفعيل/إيقاف وضع الطيران"],
+    ["Move.isFlying(entity)", e => { const c = cc(e); return !!(c && c.runtime.loco && c.runtime.loco.flying); }, "هل يطير"],
+    ["Move.setDirection(entity, x, y)", (e, x, y) => { const c = cc(e); if (c) { c.data.autoInput = false; c.runtime.input.move.set(num(x), num(y)); } }, "توجيه يدوي (-1 إلى 1)"],
+    ["Move.setSpeed(entity, v)", (e, v) => { const c = cc(e); if (c) c.data.speed = num(v); }, "سرعة المشي الأساسية"],
+    ["Move.stop(entity)", e => { const c = cc(e); if (c) { c.runtime.input.move.set(0, 0); c.runtime.vel.x = 0; c.runtime.vel.z = 0; } }, "إيقاف فوري"]
+  ]);
+
+  const NS_View = nsdef("View", "المنظور", [
+    ["View.set(mode)", m => CameraModes.set(S(m)), "تعيين المنظور فورًا: first/third/topdown/isometric/side/free/cinematic"],
+    ["View.get()", () => { const c = CameraModes.comp(); return c ? c.data.mode : ""; }, "المنظور الحالي"],
+    ["View.toggle()", () => CameraModes.toggleView(), "تبديل بين المنظور الأول والثالث"],
+    ["View.cycle()", () => CameraModes.cycle(), "الانتقال للمنظور التالي"],
+    ["View.first()", () => CameraModes.set("first"), "منظور أول"],
+    ["View.third()", () => CameraModes.set("third"), "منظور ثالث"],
+    ["View.free(on)", v => CameraModes.free(v === undefined ? undefined : truthy(v)), "كاميرا حرة"],
+    ["View.lock(on)", v => CameraModes.lock(v === undefined ? undefined : truthy(v)), "تثبيت الكاميرا"],
+    ["View.isLocked()", () => CameraModes.locked, "هل الكاميرا مثبتة"]
+  ]);
+
+  Object.assign(NovaAPI.builtins, { Move: NS_Move, View: NS_View });
+  if (typeof NovaComplete !== "undefined") NovaComplete._cache = null;
+})();
+
+NOVA.Locomotion = Locomotion; NOVA.CameraModes = CameraModes;
+</script>
 <script data-nova="editor">
 /* ============================================================================
  * NOVA ENGINE — 27 · DOCS · TEMPLATES · BOOTSTRAP · MAIN LOOP
