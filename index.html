@@ -14553,6 +14553,7 @@ const CodeEditor = {
     tools.appendChild(el("button", { class: "ibtn", html: ICON.plus, title: "ملف جديد", onClick: () => this.newScript() }));
     tools.appendChild(el("button", { class: "ibtn", html: "▶", title: "تشغيل الملف الآن", onClick: () => this.runCurrent() }));
     tools.appendChild(el("button", { class: "ibtn", html: "📖", title: "مرجع اللغة", onClick: () => Docs.showLanguage() }));
+    tools.appendChild(el("button", { class: "ibtn", html: "📚", title: "مرجع الدوال الكامل (F2)", onClick: () => Docs.showAPI() }));
     tools.appendChild(el("button", { class: "ibtn", html: ICON.save, title: "تنزيل", onClick: () => this.download() }));
     host.appendChild(tools);
     const wrap = el("div", { class: "codewrap" });
@@ -17155,6 +17156,7 @@ const MENUS = [
     label: "مساعدة", items: [
       { label: "الدليل السريع", icon: "🚀", action: () => Docs.showQuickStart() },
       { label: "مرجع لغة NovaScript", icon: "📖", key: "F1", action: () => Docs.showLanguage() },
+      { label: "مرجع الدوال الكامل", icon: "📚", key: "F2", action: () => Docs.showAPI() },
       { label: "مرجع المكونات", icon: "🧩", action: () => Docs.showComponents() },
       { label: "اختصارات لوحة المفاتيح", icon: "⌨️", action: () => Docs.showShortcuts() },
       { label: "أمثلة ودروس", icon: "🎓", action: () => Docs.showTutorials() },
@@ -17288,7 +17290,7 @@ const Shortcuts = {
     ["Ctrl+Z / Ctrl+Y", "تراجع / إعادة"], ["Ctrl+S", "حفظ المشروع"], ["Ctrl+N", "مشروع جديد"],
     ["Ctrl+O", "فتح مشروع"], ["Ctrl+B", "التصدير والنشر"], ["Ctrl+I", "استيراد ملفات"], ["Ctrl+P", "تشغيل / إيقاف"],
     ["Ctrl+L", "الوضع الليلي/الفاتح"], ["Ctrl+A", "تحديد الكل"], ["Escape", "إيقاف التشغيل / إغلاق النوافذ"],
-    ["F1", "مرجع اللغة"], ["F5", "تشغيل"], ["مسافة", "الطيران بالكاميرا (مع WASD)"],
+    ["F1", "مرجع اللغة"], ["F2", "مرجع الدوال الكامل"], ["F5", "تشغيل"], ["مسافة", "الطيران بالكاميرا (مع WASD)"],
     ["WASD + QE", "تحريك كاميرا المحرر"], ["زر أيمن + سحب", "تدوير العرض"], ["زر أوسط + سحب", "تحريك العرض"],
     ["عجلة الفأرة", "تقريب/تبعيد"], ["Ctrl+مسافة", "إكمال تلقائي في المحرر"]
   ],
@@ -17304,6 +17306,7 @@ const Shortcuts = {
         return;
       }
       if (e.key === "F1") { e.preventDefault(); Docs.showLanguage(); return; }
+      if (e.key === "F2") { e.preventDefault(); Docs.showAPI(); return; }
       if (e.key === "F5") { e.preventDefault(); Runtime.playing ? Runtime.restart() : Runtime.start(); return; }
       if (typing) {
         if (ctrl && e.key.toLowerCase() === "s") { e.preventDefault(); ProjectManager.save(); }
@@ -19553,7 +19556,8 @@ const MobileUI = {
       { icon: "🖥️", label: "واجهة الحاسوب", action: () => { this.forced = false; this.sync(); toast("تم التبديل لواجهة الحاسوب", "من قائمة عرض يمكن الرجوع"); } },
       "-",
       { icon: "📖", label: "الدليل السريع", action: () => Docs.showQuickStart() },
-      { icon: "🔤", label: "مرجع اللغة", action: () => Docs.showLanguage() }
+      { icon: "🔤", label: "مرجع اللغة", action: () => Docs.showLanguage() },
+      { icon: "📚", label: "مرجع الدوال الكامل", action: () => Docs.showAPI() }
     ]);
   },
   showViewOptions() {
@@ -20112,6 +20116,485 @@ const TouchDrag = {
 TouchDrag.init();
 NOVA.TouchDrag = TouchDrag;
 </script>
+<script>
+/* ============================================================================
+ * NOVA ENGINE — 35 · LAMBDAS
+ *
+ *   The functional half of the standard library — List.filter, List.map,
+ *   List.sortBy, List.find — takes a function argument, and there was no way
+ *   to write one inline. Named functions already work as values because
+ *   FuncDecl declares them into scope; this adds the anonymous form:
+ *
+ *       make big = List.filter(nums, fn(n) -> n > 3)
+ *       make names = List.map(enemies, fn(e) -> e.name)
+ *       List.sortBy(items, fn(i) -> i.distance)
+ *
+ *   `->` was already lexed as a two-character operator and unused, so no
+ *   change to the lexer is needed.
+ * ========================================================================= */
+
+NS_KEYWORDS["fn"] = "fn";
+NS_KEYWORDS["lambda"] = "fn";
+NS_KEYWORDS["دالة_مجهولة"] = "fn";
+
+const _NS_lambdaPrimary = NSParser.prototype.primary;
+NSParser.prototype.primary = function () {
+  if (this.cur && this.cur.type === "KW" && this.cur.value === "fn") {
+    const line = this.cur.line, col = this.cur.col;
+    this.next();
+    const params = [];
+    if (this.isOP("(")) {
+      this.next();
+      while (!this.isOP(")") && this.cur && this.cur.type !== "EOF") {
+        const p = this.identName("معاملاً");
+        params.push(p);
+        this.declared.add(p);        // locals, so diagnostics do not flag them
+        if (this.isOP(",")) this.next(); else break;
+      }
+      this.expect("OP", ")", "')'");
+    }
+    if (this.isOP("->")) this.next();
+    else this.error("توقعت '->' بعد معاملات الدالة المجهولة");
+    const body = this.expr();
+    return { type: "Lambda", params, body, line, col };
+  }
+  return _NS_lambdaPrimary.call(this);
+};
+
+const _NS_lambdaExpr = NSCompiler.prototype.expr;
+NSCompiler.prototype.expr = function (e) {
+  if (e && e.type === "Lambda") {
+    const body = this.expr(e.body);
+    const params = e.params;
+    // Reuse the same calling convention as declared functions, so a lambda is
+    // indistinguishable from a named one at the call site.
+    return (ctx, sc) => {
+      const f = function (...args) {
+        const inner = new NSScope(sc);
+        params.forEach((p, i) => inner.declare(p, args[i] === undefined ? null : args[i]));
+        inner.declare("args", args);
+        return body(f.__ctx || ctx, inner);
+      };
+      f.__nova = true; f.__params = params; f.__ctx = ctx;
+      return f;
+    };
+  }
+  return _NS_lambdaExpr.call(this, e);
+};
+</script>
+<script>
+/* ============================================================================
+ * NOVA ENGINE — 34 · NOVASCRIPT STANDARD LIBRARY
+ *
+ *   Every entry is declared once as [signature, implementation, description].
+ *   The namespace object, the editor's autocomplete and the reference manual
+ *   are all generated from that single declaration, so the documentation can
+ *   never drift out of step with what the language actually does.
+ * ========================================================================= */
+
+const NS_LIB = {};        // namespace -> [{ name, sig, desc }]
+
+/** Build a namespace object and register its documentation in one pass. */
+function nsdef(nsName, label, entries) {
+  const obj = {}, docs = [];
+  for (const [sig, impl, desc] of entries) {
+    const full = sig.split("(")[0].trim();               // "Vec.make"
+    const name = full.slice(full.lastIndexOf(".") + 1);  // "make"
+    obj[name] = impl;
+    docs.push({ name, sig, desc });
+  }
+  NS_LIB[nsName] = { label, members: docs };
+  return obj;
+}
+
+/* ---------------------------------------------------------- camera shake --
+ * Applied after the rig has positioned the camera, so it composes with every
+ * camera mode instead of fighting them. Decays smoothly to zero.
+ * ------------------------------------------------------------------------ */
+const CamShake = {
+  t: 0, dur: 0, strength: 0,
+  fire(strength, time) { this.strength = Math.max(this.strength, strength); this.dur = Math.max(this.dur, time); this.t = this.dur; },
+  stop() { this.t = 0; this.dur = 0; this.strength = 0; },
+  apply(cam, dt) {
+    if (this.t <= 0 || !cam) return;
+    this.t = Math.max(0, this.t - dt);
+    const k = this.dur > 0 ? this.t / this.dur : 0;
+    const a = this.strength * k * k;            // quadratic falloff reads best
+    cam.position.x += (Math.random() * 2 - 1) * a;
+    cam.position.y += (Math.random() * 2 - 1) * a;
+    cam.position.z += (Math.random() * 2 - 1) * a;
+  }
+};
+const _origRigUpdate = CameraRig.update.bind(CameraRig);
+CameraRig.update = function (comp, ent, cam, dt, sc) {
+  const r = _origRigUpdate(comp, ent, cam, dt, sc);
+  CamShake.apply(cam, dt);
+  return r;
+};
+NOVA.CamShake = CamShake;
+
+(function buildStdLib() {
+  const V = v => NovaAPI.vecOf(v);
+  const E = e => NovaAPI.entOf(e);
+  const S = v => (v === null || v === undefined) ? "" : String(v);
+  const arr = v => Array.isArray(v) ? v : (v === null || v === undefined ? [] : [v]);
+  const call = (f, ...a) => (typeof f === "function" ? f(...a) : undefined);
+  const scene = () => Engine.scene;
+
+  /* ------------------------------------------------------------- Vec ---- */
+  const NS_Vec = nsdef("Vec", "متجهات", [
+    ["Vec.make(x, y, z)", (x, y, z) => new Vec3(num(x), num(y), num(z)), "ينشئ متجهًا ثلاثي الأبعاد"],
+    ["Vec.zero()", () => new Vec3(0, 0, 0), "المتجه الصفري (0,0,0)"],
+    ["Vec.one()", () => new Vec3(1, 1, 1), "متجه الواحدات (1,1,1)"],
+    ["Vec.up()", () => new Vec3(0, 1, 0), "الاتجاه لأعلى"],
+    ["Vec.down()", () => new Vec3(0, -1, 0), "الاتجاه لأسفل"],
+    ["Vec.right()", () => new Vec3(1, 0, 0), "الاتجاه لليمين"],
+    ["Vec.left()", () => new Vec3(-1, 0, 0), "الاتجاه لليسار"],
+    ["Vec.forward()", () => new Vec3(0, 0, -1), "الاتجاه للأمام (سالب Z)"],
+    ["Vec.back()", () => new Vec3(0, 0, 1), "الاتجاه للخلف"],
+    ["Vec.add(a, b)", (a, b) => V(a).clone().add(V(b)), "جمع متجهين"],
+    ["Vec.sub(a, b)", (a, b) => V(a).clone().sub(V(b)), "طرح متجهين"],
+    ["Vec.mul(a, s)", (a, s) => V(a).clone().mulS(num(s)), "ضرب متجه في عدد"],
+    ["Vec.div(a, s)", (a, s) => V(a).clone().mulS(1 / (num(s) || 1)), "قسمة متجه على عدد"],
+    ["Vec.dot(a, b)", (a, b) => V(a).dot(V(b)), "الضرب القياسي"],
+    ["Vec.cross(a, b)", (a, b) => V(a).clone().cross(V(b)), "الضرب الاتجاهي"],
+    ["Vec.length(v)", v => V(v).len(), "طول المتجه"],
+    ["Vec.lengthSq(v)", v => V(v).len2(), "مربع الطول (أسرع للمقارنة)"],
+    ["Vec.normalize(v)", v => V(v).clone().norm(), "متجه وحدة بنفس الاتجاه"],
+    ["Vec.distance(a, b)", (a, b) => V(a).clone().sub(V(b)).len(), "المسافة بين نقطتين"],
+    ["Vec.lerp(a, b, t)", (a, b, t) => V(a).clone().lerp(V(b), M.clamp01(num(t))), "استيفاء خطي بين متجهين"],
+    ["Vec.moveToward(a, b, step)", (a, b, s) => {
+      const d = V(b).clone().sub(V(a)); const L = d.len(); const st = num(s);
+      return L <= st || L === 0 ? V(b).clone() : V(a).clone().add(d.mulS(st / L));
+    }, "يتحرك من a نحو b بمقدار محدد دون تجاوزه"],
+    ["Vec.angle(a, b)", (a, b) => {
+      const x = V(a).clone().norm(), y = V(b).clone().norm();
+      return Math.acos(M.clamp(x.dot(y), -1, 1)) * RAD2DEG;
+    }, "الزاوية بين متجهين بالدرجات"],
+    ["Vec.reflect(v, n)", (v, n) => { const N = V(n).clone().norm(); return V(v).clone().sub(N.clone().mulS(2 * V(v).dot(N))); }, "انعكاس متجه حول سطح"],
+    ["Vec.project(v, on)", (v, on) => { const N = V(on).clone().norm(); return N.mulS(V(v).dot(N)); }, "إسقاط متجه على آخر"],
+    ["Vec.scale(a, b)", (a, b) => { const x = V(a), y = V(b); return new Vec3(x.x * y.x, x.y * y.y, x.z * y.z); }, "ضرب مركّبة بمركّبة"],
+    ["Vec.negate(v)", v => V(v).clone().mulS(-1), "عكس اتجاه المتجه"],
+    ["Vec.clampLength(v, max)", (v, m) => { const u = V(v).clone(); const L = u.len(); return L > num(m) ? u.mulS(num(m) / L) : u; }, "تحديد أقصى طول للمتجه"],
+    ["Vec.rotateY(v, deg)", (v, d) => {
+      const u = V(v), a = num(d) * DEG2RAD, c = Math.cos(a), s = Math.sin(a);
+      return new Vec3(u.x * c + u.z * s, u.y, -u.x * s + u.z * c);
+    }, "تدوير متجه حول محور Y"],
+    ["Vec.flatten(v)", v => { const u = V(v).clone(); u.y = 0; return u; }, "تصفير المحور Y (حركة أفقية)"],
+    ["Vec.x(v)", v => V(v).x, "المركّبة X"],
+    ["Vec.y(v)", v => V(v).y, "المركّبة Y"],
+    ["Vec.z(v)", v => V(v).z, "المركّبة Z"]
+  ]);
+
+  /* ------------------------------------------------------------ Color --- */
+  const clamp255 = v => M.clamp(Math.round(num(v)), 0, 255);
+  const toHex = (r, g, b) => "#" + [r, g, b].map(v => clamp255(v).toString(16).padStart(2, "0")).join("");
+  const parseHex = h => {
+    let s = S(h).replace("#", "");
+    if (s.length === 3) s = s.split("").map(c => c + c).join("");
+    return [parseInt(s.slice(0, 2), 16) || 0, parseInt(s.slice(2, 4), 16) || 0, parseInt(s.slice(4, 6), 16) || 0];
+  };
+  const NS_Color = nsdef("Color", "ألوان", [
+    ["Color.rgb(r, g, b)", (r, g, b) => toHex(r, g, b), "لون من مركّبات 0-255"],
+    ["Color.hex(text)", t => "#" + S(t).replace("#", ""), "لون من نص ست عشري"],
+    ["Color.hsv(h, s, v)", (h, s, v) => {
+      const H = ((num(h) % 360) + 360) % 360 / 60, S1 = M.clamp01(num(s)), V1 = M.clamp01(num(v));
+      const c = V1 * S1, x = c * (1 - Math.abs(H % 2 - 1)), m = V1 - c;
+      const t = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][Math.floor(H) % 6];
+      return toHex((t[0] + m) * 255, (t[1] + m) * 255, (t[2] + m) * 255);
+    }, "لون من تدرّج/تشبّع/سطوع"],
+    ["Color.lerp(a, b, t)", (a, b, t) => {
+      const A = parseHex(a), B = parseHex(b), u = M.clamp01(num(t));
+      return toHex(M.lerp(A[0], B[0], u), M.lerp(A[1], B[1], u), M.lerp(A[2], B[2], u));
+    }, "مزج لونين"],
+    ["Color.lighten(c, amount)", (c, a) => { const p = parseHex(c), u = M.clamp01(num(a)); return toHex(M.lerp(p[0], 255, u), M.lerp(p[1], 255, u), M.lerp(p[2], 255, u)); }, "تفتيح لون"],
+    ["Color.darken(c, amount)", (c, a) => { const p = parseHex(c), u = 1 - M.clamp01(num(a)); return toHex(p[0] * u, p[1] * u, p[2] * u); }, "تغميق لون"],
+    ["Color.red(c)", c => parseHex(c)[0], "مركّبة الأحمر"],
+    ["Color.green(c)", c => parseHex(c)[1], "مركّبة الأخضر"],
+    ["Color.blue(c)", c => parseHex(c)[2], "مركّبة الأزرق"],
+    ["Color.random()", () => toHex(Math.random() * 255, Math.random() * 255, Math.random() * 255), "لون عشوائي"],
+    ["Color.gray(v)", v => toHex(num(v) * 255, num(v) * 255, num(v) * 255), "رمادي بنسبة 0-1"],
+    ["Color.white()", () => "#ffffff", "أبيض"],
+    ["Color.black()", () => "#000000", "أسود"]
+  ]);
+
+  /* ----------------------------------------------------------- Random --- */
+  let _seed = 123456789;
+  const rnd = () => { _seed = (_seed * 1664525 + 1013904223) >>> 0; return _seed / 4294967296; };
+  let _useSeed = false;
+  const R = () => _useSeed ? rnd() : Math.random();
+  const NS_Random = nsdef("Random", "عشوائية", [
+    ["Random.value()", () => R(), "عدد عشوائي بين 0 و 1"],
+    ["Random.range(a, b)", (a, b) => num(a) + R() * (num(b) - num(a)), "عدد عشوائي ضمن مدى"],
+    ["Random.int(a, b)", (a, b) => Math.floor(num(a) + R() * (num(b) - num(a) + 1)), "عدد صحيح عشوائي شامل الطرفين"],
+    ["Random.sign()", () => R() < .5 ? -1 : 1, "‎-1 أو 1"],
+    ["Random.bool()", () => R() < .5, "صح أو خطأ"],
+    ["Random.chance(p)", p => R() < num(p), "صح باحتمال p (0-1)"],
+    ["Random.pick(list)", l => { const a = arr(l); return a.length ? a[Math.floor(R() * a.length)] : null; }, "عنصر عشوائي من قائمة"],
+    ["Random.shuffle(list)", l => { const a = arr(l).slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; } return a; }, "خلط قائمة"],
+    ["Random.onCircle(r)", r => { const a = R() * TAU, d = num(r); return new Vec3(Math.cos(a) * d, 0, Math.sin(a) * d); }, "نقطة على دائرة أفقية"],
+    ["Random.insideSphere(r)", r => {
+      const u = R(), a = R() * TAU, z = R() * 2 - 1, s = Math.sqrt(1 - z * z), d = num(r) * Math.cbrt(u);
+      return new Vec3(Math.cos(a) * s * d, z * d, Math.sin(a) * s * d);
+    }, "نقطة عشوائية داخل كرة"],
+    ["Random.gaussian(mean, dev)", (m, d) => {
+      const u = Math.max(1e-9, R()), v = R();
+      return num(m) + Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v) * num(d === undefined ? 1 : d);
+    }, "توزيع طبيعي (جاوس)"],
+    ["Random.color()", () => NS_Color.random(), "لون عشوائي"],
+    ["Random.seed(n)", n => { _seed = (num(n) >>> 0) || 1; _useSeed = true; }, "تثبيت البذرة لنتائج قابلة للتكرار"],
+    ["Random.unseed()", () => { _useSeed = false; }, "العودة للعشوائية الحقيقية"]
+  ]);
+
+  /* -------------------------------------------------------------- Str --- */
+  const NS_Str = nsdef("Str", "نصوص", [
+    ["Str.length(s)", s => S(s).length, "عدد الأحرف"],
+    ["Str.upper(s)", s => S(s).toUpperCase(), "أحرف كبيرة"],
+    ["Str.lower(s)", s => S(s).toLowerCase(), "أحرف صغيرة"],
+    ["Str.trim(s)", s => S(s).trim(), "إزالة الفراغات الطرفية"],
+    ["Str.split(s, sep)", (s, sep) => S(s).split(S(sep === undefined ? "," : sep)), "تقسيم نص إلى قائمة"],
+    ["Str.join(list, sep)", (l, sep) => arr(l).map(S).join(S(sep === undefined ? "," : sep)), "دمج قائمة في نص"],
+    ["Str.replace(s, find, to)", (s, f, t) => S(s).split(S(f)).join(S(t)), "استبدال كل التطابقات"],
+    ["Str.contains(s, part)", (s, p) => S(s).includes(S(p)), "هل يحتوي النص على جزء"],
+    ["Str.startsWith(s, part)", (s, p) => S(s).startsWith(S(p)), "هل يبدأ بـ"],
+    ["Str.endsWith(s, part)", (s, p) => S(s).endsWith(S(p)), "هل ينتهي بـ"],
+    ["Str.indexOf(s, part)", (s, p) => S(s).indexOf(S(p)), "موضع أول تطابق أو -1"],
+    ["Str.sub(s, start, count)", (s, a, c) => c === undefined ? S(s).slice(num(a)) : S(s).substr(num(a), num(c)), "جزء من النص"],
+    ["Str.charAt(s, i)", (s, i) => S(s).charAt(num(i)), "الحرف عند موضع"],
+    ["Str.pad(s, len, ch)", (s, l, c) => S(s).padStart(num(l), S(c === undefined ? " " : c)), "حشو النص لطول محدد"],
+    ["Str.repeat(s, n)", (s, n) => S(s).repeat(Math.max(0, num(n))), "تكرار نص"],
+    ["Str.reverse(s)", s => S(s).split("").reverse().join(""), "عكس النص"],
+    ["Str.toNumber(s)", s => { const v = parseFloat(S(s)); return isNaN(v) ? 0 : v; }, "تحويل نص إلى عدد"],
+    ["Str.format(s, values)", (s, v) => { const a = arr(v); return S(s).replace(/\{(\d+)\}/g, (m, i) => S(a[+i])); }, "تنسيق نص بقيم {0} {1}"],
+    ["Str.number(n, decimals)", (n, d) => num(n).toFixed(d === undefined ? 0 : num(d)), "تنسيق عدد بخانات عشرية"],
+    ["Str.time(seconds)", s => { const t = Math.max(0, Math.floor(num(s))); return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"); }, "تحويل ثوانٍ إلى د:ث"],
+    ["Str.isEmpty(s)", s => S(s).trim().length === 0, "هل النص فارغ"]
+  ]);
+
+  /* ------------------------------------------------------------- List --- */
+  const NS_List = nsdef("List", "قوائم", [
+    ["List.make(items)", i => arr(i).slice(), "ينشئ قائمة"],
+    ["List.length(l)", l => arr(l).length, "عدد العناصر"],
+    ["List.add(l, item)", (l, i) => { arr(l).push(i); return l; }, "إضافة عنصر في النهاية"],
+    ["List.insert(l, index, item)", (l, x, i) => { arr(l).splice(num(x), 0, i); return l; }, "إدراج عنصر في موضع"],
+    ["List.removeAt(l, index)", (l, x) => { arr(l).splice(num(x), 1); return l; }, "حذف عنصر بالموضع"],
+    ["List.remove(l, item)", (l, i) => { const a = arr(l), x = a.indexOf(i); if (x >= 0) a.splice(x, 1); return l; }, "حذف أول تطابق"],
+    ["List.indexOf(l, item)", (l, i) => arr(l).indexOf(i), "موضع العنصر أو -1"],
+    ["List.contains(l, item)", (l, i) => arr(l).includes(i), "هل توجد القيمة"],
+    ["List.clear(l)", l => { arr(l).length = 0; return l; }, "تفريغ القائمة"],
+    ["List.get(l, index)", (l, i) => arr(l)[num(i)], "العنصر عند موضع"],
+    ["List.set(l, index, v)", (l, i, v) => { arr(l)[num(i)] = v; return l; }, "تعيين عنصر"],
+    ["List.first(l)", l => arr(l)[0], "أول عنصر"],
+    ["List.last(l)", l => { const a = arr(l); return a[a.length - 1]; }, "آخر عنصر"],
+    ["List.slice(l, from, to)", (l, a, b) => arr(l).slice(num(a), b === undefined ? undefined : num(b)), "شريحة من القائمة"],
+    ["List.reverse(l)", l => arr(l).slice().reverse(), "قلب الترتيب"],
+    ["List.sort(l)", l => arr(l).slice().sort((a, b) => (typeof a === "number" && typeof b === "number") ? a - b : S(a).localeCompare(S(b))), "ترتيب تصاعدي"],
+    ["List.sortBy(l, fn)", (l, f) => arr(l).slice().sort((a, b) => num(call(f, a)) - num(call(f, b))), "ترتيب حسب دالة"],
+    ["List.map(l, fn)", (l, f) => arr(l).map(v => call(f, v)), "تحويل كل عنصر"],
+    ["List.filter(l, fn)", (l, f) => arr(l).filter(v => truthy(call(f, v))), "ترشيح العناصر"],
+    ["List.find(l, fn)", (l, f) => arr(l).find(v => truthy(call(f, v))), "أول عنصر يحقق الشرط"],
+    ["List.any(l, fn)", (l, f) => arr(l).some(v => truthy(call(f, v))), "هل يحقق أي عنصر الشرط"],
+    ["List.all(l, fn)", (l, f) => arr(l).every(v => truthy(call(f, v))), "هل تحقق كل العناصر الشرط"],
+    ["List.count(l, fn)", (l, f) => f === undefined ? arr(l).length : arr(l).filter(v => truthy(call(f, v))).length, "عدد العناصر المحققة"],
+    ["List.sum(l)", l => arr(l).reduce((a, b) => a + num(b), 0), "المجموع"],
+    ["List.avg(l)", l => { const a = arr(l); return a.length ? a.reduce((x, y) => x + num(y), 0) / a.length : 0; }, "المتوسط"],
+    ["List.min(l)", l => Math.min(...arr(l).map(num)), "أصغر قيمة"],
+    ["List.max(l)", l => Math.max(...arr(l).map(num)), "أكبر قيمة"],
+    ["List.unique(l)", l => [...new Set(arr(l))], "إزالة التكرار"],
+    ["List.concat(a, b)", (a, b) => arr(a).concat(arr(b)), "دمج قائمتين"],
+    ["List.shuffle(l)", l => NS_Random.shuffle(l), "خلط عشوائي"],
+    ["List.range(a, b, step)", (a, b, s) => { const out = [], st = num(s || 1); for (let i = num(a); st > 0 ? i <= num(b) : i >= num(b); i += st) out.push(i); return out; }, "قائمة أعداد ضمن مدى"],
+    ["List.nearest(l, point)", (l, p) => {
+      const target = V(p); let best = null, bd = Infinity;
+      for (const it of arr(l)) { const d = V(it).clone().sub(target).len2(); if (d < bd) { bd = d; best = it; } }
+      return best;
+    }, "أقرب كائن/نقطة إلى موضع"]
+  ]);
+
+  /* ------------------------------------------------------------ Debug --- */
+  const dbgLines = [];
+  const NS_Debug = nsdef("Debug", "تنقيح", [
+    ["Debug.log(value)", v => NovaLog.log(fmtVal(v), "script"), "طباعة قيمة في الطرفية"],
+    ["Debug.warn(value)", v => NovaLog.warn(fmtVal(v), "script"), "تحذير في الطرفية"],
+    ["Debug.error(value)", v => NovaLog.err(fmtVal(v), "script"), "خطأ في الطرفية"],
+    ["Debug.line(from, to, color)", (a, b, c) => { dbgLines.push({ a: V(a).clone(), b: V(b).clone(), c: S(c || "#4da3ff"), life: .05 }); }, "رسم خط في المشهد"],
+    ["Debug.ray(origin, dir, len, color)", (o, d, l, c) => {
+      const s = V(o).clone(), e = s.clone().add(V(d).clone().norm().mulS(num(l === undefined ? 1 : l)));
+      dbgLines.push({ a: s, b: e, c: S(c || "#ffb648"), life: .05 });
+    }, "رسم شعاع"],
+    ["Debug.box(center, size, color)", (p, s, c) => {
+      const m = V(p), h = V(s === undefined ? 1 : s).clone().mulS(.5), col = S(c || "#3ddc84");
+      const pts = [];
+      for (let i = 0; i < 8; i++) pts.push(new Vec3(m.x + (i & 1 ? h.x : -h.x), m.y + (i & 2 ? h.y : -h.y), m.z + (i & 4 ? h.z : -h.z)));
+      const edges = [[0, 1], [0, 2], [0, 4], [3, 1], [3, 2], [3, 7], [5, 1], [5, 4], [5, 7], [6, 2], [6, 4], [6, 7]];
+      for (const [x, y] of edges) dbgLines.push({ a: pts[x], b: pts[y], c: col, life: .05 });
+    }, "رسم صندوق سلكي"],
+    ["Debug.sphere(center, radius, color)", (p, r, c) => {
+      const m = V(p), rad = num(r === undefined ? 1 : r), col = S(c || "#ff5f6b"), N = 16;
+      for (let axis = 0; axis < 3; axis++) for (let i = 0; i < N; i++) {
+        const a0 = i / N * TAU, a1 = (i + 1) / N * TAU;
+        const mk = a => axis === 0 ? new Vec3(Math.cos(a) * rad, Math.sin(a) * rad, 0)
+          : axis === 1 ? new Vec3(Math.cos(a) * rad, 0, Math.sin(a) * rad)
+            : new Vec3(0, Math.cos(a) * rad, Math.sin(a) * rad);
+        dbgLines.push({ a: mk(a0).add(m), b: mk(a1).add(m), c: col, life: .05 });
+      }
+    }, "رسم كرة سلكية"],
+    ["Debug.point(pos, color)", (p, c) => {
+      const m = V(p), col = S(c || "#ffffff"), s = .2;
+      dbgLines.push({ a: m.clone().add(new Vec3(-s, 0, 0)), b: m.clone().add(new Vec3(s, 0, 0)), c: col, life: .05 });
+      dbgLines.push({ a: m.clone().add(new Vec3(0, -s, 0)), b: m.clone().add(new Vec3(0, s, 0)), c: col, life: .05 });
+      dbgLines.push({ a: m.clone().add(new Vec3(0, 0, -s)), b: m.clone().add(new Vec3(0, 0, s)), c: col, life: .05 });
+    }, "رسم علامة نقطة"],
+    ["Debug.clear()", () => { dbgLines.length = 0; }, "مسح كل الرسوم التنقيحية"],
+    ["Debug.assert(cond, message)", (c, m) => { if (!truthy(c)) NovaLog.err("تحقق فاشل: " + S(m), "script"); return truthy(c); }, "يسجل خطأ إذا كان الشرط خاطئًا"],
+    ["Debug.fps()", () => Math.round(Engine.fps || 0), "الإطارات في الثانية"],
+    ["Debug.entityCount()", () => scene() ? scene().entities.length : 0, "عدد الكائنات في المشهد"],
+    ["Debug.drawCalls()", () => (Engine.renderer && Engine.renderer.stats ? Engine.renderer.stats.draws : 0), "عدد نداءات الرسم"]
+  ]);
+  NOVA.debugLines = dbgLines;
+
+  /* ----------------------------------------------------------- Camera --- */
+  const camEnt = () => Runtime.cameraEntity || (scene() && scene().entities.find(e => e.getComponent("Camera")));
+  const camComp = () => Runtime.camComp || (camEnt() && camEnt().getComponent("Camera"));
+  const NS_Camera = nsdef("Camera", "كاميرا", [
+    ["Camera.position()", () => Engine.activeCamera ? Engine.activeCamera.position.clone() : new Vec3(), "موقع الكاميرا"],
+    ["Camera.setPosition(pos)", p => { const e = camEnt(); if (e) { e.setWorldPos(V(p)); e.markDirty(); } }, "نقل الكاميرا"],
+    ["Camera.lookAt(target)", t => { const e = camEnt(); if (e) { e.lookAt(V(t)); e.markDirty(); } }, "توجيه الكاميرا نحو هدف"],
+    ["Camera.forward()", () => Engine.activeCamera ? new Vec3(0, 0, -1).applyQuat(Engine.activeCamera.rotation) : new Vec3(0, 0, -1), "اتجاه نظر الكاميرا"],
+    ["Camera.setTarget(entity)", e => { const cc = camComp(); const x = E(e); if (cc && x) cc.data.target = x.id; }, "جعل الكاميرا تتبع كائنًا"],
+    ["Camera.setMode(mode)", m => { const cc = camComp(); if (cc) cc.data.mode = S(m); }, "نمط الكاميرا: first/third/top/orbit/free/side/fixed"],
+    ["Camera.setFov(deg)", v => { const cc = camComp(); if (cc) cc.data.fov = num(v); }, "مجال الرؤية بالدرجات"],
+    ["Camera.setDistance(d)", v => { const cc = camComp(); if (cc) cc.data.distance = num(v); }, "بعد الكاميرا في نمط المطاردة"],
+    ["Camera.shake(strength, time)", (s, t) => CamShake.fire(num(s), num(t === undefined ? .3 : t)), "اهتزاز الكاميرا"],
+    ["Camera.worldToScreen(pos)", p => {
+      const cam = Engine.activeCamera; if (!cam) return new Vec3();
+      const v = V(p).clone().applyMat4(cam.viewProj);
+      return new Vec3((v.x * .5 + .5) * (Runtime.canvas ? Runtime.canvas.width : 1), (1 - (v.y * .5 + .5)) * (Runtime.canvas ? Runtime.canvas.height : 1), v.z);
+    }, "تحويل نقطة عالمية إلى إحداثيات الشاشة"],
+    ["Camera.isVisible(entity)", e => {
+      const ent = E(e), cam = Engine.activeCamera; if (!ent || !cam) return false;
+      const v = ent.worldPos(new Vec3()).applyMat4(cam.viewProj);
+      return v.x >= -1.2 && v.x <= 1.2 && v.y >= -1.2 && v.y <= 1.2 && v.z >= -1 && v.z <= 1;
+    }, "هل الكائن داخل مجال الرؤية"]
+  ]);
+
+  /* ------------------------------------------------------------ Timer --- */
+  const timers = [];
+  let timerId = 1;
+  const NS_Timer = nsdef("Timer", "مؤقتات", [
+    ["Timer.after(seconds, fn)", (s, f) => { const id = timerId++; timers.push({ id, t: num(s), fn: f, every: 0 }); return id; }, "تنفيذ دالة بعد مدة"],
+    ["Timer.every(seconds, fn)", (s, f) => { const id = timerId++; timers.push({ id, t: num(s), fn: f, every: Math.max(.016, num(s)) }); return id; }, "تنفيذ دالة كل مدة"],
+    ["Timer.cancel(id)", id => { const i = timers.findIndex(t => t.id === num(id)); if (i >= 0) timers.splice(i, 1); }, "إلغاء مؤقت"],
+    ["Timer.cancelAll()", () => { timers.length = 0; }, "إلغاء كل المؤقتات"],
+    ["Timer.count()", () => timers.length, "عدد المؤقتات النشطة"]
+  ]);
+  NOVA.scriptTimers = timers;
+
+  /* ------------------------------------------------------------ Tween --- */
+  const NS_Tween = nsdef("Tween", "حركة ناعمة", [
+    ["Tween.to(entity, prop, value, time, ease)", (e, p, v, t, s) => Tween.start(E(e), S(p), v, num(t), S(s || "outQuad")), "تحريك خاصية نحو قيمة"],
+    ["Tween.move(entity, pos, time, ease)", (e, p, t, s) => Tween.start(E(e), "position", V(p), num(t), S(s || "outQuad")), "تحريك كائن إلى موضع"],
+    ["Tween.scale(entity, size, time, ease)", (e, p, t, s) => Tween.start(E(e), "scale", V(p), num(t), S(s || "outQuad")), "تغيير الحجم تدريجيًا"],
+    ["Tween.rotate(entity, euler, time, ease)", (e, p, t, s) => Tween.start(E(e), "rotation", V(p), num(t), S(s || "outQuad")), "تدوير تدريجي"],
+    ["Tween.stop(entity)", e => { const ent = E(e); Tween.list = Tween.list.filter(t => t.entity !== ent); }, "إيقاف حركات كائن"],
+    ["Tween.stopAll()", () => { Tween.list.length = 0; }, "إيقاف كل الحركات"],
+    ["Tween.count()", () => Tween.list.length, "عدد الحركات النشطة"],
+    ["Tween.eases()", () => Object.keys(Ease), "قائمة منحنيات التسارع المتاحة"]
+  ]);
+
+  /* ----------------------------------------------------------- Screen --- */
+  const NS_Screen = nsdef("Screen", "الشاشة", [
+    ["Screen.width()", () => Runtime.canvas ? Runtime.canvas.width : window.innerWidth, "عرض مساحة اللعب"],
+    ["Screen.height()", () => Runtime.canvas ? Runtime.canvas.height : window.innerHeight, "ارتفاع مساحة اللعب"],
+    ["Screen.aspect()", () => { const w = NS_Screen.width(), h = NS_Screen.height(); return h ? w / h : 1; }, "نسبة العرض للارتفاع"],
+    ["Screen.isPortrait()", () => NS_Screen.height() >= NS_Screen.width(), "هل الشاشة طولية"],
+    ["Screen.isMobile()", () => Platform.isMobile || Platform.isTouch, "هل الجهاز محمول"],
+    ["Screen.isTouch()", () => !!Platform.isTouch, "هل يدعم اللمس"],
+    ["Screen.dpr()", () => window.devicePixelRatio || 1, "كثافة البكسل"],
+    ["Screen.center()", () => new Vec3(NS_Screen.width() / 2, NS_Screen.height() / 2, 0), "مركز الشاشة"]
+  ]);
+
+  /* ------------------------------------------------------------- Tags --- */
+  const NS_Tags = nsdef("Tags", "وسوم", [
+    ["Tags.add(entity, tag)", (e, t) => { const x = E(e); if (x) x.tag = S(t); }, "تعيين وسم للكائن"],
+    ["Tags.get(entity)", e => { const x = E(e); return x ? x.tag || "" : ""; }, "وسم الكائن"],
+    ["Tags.has(entity, tag)", (e, t) => { const x = E(e); return !!x && x.tag === S(t); }, "هل يحمل الكائن الوسم"],
+    ["Tags.find(tag)", t => { const s = scene(); return s ? s.entities.find(e => e.tag === S(t)) || null : null; }, "أول كائن بالوسم"],
+    ["Tags.findAll(tag)", t => { const s = scene(); return s ? s.entities.filter(e => e.tag === S(t)) : []; }, "كل الكائنات بالوسم"],
+    ["Tags.count(tag)", t => NS_Tags.findAll(t).length, "عدد الكائنات بالوسم"],
+    ["Tags.nearest(from, tag)", (f, t) => NS_List.nearest(NS_Tags.findAll(t), f), "أقرب كائن بالوسم"],
+    ["Tags.list()", () => { const s = scene(); return s ? [...new Set(s.entities.map(e => e.tag).filter(Boolean))] : []; }, "كل الوسوم المستخدمة"]
+  ]);
+
+  /* -------------------------------------------------------------- Game -- */
+  const gs = { score: 0, lives: 3, level: 1, over: false, won: false, vars: {} };
+  const NS_Game = nsdef("Game", "حالة اللعبة", [
+    ["Game.score()", () => NovaAPI.score, "النقاط الحالية"],
+    ["Game.addScore(n)", n => { NovaAPI.score += num(n); Runtime.updateHUD(); return NovaAPI.score; }, "إضافة نقاط"],
+    ["Game.setScore(n)", n => { NovaAPI.score = num(n); Runtime.updateHUD(); return NovaAPI.score; }, "تعيين النقاط"],
+    ["Game.lives()", () => gs.lives, "عدد الأرواح"],
+    ["Game.addLives(n)", n => { gs.lives += num(n); return gs.lives; }, "إضافة أرواح"],
+    ["Game.setLives(n)", n => { gs.lives = num(n); return gs.lives; }, "تعيين الأرواح"],
+    ["Game.level()", () => gs.level, "المستوى الحالي"],
+    ["Game.setLevel(n)", n => { gs.level = num(n); return gs.level; }, "تعيين المستوى"],
+    ["Game.set(key, value)", (k, v) => { gs.vars[S(k)] = v; return v; }, "تخزين متغيّر عام للعبة"],
+    ["Game.get(key, fallback)", (k, d) => gs.vars[S(k)] !== undefined ? gs.vars[S(k)] : d, "قراءة متغيّر عام"],
+    ["Game.reset()", () => { NovaAPI.score = 0; gs.lives = 3; gs.level = 1; gs.vars = {}; }, "إعادة ضبط الحالة"],
+    ["Game.isOver()", () => !!Runtime.ended, "هل انتهت اللعبة"],
+    ["Game.result()", () => Runtime.ended || "", "نتيجة اللعبة: win أو lose أو فارغ"],
+    ["Game.gameOver()", () => GameLogic.lose(), "إنهاء اللعبة بالخسارة"],
+    ["Game.win()", () => GameLogic.win(), "إنهاء اللعبة بالفوز"],
+    ["Game.pause(on)", v => Runtime.pause(truthy(v)), "إيقاف/استئناف اللعبة"],
+    ["Game.isPaused()", () => !!Runtime.paused, "هل اللعبة متوقفة مؤقتًا"],
+    ["Game.restart()", () => Runtime.restart(), "إعادة تشغيل المشهد"]
+  ]);
+  NOVA.gameState = gs;
+
+  /* ------------------------------------------------------------ Assets -- */
+  const findAsset = (n, type) => {
+    for (const a of Project_.assets.values()) if (a.name === S(n) || a.name.replace(/\.[^.]+$/, "") === S(n)) { if (!type || a.type === type) return a; }
+    return null;
+  };
+  const NS_Assets = nsdef("Assets", "أصول", [
+    ["Assets.texture(name)", n => { const a = findAsset(n, "texture"); return a ? a.id : ""; }, "معرّف نسيج بالاسم"],
+    ["Assets.model(name)", n => { const a = findAsset(n, "model"); return a ? a.id : ""; }, "معرّف مجسم بالاسم"],
+    ["Assets.audio(name)", n => { const a = findAsset(n, "audio"); return a ? a.id : ""; }, "معرّف صوت بالاسم"],
+    ["Assets.data(name)", n => { const a = findAsset(n, "data"); return a ? (a.json !== undefined ? a.json : a.text) : null; }, "محتوى ملف بيانات"],
+    ["Assets.exists(name)", n => !!findAsset(n), "هل يوجد أصل بهذا الاسم"],
+    ["Assets.list(type)", t => [...Project_.assets.values()].filter(a => !t || a.type === S(t)).map(a => a.name), "أسماء الأصول من نوع"],
+    ["Assets.count()", () => Project_.assets.size, "عدد الأصول"]
+  ]);
+
+  /* ------------------------------------------------------------- wire --- */
+  Object.assign(NovaAPI.builtins, {
+    Vec: NS_Vec, Color: NS_Color, Random: NS_Random, Str: NS_Str, List: NS_List,
+    Debug: NS_Debug, Camera: NS_Camera, Timer: NS_Timer, Tween: NS_Tween,
+    Screen: NS_Screen, Tags: NS_Tags, Game: NS_Game, Assets: NS_Assets
+  });
+
+  /* Drive script timers and expire debug lines from the engine's own tick. */
+  const _simulate = Engine.simulate.bind(Engine);
+  Engine.simulate = function (dt, sc) {
+    _simulate(dt, sc);
+    for (let i = timers.length - 1; i >= 0; i--) {
+      const t = timers[i];
+      t.t -= dt;
+      if (t.t > 0) continue;
+      try { call(t.fn); } catch (e) { NovaLog.err("خطأ في مؤقت: " + e.message, "script"); }
+      if (t.every > 0) t.t += t.every; else timers.splice(i, 1);
+    }
+    for (let i = dbgLines.length - 1; i >= 0; i--) { dbgLines[i].life -= dt; if (dbgLines[i].life <= 0) dbgLines.splice(i, 1); }
+  };
+  const _rtStop = Runtime.stop.bind(Runtime);
+  Runtime.stop = function () { timers.length = 0; dbgLines.length = 0; CamShake.stop(); NS_Game.reset(); return _rtStop(); };
+})();
+
+/* Autocomplete rebuilds from builtins, so the new namespaces appear the moment
+ * they are registered — just drop the cache the editor may already hold. */
+if (typeof NovaComplete !== "undefined") NovaComplete._cache = null;
+
+NOVA.NS_LIB = NS_LIB;
+</script>
 <script data-nova="editor">
 /* ============================================================================
  * NOVA ENGINE — 27 · DOCS · TEMPLATES · BOOTSTRAP · MAIN LOOP
@@ -20270,6 +20753,57 @@ when collide with "Player":
       <h3>6) صدّر</h3>
       <p>Ctrl+B ← اختر HTML مستقل (ملف واحد)، PWA قابل للتثبيت، أو مشروع Android لإنتاج APK.</p>
       <p class="hint">نصيحة: كل لوحة فيها زر توثيق — اضغط بزر الفأرة الأيمن على تبويب اللوحة ← «توثيق هذه الأداة».</p>`);
+  },
+  /* ---- complete, searchable API manual, generated from the library itself */
+  showAPI(filter) {
+    const rows = [];
+    const esc = t => escapeHTML(String(t));
+    const push = (group, label, name, sig, desc) =>
+      rows.push({ group, label, name, sig, desc, hay: (name + " " + sig + " " + desc + " " + group).toLowerCase() });
+
+    for (const nsName of Object.keys(NS_LIB).sort()) {
+      const ns = NS_LIB[nsName];
+      for (const m of ns.members) push(nsName, ns.label, m.name, m.sig, m.desc);
+    }
+    // namespaces built before the standard library have no per-entry docs, so
+    // enumerate their members directly rather than leaving them out
+    for (const k of Object.keys(NovaAPI.builtins).sort()) {
+      const v = NovaAPI.builtins[k];
+      if (!v || typeof v !== "object" || Array.isArray(v) || NS_LIB[k]) continue;
+      for (const m of Object.keys(v)) push(k, k, k + "." + m, k + "." + m + (typeof v[m] === "function" ? "()" : ""), NS_DOCS[m] || "");
+    }
+    for (const k of Object.keys(NovaAPI.builtins).sort()) {
+      if (typeof NovaAPI.builtins[k] !== "function") continue;
+      push("عام", "دوال عامة", k, NS_DOCS[k] || k + "()", NS_DOCS[k] || "");
+    }
+
+    const total = rows.length;
+    const body = document.createElement("div");
+    const search = el("input", { class: "in", placeholder: "ابحث في كل الدوال…", style: "width:100%;margin-bottom:10px" });
+    const count = el("div", { class: "hint", style: "margin-bottom:8px" });
+    const list = el("div", { class: "docs", style: "max-height:56vh;overflow:auto" });
+    body.appendChild(search); body.appendChild(count); body.appendChild(list);
+
+    const render = q => {
+      const needle = String(q || "").trim().toLowerCase();
+      const hits = needle ? rows.filter(r => r.hay.includes(needle)) : rows;
+      count.textContent = needle ? `${hits.length} من ${total} دالة` : `${total} دالة في ${new Set(rows.map(r => r.group)).size} مجموعة`;
+      const byGroup = new Map();
+      for (const r of hits) { if (!byGroup.has(r.group)) byGroup.set(r.group, []); byGroup.get(r.group).push(r); }
+      let html = "";
+      for (const [g, items] of byGroup) {
+        html += `<h3 style="margin:14px 0 6px">${esc(g)} <span class="hint">· ${esc(items[0].label)} · ${items.length}</span></h3>`;
+        html += '<table class="data" style="width:100%"><tr><th style="width:44%">الاستدعاء</th><th>الوصف</th></tr>';
+        for (const it of items) html += `<tr><td class="mono" style="direction:ltr;text-align:left">${esc(it.sig)}</td><td>${esc(it.desc)}</td></tr>`;
+        html += "</table>";
+      }
+      list.innerHTML = html || '<p class="hint">لا نتائج.</p>';
+    };
+    render(filter);
+    search.value = filter || "";
+    search.addEventListener("input", () => render(search.value));
+    Modal.open({ title: "مرجع الدوال الكامل", icon: "📚", width: "860px", body });
+    setTimeout(() => search.focus(), 60);
   },
   showLanguage() {
     this.page("مرجع لغة NovaScript", `
