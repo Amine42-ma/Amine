@@ -22979,6 +22979,506 @@ const _etA = new Vec3();
   if (typeof NovaComplete !== "undefined") NovaComplete._cache = null;
 })();
 </script>
+<script>
+/* ============================================================================
+ * NOVA ENGINE — 42 · JAVASCRIPT & TYPESCRIPT SCRIPTING
+ *
+ *   JavaScript and TypeScript become first-class scripting languages alongside
+ *   NovaScript. A script is an ordinary .js or .ts file; the engine gives it a
+ *   familiar component shape:
+ *
+ *       class PlayerController {
+ *         speed = 6;
+ *         start() { log("ready"); }
+ *         update(dt) { this.entity.position.x += this.speed * dt; }
+ *         onCollide(other) { if (other.tag === "Enemy") Game.gameOver(); }
+ *       }
+ *
+ *   A beginner can also just write loose functions and it works:
+ *
+ *       function update(dt) { self.rotate(0, 60 * dt, 0); }
+ *
+ *   TypeScript is supported by stripping type syntax before running. That is
+ *   honest about what it is: there is no type checking, and no decorators or
+ *   namespaces. Everything else — annotations, interfaces, generics, `as`
+ *   casts, access modifiers, enums — is handled.
+ * ========================================================================= */
+
+/* ------------------------------------------------------- TYPE STRIPPING -- */
+const TSStrip = {
+  /**
+   * Remove TypeScript-only syntax. Works on a character scanner rather than a
+   * regex sweep so that strings, template literals, comments and regex
+   * literals are never touched.
+   */
+  transform(src) {
+    let s = String(src);
+    s = this.stripDeclarations(s);
+    // class-level type syntax: generic parameters and the implements clause.
+    // `implements` in particular is a strict-mode reserved word, so leaving it
+    // in makes the whole file fail to parse.
+    s = s.replace(/\bclass\s+([A-Za-z_$][\w$]*)\s*<[^>{]*>/g, "class $1");
+    s = s.replace(/(\bclass\s+[A-Za-z_$][\w$]*(?:\s+extends\s+[^\s{<]+(?:<[^>]*>)?)?)\s+implements\s+[^{]+/g, "$1 ");
+    s = this.scan(s);
+    s = s.replace(/\benum\s+(\w+)\s*\{([^}]*)\}/g, (m, name, body) => {
+      const parts = body.split(",").map(x => x.trim()).filter(Boolean);
+      let next = 0;
+      const entries = parts.map(p => {
+        const eq = p.indexOf("=");
+        if (eq < 0) { const k = p.trim(); const v = next++; return `${k}: ${v}, ${v}: ${JSON.stringify(k)}`; }
+        const k = p.slice(0, eq).trim(), raw = p.slice(eq + 1).trim();
+        const n = Number(raw);
+        if (!isNaN(n)) { next = n + 1; return `${k}: ${n}, ${n}: ${JSON.stringify(k)}`; }
+        return `${k}: ${raw}`;
+      });
+      return `const ${name} = { ${entries.join(", ")} };`;
+    });
+    return s;
+  },
+
+  /** Drop whole `interface X {...}`, `type X = ...;`, `declare ...` blocks. */
+  stripDeclarations(s) {
+    let out = "", i = 0;
+    while (i < s.length) {
+      const rest = s.slice(i);
+      let m = /^(\s*)(export\s+)?interface\s+\w+[\s\S]*?\{/.exec(rest);
+      if (m) {
+        const start = i + m[0].length - 1;
+        const end = this.matchBrace(s, start);
+        out += m[1];
+        i = end + 1;
+        continue;
+      }
+      m = /^(\s*)(export\s+)?type\s+\w+[^\n=]*=/.exec(rest);
+      if (m) {
+        let j = i + m[0].length, depth = 0;
+        while (j < s.length) {
+          const ch = s[j];
+          if (ch === "{" || ch === "(" || ch === "[") depth++;
+          else if (ch === "}" || ch === ")" || ch === "]") depth--;
+          else if ((ch === ";" || ch === "\n") && depth <= 0) break;
+          j++;
+        }
+        out += m[1];
+        i = j + 1;
+        continue;
+      }
+      m = /^(\s*)import\s+type\s[^\n;]*;?/.exec(rest);
+      if (m) { out += m[1]; i += m[0].length; continue; }
+      out += s[i];
+      i++;
+    }
+    return out;
+  },
+
+  matchBrace(s, open) {
+    let depth = 0;
+    for (let i = open; i < s.length; i++) {
+      if (s[i] === "{") depth++;
+      else if (s[i] === "}") { depth--; if (!depth) return i; }
+    }
+    return s.length - 1;
+  },
+
+  /**
+   * Character scanner that removes annotations and modifiers while skipping
+   * over strings, comments and template literals.
+   */
+  scan(s) {
+    let out = "";
+    let i = 0;
+    const n = s.length;
+    const isIdent = c => /[A-Za-z0-9_$]/.test(c);
+    while (i < n) {
+      const c = s[i];
+      // ---- skip things we must not rewrite
+      if (c === "/" && s[i + 1] === "/") { const j = s.indexOf("\n", i); const k = j < 0 ? n : j; out += s.slice(i, k); i = k; continue; }
+      if (c === "/" && s[i + 1] === "*") { const j = s.indexOf("*/", i); const k = j < 0 ? n : j + 2; out += s.slice(i, k); i = k; continue; }
+      if (c === '"' || c === "'" || c === "`") {
+        const q = c; let j = i + 1;
+        while (j < n) { if (s[j] === "\\") j += 2; else if (s[j] === q) break; else j++; }
+        out += s.slice(i, Math.min(n, j + 1)); i = j + 1; continue;
+      }
+      // ---- access modifiers and readonly, only at a statement/member start
+      const tail = s.slice(i);
+      let m = /^(public|private|protected|readonly|abstract|declare|override)\s+/.exec(tail);
+      if (m && !isIdent(out[out.length - 1] || "")) { i += m[0].length; continue; }
+      // ---- `as Type` cast, only as a standalone word following a value
+      if (c === "a" && s[i + 1] === "s" && /\s/.test(s[i + 2] || "") && /\s/.test(s[i - 1] || " ")) {
+        const prevChar = out.replace(/\s+$/, "").slice(-1);
+        if (/[\w)\]'"`]/.test(prevChar)) {
+          let j = i + 2;
+          while (j < s.length && /\s/.test(s[j])) j++;
+          i = this.skipType(s, j);
+          continue;
+        }
+      }
+      // ---- non-null assertion  x!.y  /  x!;
+      if (c === "!" && s[i + 1] !== "=" && isIdent(out[out.length - 1] || "") &&
+        /^[.;,)\]\s]/.test(s[i + 1] || " ")) { i++; continue; }
+      // ---- generic argument list on a call or declaration:  foo<T>(  /  Map<string, number>
+      if (c === "<" && isIdent(out[out.length - 1] || "")) {
+        const close = this.matchAngle(s, i);
+        if (close > 0 && /^[\s]*[({=;,)\]]/.test(s.slice(close + 1))) { i = close + 1; continue; }
+      }
+      // ---- type annotation  `: Type`
+      if (c === ":" && this.annotationHere(s, i, out)) {
+        i = this.skipType(s, i + 1);
+        continue;
+      }
+      out += c;
+      i++;
+    }
+    return out;
+  },
+
+  matchAngle(s, open) {
+    let depth = 0;
+    for (let i = open; i < s.length; i++) {
+      const c = s[i];
+      if (c === "<") depth++;
+      else if (c === ">") { depth--; if (!depth) return i; }
+      else if (c === ";" || c === "{" || c === "\n") return -1;   // not a generic
+    }
+    return -1;
+  },
+
+  /** Is this colon a type annotation, or part of an object literal / ternary / label? */
+  annotationHere(s, i, out) {
+    // object literal keys and ternaries are the two things we must not touch
+    const before = out.replace(/\s+$/, "");
+    const prev = before[before.length - 1];
+    if (!prev || !/[\w$)\]]/.test(prev)) return false;
+    // walk back to the start of the line for context
+    const lineStart = before.lastIndexOf("\n") + 1;
+    const line = before.slice(lineStart);
+    if (/\?[^?]*$/.test(line)) return false;                       // ternary
+    // inside an object literal or a switch case: `{ a: 1 }` / `case x:`
+    if (/(^|[\s{,(])(case|default)\s[^:]*$/.test(line)) return false;
+    const openBraces = (before.match(/\{/g) || []).length - (before.match(/\}/g) || []).length;
+    const openParens = (before.match(/\(/g) || []).length - (before.match(/\)/g) || []).length;
+    // a bare `name:` directly inside an object literal body is a key
+    if (openParens === 0 && /(^|[{,]\s*)[\w$"']+\s*$/.test(line) && openBraces > 0) {
+      // distinguish a class field (`speed: number = 5`) from an object key
+      const after = s.slice(i + 1, i + 60);
+      if (!/^\s*(number|string|boolean|any|void|unknown|never|object|symbol|bigint|[A-Z][\w$]*|\[|\{)/.test(after)) return false;
+      if (/^\s*\{/.test(after)) return false;
+    }
+    return true;
+  },
+
+  /** Index just past a balanced (), [] or <> group starting at `i`. */
+  matchPair(s, i) {
+    const open = s[i];
+    const close = open === "(" ? ")" : open === "[" ? "]" : ">";
+    let depth = 0;
+    for (let j = i; j < s.length; j++) {
+      if (s[j] === open) depth++;
+      else if (s[j] === close) { depth--; if (!depth) return j; }
+    }
+    return s.length - 1;
+  },
+
+  /**
+   * Skip a type expression starting just after the colon, stopping where the
+   * value or the enclosing construct begins.
+   *
+   * The subtle case is a return type: in `pos(): Point { ... }` the brace is the
+   * function body and must survive, while in `p: { x: number }` the brace is the
+   * type itself and must go. They are told apart by whether anything has been
+   * consumed yet — a leading brace is an object type, a later one is a body.
+   */
+  skipType(s, i) {
+    let seen = false;
+    while (i < s.length) {
+      const c = s[i];
+      if (c === " " || c === "\t") { i++; continue; }
+      if (c === "{") {
+        if (seen) return i;                       // function body — leave it alone
+        i = this.matchBrace(s, i) + 1; seen = true; continue;
+      }
+      if (c === "(" || c === "[" || c === "<") { i = this.matchPair(s, i) + 1; seen = true; continue; }
+      if (c === "=" && s[i + 1] === ">") { i += 2; continue; }   // arrow in a function type
+      if (c === ")" || c === "]" || c === ">" || c === "}" || c === "," ||
+        c === ";" || c === "=" || c === "\n" || c === "\r") return i;
+      if (/[A-Za-z0-9_$.|&'\"?]/.test(c)) { seen = true; i++; continue; }
+      return i;
+    }
+    return i;
+  }
+};
+
+/* ------------------------------------------------------- JS SCRIPT HOST -- */
+const JSScript = {
+  compiled: new Map(),      // assetId -> { factory, version, error }
+
+  /** Everything a script can reach without importing anything. */
+  globals() {
+    const g = {
+      NOVA, Engine, Scene, Entity, Vec2, Vec3, Quat, Mat4, Color, AABB, Ray, M,
+      Input, Physics, Audio, Assets, Project: Project_, Runtime,
+      log: (...a) => NovaLog.log(a.map(x => fmtVal(x)).join(" "), "script"),
+      warn: (...a) => NovaLog.warn(a.map(x => fmtVal(x)).join(" "), "script"),
+      error: (...a) => NovaLog.err(a.map(x => fmtVal(x)).join(" "), "script"),
+      find: name => Engine.scene && Engine.scene.entities.find(e => e.name === String(name)),
+      findAll: tag => Engine.scene ? Engine.scene.entities.filter(e => e.tag === String(tag)) : [],
+      spawn: (name, pos) => NovaAPI.builtins.spawn(name, pos),
+      destroy: e => NovaAPI.builtins.destroy(e),
+      emit: (msg, data) => ScriptRuntime.broadcast(String(msg), data),
+      wait: ms => new Promise(r => setTimeout(r, ms))
+    };
+    // every NovaScript namespace is available by name: Vec, Physics2D, Game…
+    for (const k of Object.keys(NovaAPI.builtins)) if (!(k in g)) g[k] = NovaAPI.builtins[k];
+    return g;
+  },
+
+  /**
+   * Turn source into a factory that yields a fresh instance per entity.
+   * Accepts three shapes, in this order of preference:
+   *   export default class / the last declared class
+   *   an explicit `return {...}` at the end
+   *   loose top-level lifecycle functions (the beginner shape)
+   */
+  build(code, name, lang) {
+    let js = lang === "ts" ? TSStrip.transform(code) : String(code);
+
+    // strip module syntax the engine does not use
+    js = js.replace(/^\s*export\s+default\s+/gm, "var __novaDefault = ")
+      .replace(/^\s*export\s+(?=(class|function|const|let|var)\s)/gm, "")
+      .replace(/^\s*import\s[^\n;]*;?\s*$/gm, "");
+
+    const classNames = [];
+    const re = /(?:^|[\s;}])class\s+([A-Za-z_$][\w$]*)/g;
+    let m;
+    while ((m = re.exec(js))) classNames.push(m[1]);
+
+    const LIFECYCLE = ["awake", "start", "update", "lateUpdate", "fixedUpdate",
+      "onCollide", "onTrigger", "onExit", "onMessage", "onKey", "onDestroy", "onEnable", "onDisable"];
+
+    const resolver = `
+;{
+  if (typeof __novaDefault !== "undefined" && __novaDefault) return __novaDefault;
+  ${classNames.length ? `if (typeof ${classNames[classNames.length - 1]} !== "undefined") return ${classNames[classNames.length - 1]};` : ""}
+  var __loose = {};
+  ${LIFECYCLE.map(k => `if (typeof ${k} === "function") __loose.${k} = ${k};`).join("\n  ")}
+  if (Object.keys(__loose).length) return __loose;
+  return null;
+}`;
+
+    const gnames = Object.keys(this.globals());
+    const body = `"use strict";\n${js}\n${resolver}`;
+    try {
+      const fn = new Function(...gnames, "self", "entity", body);
+      return { factory: fn, names: gnames, error: null };
+    } catch (e) {
+      return { factory: null, names: gnames, error: e.message };
+    }
+  },
+
+  get(asset) {
+    const key = asset.id;
+    const hit = this.compiled.get(key);
+    if (hit && hit.version === (asset.version || 0)) return hit;
+    const lang = this.langOf(asset);
+    const built = this.build(asset.code || "", asset.name, lang);
+    const entry = { ...built, version: asset.version || 0, lang };
+    this.compiled.set(key, entry);
+    if (built.error) NovaLog.err(`«${asset.name}» لا يُترجم: ${built.error}`, "script");
+    return entry;
+  },
+
+  langOf(asset) {
+    const t = String(asset.type || "").toLowerCase();
+    if (t === "js" || t === "ts") return t;
+    const ext = String(asset.name || "").split(".").pop().toLowerCase();
+    if (ext === "ts" || ext === "tsx") return "ts";
+    if (ext === "js" || ext === "mjs" || ext === "jsx") return "js";
+    return null;
+  },
+
+  /** Build a live instance bound to one entity. */
+  instantiate(asset, entity, comp) {
+    const c = this.get(asset);
+    if (!c.factory) return null;
+    const g = this.globals();
+    const args = c.names.map(k => g[k]);
+    let produced;
+    try { produced = c.factory.apply(null, args.concat([entity, entity])); }
+    catch (e) { NovaLog.err(`«${asset.name}» فشل عند التحميل: ${e.message}`, "script"); return null; }
+    if (!produced) { NovaLog.warn(`«${asset.name}» لا يحتوي على صنف أو دوال دورة حياة`, "script"); return null; }
+
+    let obj;
+    try { obj = typeof produced === "function" ? new produced() : produced; }
+    catch (e) { NovaLog.err(`«${asset.name}» فشل إنشاؤه: ${e.message}`, "script"); return null; }
+
+    // the handles a script expects to have
+    obj.entity = entity;
+    obj.transform = entity;
+    obj.self = entity;
+    obj.comp = comp;
+    Object.defineProperty(obj, "scene", { get: () => Engine.scene, configurable: true });
+    Object.defineProperty(obj, "time", { get: () => Engine.time, configurable: true });
+    Object.defineProperty(obj, "dt", { get: () => Engine.dt, configurable: true });
+
+    // inspector-exposed values override the class defaults
+    for (const v of (comp && comp.data && comp.data.vars) || []) if (v && v.name) obj[v.name] = v.value;
+
+    return { obj, entity, comp, asset, started: false, enabled: true };
+  },
+
+  call(inst, hook, ...args) {
+    if (!inst || !inst.obj) return;
+    if (inst.comp && inst.comp.data && inst.comp.data.enabled === false) return;
+    if (!inst.entity || !inst.entity.activeInHierarchy) return;
+    const fn = inst.obj[hook];
+    if (typeof fn !== "function") return;
+    try { return fn.call(inst.obj, ...args); }
+    catch (e) {
+      NovaLog.err(`${inst.asset.name} · ${hook}: ${e.message}`, "script");
+      inst.errors = (inst.errors || 0) + 1;
+      if (inst.errors > 20) { inst.comp.data.enabled = false; NovaLog.warn(`تم تعطيل «${inst.asset.name}» بعد أخطاء متكررة`, "script"); }
+    }
+  }
+};
+
+/* ------------------------------------------------ HOOK INTO THE RUNTIME -- */
+(function installJS() {
+  ScriptRuntime.jsInstances = [];
+
+  const origBindEntity = ScriptRuntime.bindEntity.bind(ScriptRuntime);
+  ScriptRuntime.bindEntity = function (e) {
+    for (const c of e.components) {
+      if (c.type !== "Script" || !c.data.script) continue;
+      const asset = Project_.scripts.get(c.data.script) || Assets.get(c.data.script);
+      if (!asset || !JSScript.langOf(asset)) continue;
+      const inst = JSScript.instantiate(asset, e, c);
+      if (!inst) continue;
+      c.runtime.jsInstance = inst;
+      this.jsInstances.push(inst);
+      JSScript.call(inst, "awake");
+    }
+    return origBindEntity(e);          // NovaScript scripts on the same entity still bind
+  };
+
+  const origBindScene = ScriptRuntime.bindScene.bind(ScriptRuntime);
+  ScriptRuntime.bindScene = function (scene) { this.jsInstances.length = 0; return origBindScene(scene); };
+
+  const origClear = ScriptRuntime.clear.bind(ScriptRuntime);
+  ScriptRuntime.clear = function () { this.jsInstances.length = 0; JSScript.compiled.clear(); return origClear(); };
+
+  const origStart = ScriptRuntime.start.bind(ScriptRuntime);
+  ScriptRuntime.start = function () {
+    for (const i of this.jsInstances) if (!i.started) { i.started = true; JSScript.call(i, "start"); }
+    return origStart();
+  };
+
+  const origUpdate = ScriptRuntime.update.bind(ScriptRuntime);
+  ScriptRuntime.update = function (dt) {
+    for (let i = 0; i < this.jsInstances.length; i++) {
+      const inst = this.jsInstances[i];
+      if (!inst.entity || !inst.entity.scene) { this.jsInstances.splice(i--, 1); continue; }
+      if (!inst.started) { inst.started = true; JSScript.call(inst, "start"); }
+      JSScript.call(inst, "update", dt);
+    }
+    return origUpdate(dt);
+  };
+
+  const origLate = ScriptRuntime.lateUpdate ? ScriptRuntime.lateUpdate.bind(ScriptRuntime) : null;
+  ScriptRuntime.lateUpdate = function (...a) {
+    for (const inst of this.jsInstances) JSScript.call(inst, "lateUpdate", Engine.dt);
+    return origLate ? origLate(...a) : undefined;
+  };
+
+  const origSend = ScriptRuntime.sendEvent.bind(ScriptRuntime);
+  ScriptRuntime.sendEvent = function (entity, name, other, data) {
+    if (entity) {
+      for (const c of entity.components) {
+        const inst = c.runtime && c.runtime.jsInstance;
+        if (!inst) continue;
+        if (name === "collide") JSScript.call(inst, "onCollide", other);
+        else if (name === "trigger") JSScript.call(inst, "onTrigger", other);
+        else if (name === "exit") JSScript.call(inst, "onExit", other);
+        else if (name === "destroy") JSScript.call(inst, "onDestroy");
+        else JSScript.call(inst, "on" + name.charAt(0).toUpperCase() + name.slice(1), other, data);
+      }
+    }
+    return origSend(entity, name, other, data);
+  };
+
+  const origBroadcast = ScriptRuntime.broadcast.bind(ScriptRuntime);
+  ScriptRuntime.broadcast = function (name, data) {
+    for (const inst of this.jsInstances) JSScript.call(inst, "onMessage", name, data);
+    return origBroadcast(name, data);
+  };
+})();
+
+/* --------------------------------------------------- LANGUAGE PLUMBING --- */
+/* .js and .ts files import as scripts, and new-script menus can pick a language. */
+(function wireLanguages() {
+  if (typeof FILE_KINDS !== "undefined" && FILE_KINDS.script) {
+    for (const ext of ["js", "ts", "mjs", "jsx", "tsx"]) if (!FILE_KINDS.script.exts.includes(ext)) FILE_KINDS.script.exts.push(ext);
+  }
+  if (typeof FileManager !== "undefined") {
+    const orig = FileManager.importOne.bind(FileManager);
+    FileManager.importOne = async function (file, opts) {
+      const rec = await orig(file, opts);
+      if (rec && rec.type === "script") {
+        const s = Project_.scriptByName(file.name);
+        if (s) {
+          const ext = String(file.name).split(".").pop().toLowerCase();
+          if (["ts", "tsx"].includes(ext)) s.type = "ts";
+          else if (["js", "mjs", "jsx"].includes(ext)) s.type = "js";
+        }
+      }
+      return rec;
+    };
+  }
+})();
+
+const JS_SAMPLE = `// JavaScript — كل ما تحتاجه لتحريك كائن
+class Spinner {
+  speed = 90;            // درجة/ثانية — تظهر في لوحة الخصائص
+
+  start() {
+    log("بدأ " + this.entity.name);
+  }
+
+  update(dt) {
+    this.entity.rotate(0, this.speed * dt, 0);
+  }
+
+  onCollide(other) {
+    log("اصطدم بـ " + other.name);
+  }
+}
+`;
+
+const TS_SAMPLE = `// TypeScript — نفس الشيء مع أنواع
+interface Damageable { takeHit(amount: number): void; }
+
+class Enemy implements Damageable {
+  private hp: number = 100;
+  speed: number = 3;
+
+  start(): void {
+    log(\`\${this.entity.name} جاهز، صحة \${this.hp}\`);
+  }
+
+  update(dt: number): void {
+    const player = find("Player") as any;
+    if (player) AI.moveTo(this.entity, player, this.speed * dt);
+  }
+
+  takeHit(amount: number): void {
+    this.hp -= amount;
+    if (this.hp <= 0) destroy(this.entity);
+  }
+}
+`;
+
+NOVA.TSStrip = TSStrip;
+NOVA.JSScript = JSScript;
+</script>
 <script data-nova="editor">
 /* ============================================================================
  * NOVA ENGINE — 27 · DOCS · TEMPLATES · BOOTSTRAP · MAIN LOOP
