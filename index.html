@@ -19859,20 +19859,120 @@ const FileManager = {
   },
 
   /** Asks how an imported image should be used. */
+  /**
+   * An imported image can play seven different roles, and each needs different
+   * settings — a skybox must not be mipmapped down, a UI sprite wants no
+   * filtering blur, a terrain layer needs tiling. Ask once, then configure the
+   * asset so it is ready to use rather than leaving that to the user.
+   */
+  IMAGE_ROLES: [
+    { id: "texture", icon: "🎨", title: "Texture", desc: "نسيج للخامات والمجسمات، مع تكرار وتنعيم.",
+      apply(rec) { rec.meta.role = "texture"; rec.meta.wrap = "repeat"; rec.meta.filter = "linear"; rec.meta.mipmaps = true; } },
+    { id: "sprite", icon: "🖼️", title: "Sprite", desc: "لوح ثنائي الأبعاد يواجه الكاميرا، للألعاب 2D.",
+      apply(rec) { rec.meta.role = "sprite"; rec.meta.wrap = "clamp"; rec.meta.filter = "linear"; rec.meta.mipmaps = false; },
+      spawn: "sprite" },
+    { id: "terrain", icon: "🟩", title: "Terrain Texture", desc: "طبقة أرض بتكرار عالٍ للتضاريس.",
+      apply(rec) { rec.meta.role = "terrain"; rec.meta.wrap = "repeat"; rec.meta.tiling = 24; rec.meta.mipmaps = true; } },
+    { id: "ui", icon: "🔲", title: "UI", desc: "صورة واجهة: بلا تنعيم زائد ولا تكرار.",
+      apply(rec) { rec.meta.role = "ui"; rec.meta.wrap = "clamp"; rec.meta.filter = "nearest"; rec.meta.mipmaps = false; } },
+    { id: "skybox", icon: "🌄", title: "Skybox", desc: "سماء بانورامية تحيط بالمشهد.",
+      apply(rec) { rec.meta.role = "skybox"; rec.meta.wrap = "clamp"; rec.meta.mipmaps = false; } },
+    { id: "icon", icon: "⭐", title: "Icon", desc: "أيقونة التطبيق واللعبة عند التصدير.",
+      apply(rec) { rec.meta.role = "icon"; rec.meta.wrap = "clamp"; rec.meta.mipmaps = false; } },
+    { id: "material", icon: "🧱", title: "Material", desc: "ينشئ خامة جاهزة تستخدم هذه الصورة.",
+      apply(rec) { rec.meta.role = "material"; rec.meta.wrap = "repeat"; rec.meta.mipmaps = true; } }
+  ],
+
+  /** Apply a role to an already-imported image. Safe to call from scripts. */
+  setImageRole(rec, roleId) {
+    const role = this.IMAGE_ROLES.find(r => r.id === roleId);
+    if (!rec || !role) return false;
+    rec.meta = rec.meta || {};
+    role.apply(rec);
+    if (typeof Assets !== "undefined" && Assets.invalidate) Assets.invalidate(rec.id);
+
+    switch (roleId) {
+      case "sprite": this.spawnTexture(rec, null, "sprite"); break;
+      case "terrain": {
+        // fill the first free terrain layer: grass, then rock, then snow
+        const t = Editor.scene && Editor.scene.components("Terrain")[0];
+        if (t) {
+          const slot = ["texGrass", "texRock", "texSnow"].find(k => !t.data[k]) || "texGrass";
+          t.data[slot] = rec.id;
+          t.runtime.dirty = true;
+          Editor.refreshInspector();
+          toast("تم تعيين نسيج التضاريس", rec.name + " → " + slot, "ok");
+        } else toast("لا توجد تضاريس في المشهد", "أضف تضاريس ثم أعد المحاولة", "warn");
+        break;
+      }
+      case "skybox": this.spawnSkybox(rec); break;
+      case "icon": {
+        Project_.settings.icon = rec.id;
+        toast("تم تعيين أيقونة اللعبة", rec.name, "ok");
+        break;
+      }
+      case "material": {
+        const m = {
+          id: uid("mat"), name: rec.name.replace(/\.[^.]+$/, "") + " Material",
+          mainTexture: rec.id, color: [1, 1, 1, 1], metallic: 0, roughness: .7, tiling: [1, 1]
+        };
+        if (Project_.materials && Project_.materials.set) Project_.materials.set(m.id, m);
+        else Assets.add && Assets.add({ ...m, type: "material" });
+        Editor.refreshProject && Editor.refreshProject();
+        toast("تم إنشاء خامة", m.name, "ok");
+        break;
+      }
+      case "ui": {
+        toast("جاهزة للواجهة", rec.name + " — استخدمها في محرر الواجهة", "ok");
+        break;
+      }
+      default: break;
+    }
+    Editor.refreshProject && Editor.refreshProject();
+    Editor.markDirty && Editor.markDirty();
+    return true;
+  },
+
+  /**
+   * Skybox as a very large unlit sphere seen from the inside, kept centred on
+   * the camera so it never gets closer. No shader change needed, and it works
+   * with any equirectangular image.
+   */
+  spawnSkybox(rec) {
+    const sc = Editor.scene;
+    if (!sc) return null;
+    let e = sc.entities.find(x => x.userData && x.userData.skybox);
+    if (!e) {
+      e = Editor.addEntity("Skybox", [["MeshRenderer", {
+        source: "primitive", primitive: "sphere", unlit: true,
+        doubleSided: true, castShadow: false, receiveShadow: false
+      }]]);
+      e.userData.skybox = true;
+    }
+    const mr = e.getComponent("MeshRenderer");
+    mr.data.mainTexture = rec.id;
+    mr.data.unlit = true;
+    mr.data.doubleSided = true;      // we are inside it, so the back faces are what we see
+    mr.data.castShadow = false;
+    mr.data.color = [1, 1, 1, 1];
+    const r = Math.max(400, (Editor.viewCam ? Editor.viewCam.far : 2000) * .45);
+    e.setScale(r, r, r);
+    e.markDirty();
+    Editor.refreshInspector();
+    toast("تم إنشاء السماء", rec.name, "ok");
+    return e;
+  },
+
   askTextureUsage(rec) {
-    const use = (as) => { this.spawnTexture(rec, null, as); Modal.closeAll(); };
     const body = el("div");
     body.appendChild(el("div", { class: "hint", style: "margin-bottom:10px" }, `«${rec.name}» — ${rec.meta.width}×${rec.meta.height}`));
-    body.appendChild(el("img", { src: rec.dataURL, style: "max-width:100%;max-height:180px;display:block;margin:0 auto 12px;border-radius:8px" }));
+    body.appendChild(el("img", { src: rec.dataURL, style: "max-width:100%;max-height:160px;display:block;margin:0 auto 12px;border-radius:8px" }));
     const grid = el("div", { class: "grid2" });
-    const card = (icon, title, desc, fn) => {
-      const c = el("div", { class: "card" }, el("div", { class: "big" }, icon), el("h4", null, title), el("p", null, desc));
-      c.onclick = fn; grid.appendChild(c);
-    };
-    card("🖼️", "Sprite ثنائي الأبعاد", "لوح يواجه الكاميرا — مناسب للألعاب 2D.", () => use("sprite"));
-    card("🧾", "لوح ثلاثي الأبعاد", "مستطيل في المشهد بنفس نسبة الصورة.", () => use("quad"));
-    card("🟩", "أرضية", "أرضية بنسيج مكرر 8×8 مع تصادم.", () => use("ground"));
-    card("🎨", "نسيج فقط", "احتفظ بها في الأصول لاستخدامها في الخامات.", () => Modal.closeAll());
+    for (const role of this.IMAGE_ROLES) {
+      const c = el("div", { class: "card" }, el("div", { class: "big" }, role.icon), el("h4", null, role.title), el("p", null, role.desc));
+      c.onclick = () => { this.setImageRole(rec, role.id); Modal.closeAll(); };
+      grid.appendChild(c);
+    }
     body.appendChild(grid);
     if (Editor.selected && Editor.selected.getComponent("MeshRenderer")) {
       const b = el("button", { class: "btn primary", style: "width:100%;margin-top:12px" }, `تطبيق كنسيج على «${Editor.selected.name}»`);
@@ -19883,7 +19983,7 @@ const FileManager = {
       };
       body.appendChild(b);
     }
-    Modal.open({ title: "كيف تريد استخدام الصورة؟", icon: "🖼️", body, width: "560px", buttons: [{ label: "لاحقًا", class: "ghost" }] });
+    Modal.open({ title: "كيف تريد استخدام الصورة؟", icon: "🖼️", body, width: "620px", buttons: [{ label: "نسيج فقط", class: "ghost" }] });
   },
 
   /* ------------------------------------------------- global drop target */
@@ -22604,6 +22704,26 @@ Runtime.stop = function () { CameraModes.locked = false; return _stopLoco(); };
   Object.assign(NovaAPI.builtins, { Move: NS_Move, View: NS_View });
   if (typeof NovaComplete !== "undefined") NovaComplete._cache = null;
 })();
+
+
+/* ---------------------------------------------------------------- SKYBOX --
+ * A skybox sphere must ride with the camera, otherwise you can walk to its
+ * edge. Runs in edit and play alike so the editor viewport shows it too.
+ * ------------------------------------------------------------------------ */
+const SkyboxSystem = {
+  update(scene) {
+    const cam = Engine.activeCamera;
+    if (!cam || !scene) return;
+    for (const e of scene.entities) {
+      if (!e.userData || !e.userData.skybox || !e.active) continue;
+      e.setWorldPos(cam.position);
+      e.markDirty();
+    }
+  }
+};
+const _simSky = Engine.simulateAlways.bind(Engine);
+Engine.simulateAlways = function (dt, scene) { _simSky(dt, scene); SkyboxSystem.update(scene); };
+NOVA.SkyboxSystem = SkyboxSystem;
 
 NOVA.Locomotion = Locomotion; NOVA.CameraModes = CameraModes;
 </script>
