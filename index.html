@@ -11567,6 +11567,380 @@ const DEFAULT_LAYOUT = {
   ]
 };
 </script>
+<script>
+/* ============================================================================
+ * NOVA ENGINE — 33 · INPUT 2.0 · POINTER OWNERSHIP
+ *
+ *   Why this exists
+ *   ---------------
+ *   Virtual controls (touch buttons, sticks, look pads) used to write straight
+ *   into Input.virtual and rely on receiving a matching pointerup to undo it.
+ *   That assumption breaks in four ordinary situations, and every one of them
+ *   leaves a control latched on — the character keeps walking after the finger
+ *   is lifted:
+ *
+ *     1. The control's element is removed while held. TouchControls.build()
+ *        rebuilds the whole layer on resize/orientation change, so the element
+ *        holding pointer capture disappears and its pointerup is never
+ *        delivered to anything.
+ *     2. Pointer capture is lost (lostpointercapture) without a pointerup.
+ *     3. The browser cancels the pointer, or the tab is hidden / loses focus
+ *        mid-press.
+ *     4. Two fingers share one button; the first release clears state the
+ *        second finger still owns, or vice versa.
+ *
+ *   The fix is ownership. Every virtual contribution is registered against the
+ *   pointer id that caused it. Releasing, cancelling or simply losing that
+ *   pointer releases exactly what it owned — no more, no less — and a
+ *   per-frame watchdog sweeps up anything whose pointer vanished silently.
+ * ========================================================================= */
+
+Object.assign(Input, {
+  /** pointerId -> Map<token, releaseFn> */
+  owners: new Map(),
+  /** pointer ids the window currently believes are down */
+  live: new Set(),
+  /** action -> Set<pointerId>, so shared buttons release only when empty */
+  holders: new Map(),
+  axisOwners: new Map(),      // axis name -> pointerId
+  _inputBooted: false,
+
+  /**
+   * Register a contribution owned by a pointer.
+   * @param {number}      pid    pointer id
+   * @param {string}      token  unique per control+pointer
+   * @param {Function}    undo   called exactly once when the pointer goes away
+   * @param {HTMLElement} [el]   the control's element; if it leaves the document
+   *                             the claim is dropped, because a detached element
+   *                             will never receive the pointerup that ends it
+   */
+  claim(pid, token, undo, el) {
+    let m = this.owners.get(pid);
+    if (!m) this.owners.set(pid, (m = new Map()));
+    const prev = m.get(token);
+    if (prev) { m.delete(token); try { prev.undo(); } catch (e) { } }
+    m.set(token, { undo, el: el || null });
+    this.live.add(pid);
+  },
+  /** Release one contribution. */
+  disclaim(pid, token) {
+    const m = this.owners.get(pid);
+    if (!m) return;
+    const rec = m.get(token);
+    if (rec) { m.delete(token); try { rec.undo(); } catch (e) { } }
+    if (!m.size) this.owners.delete(pid);
+  },
+  /** Release everything a pointer owns. Safe to call more than once. */
+  releasePointer(pid) {
+    const m = this.owners.get(pid);
+    this.owners.delete(pid);
+    this.live.delete(pid);
+    if (m) for (const rec of m.values()) { try { rec.undo(); } catch (e) { } }
+  },
+  /** Release every virtual contribution, whoever owns it. */
+  releaseAllVirtual() {
+    for (const pid of [...this.owners.keys()]) this.releasePointer(pid);
+    this.holders.clear();
+    this.axisOwners.clear();
+    this.virtual.buttons.clear();
+    this.virtual.axes = {};
+    this.virtual.look.x = this.virtual.look.y = 0;
+  },
+
+  /* ---------------------------------------------------- shared buttons -- */
+  /** Press an action on behalf of a pointer; multi-touch safe. */
+  holdButton(action, pid) {
+    let s = this.holders.get(action);
+    if (!s) this.holders.set(action, (s = new Set()));
+    const wasEmpty = s.size === 0;
+    s.add(pid);
+    if (wasEmpty) this.setVirtualButton(action, true);
+  },
+  /** Undo one pointer's hold; the action stays down while any finger remains. */
+  unholdButton(action, pid) {
+    const s = this.holders.get(action);
+    if (!s) return;
+    s.delete(pid);
+    if (!s.size) { this.holders.delete(action); this.setVirtualButton(action, false); }
+  },
+  /** Axis contribution owned by a pointer. */
+  holdAxis(name, pid, value) { this.axisOwners.set(name, pid); this.setVirtualAxis(name, value); },
+  unholdAxis(name, pid) {
+    if (this.axisOwners.get(name) !== pid) return;
+    this.axisOwners.delete(name);
+    this.setVirtualAxis(name, 0);
+  },
+
+  /**
+   * Per-frame sweep. A pointer can disappear without any event we can hear —
+   * the classic case is its element being removed from the DOM mid-press — so
+   * anything still owned by a pointer the window no longer considers down is
+   * released here.
+   */
+  watchdog() {
+    if (!this.owners.size) return;
+    for (const [pid, m] of [...this.owners]) {
+      if (!this.live.has(pid)) { this.releasePointer(pid); continue; }
+      // the pointer looks alive, but its control may have been torn out from
+      // under the finger — that claim can never be ended by an event
+      for (const [token, rec] of [...m]) if (rec.el && !rec.el.isConnected) this.disclaim(pid, token);
+    }
+  },
+
+  /** Full reset: keyboard, mouse, gamepad and every virtual control. */
+  hardReset() {
+    for (const c of this.keys) this.keysReleased.add(c);
+    this.keys.clear();
+    for (const b of this.mouse.buttons) this.mouse.released.add(b);
+    this.mouse.buttons.clear();
+    this.mouse.dx = this.mouse.dy = 0;
+    this.wheel = 0;
+    this.gpButtons.clear();
+    this.touchMap.clear(); this.touches.length = 0;
+    this.releaseAllVirtual();
+  },
+
+  /** Global safety net. Installed once, independent of any control. */
+  bootPointerTracking() {
+    if (this._inputBooted) return;
+    this._inputBooted = true;
+    const down = e => this.live.add(e.pointerId);
+    const gone = e => this.releasePointer(e.pointerId);
+    // capture phase, so we see the pointer even if a control stops propagation
+    window.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointerup", gone, true);
+    window.addEventListener("pointercancel", gone, true);
+    window.addEventListener("lostpointercapture", gone, true);
+    window.addEventListener("blur", () => this.hardReset());
+    document.addEventListener("visibilitychange", () => { if (document.hidden) this.hardReset(); });
+    // A context menu or a system gesture can swallow the release.
+    window.addEventListener("contextmenu", () => this.releaseAllVirtual());
+  }
+});
+
+/* The original clearAll stays as the public name, but now really clears. */
+Input.clearAll = function () { this.hardReset(); };
+Input.bootPointerTracking();
+
+/* Sweep stale owners at the end of every frame, before edge state is cleared. */
+const _origEndFrame = Input.endFrame.bind(Input);
+Input.endFrame = function () { this.watchdog(); _origEndFrame(); };
+
+/* ==========================================================================
+ * TOUCH CONTROLS 2.0 — every binding is pointer-owned
+ * ======================================================================= */
+
+/* Rebuilding or tearing down the layer must not leave controls latched. */
+const _origTCBuild = TouchControls.build.bind(TouchControls);
+TouchControls.build = function (root, layout, opts) {
+  Input.releaseAllVirtual();
+  return _origTCBuild(root, layout, opts);
+};
+const _origTCDestroy = TouchControls.destroy.bind(TouchControls);
+TouchControls.destroy = function () { Input.releaseAllVirtual(); return _origTCDestroy(); };
+
+TouchControls.bindButton = function (el, ctl) {
+  const self = this;
+  const token = "btn:" + ctl.id;
+  const press = e => {
+    if (self.editMode) return;
+    el.classList.add("press");
+    const pid = e.pointerId;
+    Input.holdButton(ctl.action, pid);
+    Input.claim(pid, token, () => {
+      Input.unholdButton(ctl.action, pid);
+      if (!(Input.holders.get(ctl.action) || { size: 0 }).size) el.classList.remove("press");
+    }, el);
+    Platform.vibrate(12);
+    try { el.setPointerCapture(e.pointerId); } catch (err) { }
+    e.preventDefault();
+  };
+  const release = e => Input.disclaim(e.pointerId, token);
+  el.addEventListener("pointerdown", press);
+  el.addEventListener("pointerup", release);
+  el.addEventListener("pointercancel", release);
+  el.addEventListener("lostpointercapture", release);
+  // Without capture (synthetic pointers, older engines) leaving the button
+  // is the only release we will ever see.
+  el.addEventListener("pointerleave", e => { if (!el.hasPointerCapture || !el.hasPointerCapture(e.pointerId)) release(e); });
+};
+
+TouchControls.bindStick = function (el, knob, ctl, size) {
+  const self = this;
+  const token = "stick:" + ctl.id;
+  const dead = ctl.deadZone !== undefined ? ctl.deadZone : 0.12;
+  const xAxis = ctl.axisX || "moveX", yAxis = ctl.axisY || "moveY";
+  let owner = null;
+
+  const centre = () => { knob.style.transform = "translate(-50%,-50%)"; };
+  const write = (dx, dy, pid) => {
+    const max = size;
+    let len = Math.hypot(dx, dy);
+    if (len > max) { dx = dx / len * max; dy = dy / len * max; len = max; }
+    knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    let nx = dx / max, ny = -dy / max;                 // screen y is down, input y is up
+    const mag = Math.hypot(nx, ny);
+    if (mag < dead) { nx = 0; ny = 0; }                // dead zone: no drift when centred
+    else {
+      // rescale past the dead zone so the full range stays reachable
+      const k = (mag - dead) / (1 - dead) / mag;
+      nx *= k; ny *= k;
+    }
+    if (ctl.snap8) {                                   // optional 8-way snapping
+      const a = Math.round(Math.atan2(ny, nx) / (Math.PI / 4)) * (Math.PI / 4);
+      const m = Math.min(1, Math.hypot(nx, ny));
+      nx = Math.cos(a) * m; ny = Math.sin(a) * m;
+    }
+    Input.holdAxis(xAxis, pid, nx);
+    Input.holdAxis(yAxis, pid, ny);
+  };
+  const clear = pid => {
+    owner = null;
+    centre();
+    Input.unholdAxis(xAxis, pid);
+    Input.unholdAxis(yAxis, pid);
+  };
+
+  el.addEventListener("pointerdown", e => {
+    if (self.editMode) return;
+    if (owner !== null) return;                        // one finger owns the stick
+    owner = e.pointerId;
+    try { el.setPointerCapture(e.pointerId); } catch (err) { }
+    const r = el.getBoundingClientRect();
+    write(e.clientX - r.left - r.width / 2, e.clientY - r.top - r.height / 2, owner);
+    Input.claim(owner, token, () => clear(e.pointerId), el);
+    e.preventDefault();
+  });
+  el.addEventListener("pointermove", e => {
+    if (owner !== e.pointerId) return;
+    const r = el.getBoundingClientRect();
+    write(e.clientX - r.left - r.width / 2, e.clientY - r.top - r.height / 2, owner);
+    e.preventDefault();
+  });
+  const end = e => { if (owner === e.pointerId) Input.disclaim(e.pointerId, token); };
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
+  el.addEventListener("lostpointercapture", end);
+};
+
+TouchControls.bindLookPad = function (el, ctl) {
+  const self = this;
+  const token = "look:" + ctl.id;
+  const sens = ctl.sensitivity !== undefined ? ctl.sensitivity : 0.035;
+  let owner = null, lx = 0, ly = 0;
+  el.addEventListener("pointerdown", e => {
+    if (self.editMode) return;
+    if (owner !== null) return;
+    owner = e.pointerId; lx = e.clientX; ly = e.clientY;
+    try { el.setPointerCapture(e.pointerId); } catch (err) { }
+    Input.claim(owner, token, () => { owner = null; }, el);
+    e.preventDefault();
+  });
+  el.addEventListener("pointermove", e => {
+    if (owner !== e.pointerId) return;
+    Input.virtual.look.x += (e.clientX - lx) * sens;
+    Input.virtual.look.y += (e.clientY - ly) * sens;
+    lx = e.clientX; ly = e.clientY;
+    e.preventDefault();
+  });
+  const end = e => { if (owner === e.pointerId) Input.disclaim(e.pointerId, token); };
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
+  el.addEventListener("lostpointercapture", end);
+};
+
+/* --------------------------------------------------------------- D-PAD --
+ * A four/eight-way pad that drives the same axes as the stick. Each direction
+ * is an independent pointer-owned hold, so pressing forward and right together
+ * behaves, and lifting either one releases only that direction.
+ * ---------------------------------------------------------------------- */
+TouchControls.bindDPad = function (el, ctl) {
+  const self = this;
+  const xAxis = ctl.axisX || "moveX", yAxis = ctl.axisY || "moveY";
+  // screen layout -> axis contribution. Forward is +Y, which the character
+  // controller turns into -Z (its forward). Right is +X. No inversions.
+  const DIRS = [
+    { k: "up", label: "▲", gx: 1, gy: 0, x: 0, y: 1 },
+    { k: "left", label: "◀", gx: 0, gy: 1, x: -1, y: 0 },
+    { k: "right", label: "▶", gx: 2, gy: 1, x: 1, y: 0 },
+    { k: "down", label: "▼", gx: 1, gy: 2, x: 0, y: -1 }
+  ];
+  const held = new Map();                              // dir key -> Set<pointerId>
+  const recompute = () => {
+    let x = 0, y = 0;
+    for (const d of DIRS) if ((held.get(d.k) || { size: 0 }).size) { x += d.x; y += d.y; }
+    const m = Math.hypot(x, y);
+    if (m > 1) { x /= m; y /= m; }
+    Input.setVirtualAxis(xAxis, x);
+    Input.setVirtualAxis(yAxis, y);
+  };
+  el.classList.add("tdpad");
+  for (const d of DIRS) {
+    const cell = document.createElement("div");
+    cell.className = "tdpad-k";
+    cell.style.gridArea = `${d.gy + 1} / ${d.gx + 1}`;
+    cell.textContent = d.label;
+    cell.dataset.dir = d.k;
+    el.appendChild(cell);
+    const token = "dpad:" + ctl.id + ":" + d.k;
+    const press = e => {
+      if (self.editMode) return;
+      const pid = e.pointerId;
+      cell.classList.add("press");
+      let s = held.get(d.k); if (!s) held.set(d.k, (s = new Set()));
+      s.add(pid);
+      recompute();
+      Input.claim(pid, token, () => {
+        const set = held.get(d.k);
+        if (set) { set.delete(pid); if (!set.size) { held.delete(d.k); cell.classList.remove("press"); } }
+        recompute();
+      }, cell);
+      Platform.vibrate(10);
+      try { cell.setPointerCapture(pid); } catch (err) { }
+      e.preventDefault();
+    };
+    const release = e => Input.disclaim(e.pointerId, token);
+    cell.addEventListener("pointerdown", press);
+    cell.addEventListener("pointerup", release);
+    cell.addEventListener("pointercancel", release);
+    cell.addEventListener("lostpointercapture", release);
+    cell.addEventListener("pointerleave", e => { if (!cell.hasPointerCapture || !cell.hasPointerCapture(e.pointerId)) release(e); });
+  }
+};
+
+/* Teach the layer to build the new kind, leaving the others alone. */
+const _origCreateControl = TouchControls.createControl.bind(TouchControls);
+TouchControls.createControl = function (ctl, layout, opts) {
+  if (ctl.kind !== "dpad") return _origCreateControl(ctl, layout, opts);
+  const r = this.root.getBoundingClientRect();
+  const { x, y, size } = this.posOf(ctl, r);
+  const el = document.createElement("div");
+  el.className = "tctl";
+  el.style.cssText = `left:${x - size}px;top:${y - size}px;width:${size * 2}px;height:${size * 2}px;
+    opacity:${ctl.opacity !== undefined ? ctl.opacity : layout.opacity};font-size:${Math.max(16, size)}px`;
+  el.dataset.id = ctl.id;
+  this.root.appendChild(el);
+  this.bindDPad(el, ctl);
+  if (this.editMode) this.makeEditable(el, ctl);
+};
+
+/* Entering, leaving or restarting play must never inherit a held control. */
+for (const fn of ["start", "stop", "restart"]) {
+  if (typeof Runtime[fn] !== "function") continue;
+  const orig = Runtime[fn].bind(Runtime);
+  Runtime[fn] = function (...a) { Input.hardReset(); return orig(...a); };
+}
+
+NOVA.Input = Input;
+</script>
+<style>
+.tctl.tdpad{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);
+  background:transparent !important;border:none !important;padding:0;gap:3px}
+.tctl.tdpad .tdpad-k{display:flex;align-items:center;justify-content:center;
+  border-radius:10px;font-size:.55em;line-height:1;user-select:none;-webkit-user-select:none;
+  background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.34);color:#fff;touch-action:none}
+.tctl.tdpad .tdpad-k.press{background:rgba(255,255,255,.42)}
+</style>
 <script data-nova="editor">
 /* ============================================================================
  * NOVA ENGINE — 29 · GESTURE ENGINE
@@ -17171,6 +17545,7 @@ Panels.touch = Dock.register({
     tools.appendChild(el("button", { class: "btn primary", style: "padding:3px 10px", onClick: () => this.addControl("button") }, "＋ زر"));
     tools.appendChild(el("span", { class: "chip", onClick: () => this.addControl("stick") }, "＋ عصا"));
     tools.appendChild(el("span", { class: "chip", onClick: () => this.addControl("lookpad") }, "＋ منطقة نظر"));
+    tools.appendChild(el("span", { class: "chip", onClick: () => this.addControl("dpad") }, "＋ أسهم"));
     tools.appendChild(el("div", { style: "flex:1" }));
     tools.appendChild(el("span", { class: "chip", onClick: () => { Project_.touchLayout = defaultTouchLayout(); this.render(); } }, "↺ افتراضي"));
     host.appendChild(tools);
@@ -17190,8 +17565,9 @@ Panels.touch = Dock.register({
     const L = Project_.touchLayout;
     const id = kind + "_" + (L.controls.length + 1);
     L.controls.push({
-      id, kind, x: 50, y: 50, size: kind === "stick" ? 18 : kind === "lookpad" ? 60 : 10,
-      label: kind === "button" ? "زر" : "", color: "#4da3ff", action: kind === "stick" ? "move" : kind === "lookpad" ? "look" : "fire", anchor: "bl"
+      id, kind, x: 50, y: 50, size: kind === "stick" ? 18 : kind === "lookpad" ? 60 : kind === "dpad" ? 17 : 10,
+      label: kind === "button" ? "زر" : "", color: "#4da3ff",
+      action: kind === "stick" || kind === "dpad" ? "move" : kind === "lookpad" ? "look" : "fire", anchor: "bl"
     });
     this.render();
     Editor.markDirty();
