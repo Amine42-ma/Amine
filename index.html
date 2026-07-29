@@ -21167,6 +21167,403 @@ NOVA.SpriteAtlas = SpriteAtlas;
 NOVA.Physics2D = Physics2D;
 NOVA.SpriteAnimSystem = SpriteAnimSystem;
 </script>
+<script>
+/* ============================================================================
+ * NOVA ENGINE — 38 · PERFORMANCE
+ *
+ *   LOD · world streaming · occlusion culling · adaptive optimizer
+ *
+ *   Frustum culling already existed in the renderer's collect pass. This adds
+ *   the three things a large world actually needs on top of it — fewer
+ *   triangles for distant objects, only loading the part of the world you are
+ *   standing in, and skipping what a wall is hiding — plus a controller that
+ *   measures real frame time and trades quality for smoothness on its own.
+ * ========================================================================= */
+
+CR.register({
+  name: "LOD", icon: "🔻", category: "الأداء",
+  doc: "مستويات تفصيل: يبدّل شكل الكائن أو يخفيه حسب بُعده عن الكاميرا لتقليل المثلثات.",
+  props: [
+    P("near", "number", 25, { label: "مسافة المستوى المتوسط" }),
+    P("far", "number", 60, { label: "مسافة المستوى البعيد" }),
+    P("cutoff", "number", 140, { label: "مسافة الاختفاء" }),
+    P("midPrimitive", "enum", "auto", { options: ["auto", "box", "sphere", "cylinder", "quad", "same"], label: "شكل المستوى المتوسط" }),
+    P("farPrimitive", "enum", "box", { options: ["auto", "box", "sphere", "quad", "same"], label: "شكل المستوى البعيد" }),
+    P("shadowsNear", "bool", true, { label: "ظلال قريبة فقط" }),
+    P("hysteresis", "number", 3, { label: "هامش التبديل" })
+  ]
+});
+
+CR.register({
+  name: "Streamed", icon: "🌍", category: "الأداء",
+  doc: "يجعل الكائن جزءًا من التحميل التدريجي: يُفعّل عند الاقتراب ويُلغى عند الابتعاد.",
+  props: [
+    P("radius", "number", 80, { label: "مدى التحميل" }),
+    P("unloadPad", "number", 20, { label: "هامش الإلغاء" }),
+    P("keepAlways", "bool", false, { label: "لا يُلغى أبدًا" })
+  ]
+});
+
+CR.register({
+  name: "Occluder", icon: "🧱", category: "الأداء",
+  doc: "حاجب رؤية: كل ما يقع خلفه بالكامل لا يُرسم. استخدمه للجدران والمباني الكبيرة.",
+  props: [P("padding", "number", 0, { label: "تقليص الحاجب" })]
+});
+
+/* ------------------------------------------------------------------ LOD -- */
+const LODSystem = {
+  levelFor(c, dist) {
+    const d = c.data, h = Math.max(0, d.hysteresis || 0), cur = c.runtime.level === undefined ? -1 : c.runtime.level;
+    // widen the band we are already in, so an object hovering on a boundary
+    // does not flip back and forth every frame
+    // Already at the farther level? Then you have to come back well inside the
+    // boundary to drop down again, so an object sitting on the line stays put.
+    const near = d.near - (cur >= 1 ? h : 0);
+    const far = d.far - (cur >= 2 ? h : 0);
+    const cut = d.cutoff - (cur >= 3 ? h : 0);
+    if (dist > cut) return 3;
+    if (dist > far) return 2;
+    if (dist > near) return 1;
+    return 0;
+  },
+  apply(c, e, camPos) {
+    const mr = e.getComponent("MeshRenderer");
+    if (!mr) return;
+    const d = c.data;
+    const dist = Math.sqrt(e.worldPos(_lodV).dist2(camPos));
+    const lv = this.levelFor(c, dist);
+    if (lv === c.runtime.level) return;
+    if (c.runtime.level === undefined) {
+      c.runtime.orig = { source: mr.data.source, primitive: mr.data.primitive, castShadow: mr.data.castShadow, model: mr.data.model };
+    }
+    c.runtime.level = lv;
+    const o = c.runtime.orig;
+    if (lv === 3) { mr.enabled = false; return; }
+    mr.enabled = true;
+    const want = lv === 0 ? "same" : lv === 1 ? d.midPrimitive : d.farPrimitive;
+    if (want === "same" || (want === "auto" && lv === 1)) {
+      mr.data.source = o.source; mr.data.primitive = o.primitive; mr.data.model = o.model;
+    } else {
+      const prim = want === "auto" ? "box" : want;
+      mr.data.source = "primitive"; mr.data.primitive = prim; mr.data.model = "";
+    }
+    mr.data.castShadow = d.shadowsNear ? lv === 0 : o.castShadow;
+    mr.runtime.sig = null;                 // force the mesh resolver to re-resolve
+  },
+  restore(c, e) {
+    const mr = e.getComponent("MeshRenderer"), o = c.runtime.orig;
+    if (!mr || !o) return;
+    mr.enabled = true;
+    mr.data.source = o.source; mr.data.primitive = o.primitive;
+    mr.data.model = o.model; mr.data.castShadow = o.castShadow;
+    mr.runtime.sig = null;
+    c.runtime.level = undefined;
+  },
+  update(scene, camPos) {
+    for (const c of scene.components("LOD")) this.apply(c, c.entity, camPos);
+  },
+  stats(scene) {
+    const out = [0, 0, 0, 0];
+    for (const c of scene.components("LOD")) out[c.runtime.level || 0]++;
+    return { full: out[0], mid: out[1], far: out[2], hidden: out[3] };
+  }
+};
+const _lodV = new Vec3();
+
+/* ------------------------------------------------------------ STREAMING -- */
+const Streaming = {
+  enabled: true,
+  budget: 8,                 // entities activated per frame, so loading never hitches
+  loaded: 0, unloaded: 0, pending: 0,
+
+  update(scene, camPos) {
+    if (!this.enabled) return;
+    let spent = 0;
+    this.pending = 0;
+    for (const c of scene.allComponents("Streamed")) {
+      const e = c.entity, d = c.data;
+      if (!e || !c.enabled) continue;
+      const dist = Math.sqrt(e.worldPos(_strV).dist2(camPos));
+      const shouldBeOn = d.keepAlways || dist <= d.radius;
+      const shouldBeOff = !d.keepAlways && dist > d.radius + Math.max(1, d.unloadPad);
+      if (shouldBeOn && !e.active) {
+        if (spent >= this.budget) { this.pending++; continue; }
+        e.active = true; spent++; this.loaded++;
+      } else if (shouldBeOff && e.active) {
+        e.active = false; this.unloaded++;
+      }
+    }
+  },
+  /** Turn every static mesh in the scene into a streamed chunk. */
+  autoConfigure(scene, radius) {
+    let n = 0;
+    for (const e of scene.entities) {
+      if (e.getComponent("Streamed")) continue;
+      if (!e.getComponent("MeshRenderer")) continue;
+      if (e.getComponent("Camera") || e.getComponent("Light") || e.getComponent("CharacterController")) continue;
+      e.addComponent("Streamed", { radius: radius || 80 });
+      n++;
+    }
+    return n;
+  },
+  reset(scene) { for (const c of scene.allComponents("Streamed")) if (c.entity) c.entity.active = true; this.loaded = this.unloaded = 0; }
+};
+const _strV = new Vec3();
+
+/* ---------------------------------------------------- OCCLUSION CULLING -- */
+/**
+ * Screen-space rectangle occlusion. Each occluder projects its bounding box to
+ * a screen rectangle and records the depth of its farthest corner. Anything
+ * whose own screen rectangle sits entirely inside an occluder's rectangle, and
+ * whose nearest point is behind that occluder, cannot be visible.
+ *
+ * It is conservative: an object is only rejected when it is provably hidden by
+ * a single occluder, so it never removes something that should be drawn.
+ */
+const Occlusion = {
+  enabled: true,
+  maxOccluders: 8,
+  rects: [],
+  tested: 0, rejected: 0,
+
+  screenRect(camera, center, radius, out) {
+    const v = _occV.copy(center).applyMat4(camera.viewProj);
+    const w = _occV2.copy(center).sub(camera.position).dot(_occV3.set(0, 0, -1).applyQuat(camera.rotation));
+    if (w <= 0.01) return null;                       // behind the camera
+    const scale = radius / w;                          // radius in clip units, near enough
+    const sx = Math.abs(camera.proj.e[0]) * scale;
+    const sy = Math.abs(camera.proj.e[5]) * scale;
+    out.x0 = v.x - sx; out.x1 = v.x + sx;
+    out.y0 = v.y - sy; out.y1 = v.y + sy;
+    out.near = w - radius; out.far = w + radius;
+    return out;
+  },
+
+  /**
+   * Screen rectangle of a mesh's world-space bounding box, from its eight
+   * corners. `far` is the depth of the deepest corner: anything beyond that,
+   * inside this rectangle, is behind the whole box.
+   */
+  boxRect(camera, e, mesh, padding) {
+    const b = mesh.bounds, m = e.matrix;
+    const fwd = _occV3.set(0, 0, -1).applyQuat(camera.rotation);
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, far = -Infinity, near = Infinity;
+    for (let i = 0; i < 8; i++) {
+      const p = _occC.set(i & 1 ? b.max.x : b.min.x, i & 2 ? b.max.y : b.min.y, i & 4 ? b.max.z : b.min.z).applyMat4(m);
+      const w = _occC2.copy(p).sub(camera.position).dot(fwd);
+      if (w <= 0.05) return null;                     // straddles the camera plane: give up
+      const v = _occV.copy(p).applyMat4(camera.viewProj);
+      if (v.x < x0) x0 = v.x; if (v.x > x1) x1 = v.x;
+      if (v.y < y0) y0 = v.y; if (v.y > y1) y1 = v.y;
+      if (w > far) far = w; if (w < near) near = w;
+    }
+    const px = (x1 - x0) * padding * .5, py = (y1 - y0) * padding * .5;
+    return { x0: x0 + px, x1: x1 - px, y0: y0 + py, y1: y1 - py, near, far };
+  },
+
+  build(scene, camera) {
+    this.rects.length = 0;
+    if (!this.enabled) return;
+    const cands = [];
+    for (const c of scene.components("Occluder")) {
+      const e = c.entity;
+      if (!e.active) continue;
+      const mr = e.getComponent("MeshRenderer");
+      const mesh = mr && MeshResolver.resolve(mr, e);
+      if (!mesh) continue;
+      const r = this.boxRect(camera, e, mesh, c.data.padding || 0);
+      if (!r) continue;
+      r.area = (r.x1 - r.x0) * (r.y1 - r.y0);
+      cands.push(r);
+    }
+    // biggest blockers first: they reject the most for the least work
+    cands.sort((a, b) => b.area - a.area);
+    for (let i = 0; i < Math.min(this.maxOccluders, cands.length); i++) this.rects.push(cands[i]);
+  },
+
+  hidden(camera, center, radius) {
+    if (!this.enabled || !this.rects.length) return false;
+    const r = this.screenRect(camera, center, radius, _occTmp);
+    if (!r) return false;
+    this.tested++;
+    for (const o of this.rects) {
+      if (r.near < o.far) continue;                    // in front of, or level with, the blocker
+      if (r.x0 >= o.x0 && r.x1 <= o.x1 && r.y0 >= o.y0 && r.y1 <= o.y1) { this.rejected++; return true; }
+    }
+    return false;
+  }
+};
+const _occV = new Vec3(), _occV2 = new Vec3(), _occV3 = new Vec3(), _occC = new Vec3(), _occC2 = new Vec3();
+const _occTmp = { x0: 0, x1: 0, y0: 0, y1: 0, near: 0, far: 0 };
+
+/* Hook occlusion into the renderer's existing cull test. */
+(function hookOcclusion() {
+  const origCollect = Renderer.prototype.collect;
+  Renderer.prototype.collect = function (scene, camera, opts) {
+    if (opts.cull !== false && Occlusion.enabled) Occlusion.build(scene, camera);
+    else Occlusion.rects.length = 0;
+    Occlusion.tested = 0; Occlusion.rejected = 0;
+    const r = origCollect.call(this, scene, camera, opts);
+    this.stats.occluded = Occlusion.rejected;
+    return r;
+  };
+  const origSphereVisible = RenderCamera.prototype.sphereVisible;
+  RenderCamera.prototype.sphereVisible = function (center, radius) {
+    if (!origSphereVisible.call(this, center, radius)) return false;
+    return !Occlusion.hidden(this, center, radius);
+  };
+})();
+
+/* ------------------------------------------------------------ OPTIMIZER -- */
+const Optimizer = {
+  /** The renderer that is actually on screen: the player while it runs,
+   *  otherwise the editor viewport. Exported games have no Editor at all. */
+  renderer() {
+    if (typeof Runtime !== "undefined" && Runtime.playing && Runtime.renderer) return Runtime.renderer;
+    if (typeof Editor !== "undefined" && Editor.renderer) return Editor.renderer;
+    return (typeof Runtime !== "undefined" && Runtime.renderer) || null;
+  },
+  enabled: true,
+  auto: true,
+  target: 55,               // aim a little under 60 so it settles instead of oscillating
+  floor: 32,                // below this, step down without waiting
+  window: [],
+  cooldown: 0,
+  level: null,
+  order: ["low", "medium", "high", "ultra"],
+
+  /** Everything the optimizer is allowed to turn down, per level. */
+  presets: {
+    low: { shadows: false, shadowRes: 512, reflections: false, bloom: false, fxaa: false, ao: false, dof: false, motionBlur: false, particleScale: .35, drawDistance: 120, streamRadius: 55, pixelRatio: .75, lodScale: .55 },
+    medium: { shadows: true, shadowRes: 1024, reflections: false, bloom: true, fxaa: true, ao: false, dof: false, motionBlur: false, particleScale: .7, drawDistance: 250, streamRadius: 90, pixelRatio: 1, lodScale: .8 },
+    high: { shadows: true, shadowRes: 2048, reflections: true, bloom: true, fxaa: true, ao: true, dof: false, motionBlur: false, particleScale: 1, drawDistance: 500, streamRadius: 140, pixelRatio: 1, lodScale: 1 },
+    ultra: { shadows: true, shadowRes: 4096, reflections: true, bloom: true, fxaa: true, ao: true, dof: true, motionBlur: true, particleScale: 1.4, drawDistance: 1200, streamRadius: 240, pixelRatio: 1, lodScale: 1.5 }
+  },
+
+  settings() { const r = this.renderer(); return this.presets[this.level || (r && r.quality) || "high"] || this.presets.high; },
+
+  /** Apply a named quality level to the renderer, the environment and streaming. */
+  applyLevel(name, scene) {
+    if (!this.presets[name]) return false;
+    this.level = name;
+    const p = this.presets[name];
+    for (const r of [typeof Editor !== "undefined" ? Editor.renderer : null,
+                     typeof Runtime !== "undefined" ? Runtime.renderer : null]) if (r) r.quality = name;
+    const sc = scene || Engine.scene;
+    if (sc && sc.env) {
+      const env = sc.env;
+      env.shadows = p.shadows;
+      env.shadowRes = p.shadowRes;
+      env.reflections = p.reflections;
+      env.bloom = p.bloom;
+      env.fxaa = p.fxaa;
+      if (env.ao !== undefined) env.ao = p.ao;
+      if (env.dof !== undefined) env.dof = p.dof;
+      if (env.motionBlur !== undefined) env.motionBlur = p.motionBlur;
+    }
+    if (sc) {
+      for (const c of sc.components("LOD")) {
+        if (!c.runtime.baseNear) c.runtime.baseNear = { near: c.data.near, far: c.data.far, cutoff: c.data.cutoff };
+        const b = c.runtime.baseNear;
+        c.data.near = b.near * p.lodScale;
+        c.data.far = b.far * p.lodScale;
+        c.data.cutoff = b.cutoff * p.lodScale;
+        c.runtime.level = undefined;
+      }
+      for (const c of sc.allComponents("Streamed")) {
+        if (!c.runtime.baseRadius) c.runtime.baseRadius = c.data.radius;
+        c.data.radius = c.runtime.baseRadius * (p.streamRadius / 140);
+      }
+    }
+    if (Project_ && Project_.settings) Project_.settings.quality = name;
+    return true;
+  },
+
+  /** Pick a starting level from what the device claims about itself. */
+  detect() { return Platform.tier(); },
+
+  step(dir, scene) {
+    const i = this.order.indexOf(this.level || "high");
+    const j = M.clamp(i + dir, 0, this.order.length - 1);
+    if (j === i) return false;
+    this.applyLevel(this.order[j], scene);
+    NovaLog.log((dir < 0 ? "⬇ خفض" : "⬆ رفع") + " الجودة إلى " + this.order[j], "perf");
+    return true;
+  },
+
+  /** Called once per frame with the real frame time. */
+  update(dt, scene) {
+    if (!this.enabled || !this.auto || !dt) return;
+    const fps = 1 / Math.max(1e-4, dt);
+    this.window.push(fps);
+    if (this.window.length > 90) this.window.shift();
+    if (this.cooldown > 0) { this.cooldown -= dt; return; }
+    if (this.window.length < 45) return;
+    const sorted = this.window.slice().sort((a, b) => a - b);
+    const median = sorted[sorted.length >> 1];
+    const low1 = sorted[Math.floor(sorted.length * .1)];      // worst 10%, catches stutter
+    if (low1 < this.floor || median < this.target - 8) {
+      if (this.step(-1, scene)) { this.cooldown = 3; this.window.length = 0; }
+    } else if (median > this.target + 18 && low1 > this.target) {
+      if (this.step(1, scene)) { this.cooldown = 6; this.window.length = 0; }
+    }
+  },
+
+  report() {
+    const r = this.renderer(), s = r ? r.stats : {};
+    return {
+      level: this.level || (r && r.quality) || "high",
+      fps: Math.round(Engine.fps || 0),
+      draws: s.draws || 0, tris: s.tris || 0,
+      culled: s.culled || 0, occluded: s.occluded || 0,
+      lod: Engine.scene ? LODSystem.stats(Engine.scene) : null,
+      streaming: { loaded: Streaming.loaded, unloaded: Streaming.unloaded, pending: Streaming.pending },
+      memory: (performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null)
+    };
+  }
+};
+
+/* ------------------------------------------------------------- WIRE-UP --- */
+const _simPerf = Engine.simulateAlways.bind(Engine);
+Engine.simulateAlways = function (dt, scene) {
+  _simPerf(dt, scene);
+  const cam = Engine.activeCamera;
+  if (cam) {
+    LODSystem.update(scene, cam.position);
+    Streaming.update(scene, cam.position);
+  }
+  if (Runtime.playing) Optimizer.update(dt, scene);
+};
+
+/* Streaming deactivates entities; leaving play must put the world back. */
+const _stopPerf = Runtime.stop.bind(Runtime);
+Runtime.stop = function () { const s = Engine.scene; const r = _stopPerf(); if (s) Streaming.reset(s); return r; };
+
+/* -------------------------------------------------------- SCRIPT ACCESS -- */
+(function wirePerf() {
+  const S = v => v === null || v === undefined ? "" : String(v);
+  const NS_Perf = nsdef("Perf", "الأداء", [
+    ["Perf.fps()", () => Math.round(Engine.fps || 0), "الإطارات في الثانية"],
+    ["Perf.quality()", () => { const r = Optimizer.renderer(); return Optimizer.level || (r && r.quality) || "high"; }, "مستوى الجودة الحالي"],
+    ["Perf.setQuality(level)", l => Optimizer.applyLevel(S(l), Engine.scene), "تعيين الجودة: low/medium/high/ultra"],
+    ["Perf.autoQuality(on)", v => { Optimizer.auto = truthy(v); }, "تشغيل/إيقاف الضبط التلقائي للجودة"],
+    ["Perf.detect()", () => Optimizer.detect(), "الجودة المقترحة لهذا الجهاز"],
+    ["Perf.drawCalls()", () => { const r = Optimizer.renderer(); return r ? r.stats.draws : 0; }, "عدد نداءات الرسم"],
+    ["Perf.triangles()", () => { const r = Optimizer.renderer(); return r ? r.stats.tris : 0; }, "عدد المثلثات المرسومة"],
+    ["Perf.culled()", () => { const r = Optimizer.renderer(); return r ? r.stats.culled : 0; }, "كائنات خارج مجال الرؤية"],
+    ["Perf.occluded()", () => { const r = Optimizer.renderer(); return r ? r.stats.occluded || 0 : 0; }, "كائنات محجوبة خلف حواجز"],
+    ["Perf.memory()", () => (performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : 0), "الذاكرة المستخدمة بالميغابايت"],
+    ["Perf.streaming(on)", v => { Streaming.enabled = truthy(v); }, "تشغيل/إيقاف التحميل التدريجي"],
+    ["Perf.occlusion(on)", v => { Occlusion.enabled = truthy(v); }, "تشغيل/إيقاف حجب الرؤية"],
+    ["Perf.report()", () => new NSDict(Object.entries(Optimizer.report())), "تقرير أداء كامل"]
+  ]);
+  Object.assign(NovaAPI.builtins, { Perf: NS_Perf });
+  if (typeof NovaComplete !== "undefined") NovaComplete._cache = null;
+})();
+
+NOVA.LODSystem = LODSystem; NOVA.Streaming = Streaming;
+NOVA.Occlusion = Occlusion; NOVA.Optimizer = Optimizer;
+</script>
 <script data-nova="editor">
 /* ============================================================================
  * NOVA ENGINE — 37 · 2D EDITORS
