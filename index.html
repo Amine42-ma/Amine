@@ -21169,6 +21169,324 @@ NOVA.SpriteAnimSystem = SpriteAnimSystem;
 </script>
 <script>
 /* ============================================================================
+ * NOVA ENGINE — 39 · ADVANCED GRAPHICS
+ *
+ *   Ambient occlusion · depth of field · motion blur · volumetric light
+ *
+ *   All four need scene depth, which the renderer did not keep: its depth
+ *   attachment was a renderbuffer, which cannot be sampled. This upgrades the
+ *   scene target to a depth texture and adds one combined effects pass between
+ *   the scene render and the composite, so the whole set costs a single extra
+ *   full-screen draw rather than four.
+ *
+ *   env.ssao already existed as a setting with nothing behind it. It is real now.
+ * ========================================================================= */
+
+const FX_FS = `
+precision highp float;
+in vec2 vUV;
+uniform sampler2D uTex, uDepth;
+uniform vec2 uRes;
+uniform mat4 uInvVP, uPrevVP;
+uniform vec3 uCamPos;
+uniform float uNear, uFar;
+uniform float uAO, uAORadius, uAOBias;
+uniform float uDof, uFocus, uFocusRange, uMaxBlur;
+uniform float uMotion;
+uniform float uVol, uVolDecay;
+uniform vec2 uSunUV;
+uniform float uSunVisible;
+out vec4 fragColor;
+
+float rawDepth(vec2 uv){ return texture(uDepth, uv).r; }
+
+/* depth buffer value -> distance from the camera, in world units */
+float linearDepth(vec2 uv){
+  float z = rawDepth(uv) * 2.0 - 1.0;
+  return (2.0 * uNear * uFar) / (uFar + uNear - z * (uFar - uNear));
+}
+
+/* screen pixel -> world position, by unprojecting through the inverse view-projection */
+vec3 worldPos(vec2 uv, float rawZ){
+  vec4 clip = vec4(uv * 2.0 - 1.0, rawZ * 2.0 - 1.0, 1.0);
+  vec4 w = uInvVP * clip;
+  return w.xyz / max(1e-6, w.w);
+}
+
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
+/* ---- ambient occlusion -------------------------------------------------- */
+/* Horizon-style: sample a ring around the pixel and count how many neighbours
+   sit closer to the camera than this one. Cheap, stable, and needs no normals. */
+float ao(vec2 uv, float d){
+  if (uAO < 0.001) return 1.0;
+  float occ = 0.0;
+  float ang = hash(uv * uRes) * 6.2831853;
+  float radius = uAORadius / max(0.5, d);          // shrink with distance
+  const int N = 12;
+  for (int i = 0; i < N; i++){
+    float t = (float(i) + 0.5) / float(N);
+    float a = ang + t * 6.2831853 * 2.0;
+    vec2 off = vec2(cos(a), sin(a)) * radius * (0.35 + t);
+    float dn = linearDepth(clamp(uv + off, 0.001, 0.999));
+    float diff = d - dn;                            // positive: neighbour is nearer
+    if (diff > uAOBias) {
+      float rangeFade = clamp(1.0 - (diff - uAOBias) / max(0.05, uAORadius * 4.0), 0.0, 1.0);
+      occ += rangeFade;
+    }
+  }
+  return clamp(1.0 - (occ / float(N)) * uAO, 0.0, 1.0);
+}
+
+/* ---- depth of field ----------------------------------------------------- */
+vec3 dof(vec2 uv, float d, vec3 base){
+  if (uDof < 0.001) return base;
+  float coc = clamp(abs(d - uFocus) / max(0.001, uFocusRange) - 1.0, 0.0, 1.0) * uDof;
+  if (coc < 0.004) return base;
+  float r = coc * uMaxBlur;
+  vec2 px = 1.0 / uRes;
+  vec3 sum = base; float wsum = 1.0;
+  const int N = 10;
+  float ang = hash(uv.yx * uRes) * 6.2831853;
+  for (int i = 0; i < N; i++){
+    float t = (float(i) + 1.0) / float(N);
+    float a = ang + float(i) * 2.39996;             // golden angle: even coverage
+    vec2 o = vec2(cos(a), sin(a)) * r * sqrt(t) * px;
+    vec2 suv = clamp(uv + o, 0.001, 0.999);
+    float sd = linearDepth(suv);
+    // do not drag sharp foreground pixels into a blurred background
+    float w = sd >= d - uFocusRange * 0.5 ? 1.0 : 0.15;
+    sum += texture(uTex, suv).rgb * w; wsum += w;
+  }
+  return sum / wsum;
+}
+
+/* ---- camera motion blur ------------------------------------------------- */
+/* Reproject this pixel through last frame's view-projection; the screen-space
+   difference is how far it travelled, and we smear along that. */
+vec3 motion(vec2 uv, float rawZ, vec3 base){
+  if (uMotion < 0.001 || rawZ >= 0.9999) return base;
+  vec3 wp = worldPos(uv, rawZ);
+  vec4 prev = uPrevVP * vec4(wp, 1.0);
+  if (prev.w <= 0.0) return base;
+  vec2 prevUV = (prev.xy / prev.w) * 0.5 + 0.5;
+  vec2 vel = (uv - prevUV) * uMotion;
+  float len = length(vel);
+  if (len < 0.0004) return base;
+  vel = normalize(vel) * min(len, 0.03);            // cap so fast turns do not smear the world
+  vec3 sum = base;
+  const int N = 6;
+  for (int i = 1; i <= N; i++){
+    float t = float(i) / float(N);
+    sum += texture(uTex, clamp(uv - vel * t, 0.001, 0.999)).rgb;
+  }
+  return sum / float(N + 1);
+}
+
+/* ---- volumetric light --------------------------------------------------- */
+/* Radial blur of bright pixels away from the sun's screen position, masked to
+   sky pixels so shafts appear to pass behind geometry. */
+vec3 volumetric(vec2 uv){
+  if (uVol < 0.001 || uSunVisible < 0.5) return vec3(0.0);
+  vec2 delta = (uv - uSunUV) / 24.0;
+  vec2 p = uv;
+  float decay = 1.0;
+  vec3 acc = vec3(0.0);
+  for (int i = 0; i < 24; i++){
+    p -= delta;
+    vec2 sp = clamp(p, 0.0, 1.0);
+    float sky = rawDepth(sp) > 0.9995 ? 1.0 : 0.0;   // only unoccluded sky contributes
+    vec3 c = texture(uTex, sp).rgb;
+    float lum = max(0.0, dot(c, vec3(0.299, 0.587, 0.114)) - 0.7);
+    acc += c * lum * sky * decay;
+    decay *= uVolDecay;
+  }
+  return acc * (uVol / 24.0);
+}
+
+void main(){
+  float rawZ = rawDepth(vUV);
+  float d = linearDepth(vUV);
+  vec3 c = texture(uTex, vUV).rgb;
+  c = dof(vUV, d, c);
+  c = motion(vUV, rawZ, c);
+  c *= ao(vUV, d);
+  c += volumetric(vUV);
+  fragColor = vec4(c, 1.0);
+}
+`;
+
+(function installGraphics() {
+  const RP = Renderer.prototype;
+
+  /* --- 1. let a render target own a sampleable depth texture -------------- */
+  const origCreateRT = RP.createRT;
+  RP.createRT = function (w, h, opts = {}) {
+    const rt = origCreateRT.call(this, w, h, opts);
+    if (!opts.depthTex || !rt || !this.isGL2) return rt;
+    const gl = this.gl;
+    // replace the renderbuffer with a texture we can read back in a shader
+    if (rt.depth) { gl.deleteRenderbuffer(rt.depth); rt.depth = null; }
+    const dt = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, dt);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, w, h, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, rt.fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, dt, 0);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+      // fall back to the renderbuffer path rather than rendering nothing
+      gl.deleteTexture(dt);
+      rt.depth = gl.createRenderbuffer();
+      gl.bindRenderbuffer(gl.RENDERBUFFER, rt.depth);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, w, h);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, rt.depth);
+    } else rt.depthTex = dt;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return rt;
+  };
+  const origDestroyRT = RP.destroyRT;
+  RP.destroyRT = function (rt) {
+    if (rt && rt.depthTex) { this.gl.deleteTexture(rt.depthTex); rt.depthTex = null; }
+    return origDestroyRT.call(this, rt);
+  };
+
+  /* --- 2. scene target keeps depth; add a target for the effects output --- */
+  const origEnsure = RP.ensureTargets;
+  RP.ensureTargets = function (w, h) {
+    const before = this.rtScene;
+    const q = { low: .6, medium: .8, high: 1, ultra: 1 }[this.quality] || 1;
+    const rw = Math.max(2, Math.floor(w * q)), rh = Math.max(2, Math.floor(h * q));
+    const needs = !before || before.w !== rw || before.h !== rh;
+    if (needs) { this.destroyRT(this.rtFx); this.rtFx = null; }
+    // ask for a depth texture on the scene pass
+    const origCreate = this.createRT.bind(this);
+    this.createRT = (cw, ch, opts) => origCreate(cw, ch, (opts && opts.float && opts.depth !== false) ? { ...opts, depthTex: true } : opts);
+    try { origEnsure.call(this, w, h); } finally { this.createRT = origCreate; }
+    if (!this.rtFx && this.rtScene) this.rtFx = this.createRT(this.rtScene.w, this.rtScene.h, { float: true, depth: false });
+  };
+
+  /* --- 3. one combined effects pass, then composite from its output ------- */
+  RP.effectsEnabled = function (env) {
+    if (this.quality === "low" || !this.isGL2) return false;
+    if (!this.rtScene || !this.rtScene.depthTex || !this.rtFx) return false;
+    return !!(env.ssao || env.dof || env.motionBlur || env.volumetric);
+  };
+
+  const origPost = RP.postProcess;
+  RP.postProcess = function (env, targetFBO) {
+    if (this.effectsEnabled(env)) {
+      const gl = this.gl;
+      if (!this.progFx) this.progFx = this.program("fx", FS_QUAD_VS, FX_FS, []);
+      const cam = this.lastCamera;
+      const p = this.progFx;
+      this.bindRT(this.rtFx);
+      gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
+      p.use();
+      this.bindTex(p, "uTex", this.rtScene.tex, 0);
+      this.bindTex(p, "uDepth", this.rtScene.depthTex, 1);
+      p.v2("uRes", this.rtScene.w, this.rtScene.h);
+      p.f("uNear", cam ? cam.near : .1).f("uFar", cam ? cam.far : 1200);
+      if (cam) {
+        p.m4a("uInvVP", cam.invViewProj.e);
+        p.m4a("uPrevVP", (this._prevVP || cam.viewProj).e);
+        p.v3("uCamPos", cam.position.x, cam.position.y, cam.position.z);
+      }
+      p.f("uAO", env.ssao ? (env.ssaoIntensity === undefined ? .55 : env.ssaoIntensity) : 0);
+      p.f("uAORadius", (env.ssaoRadius === undefined ? .55 : env.ssaoRadius) * .06);
+      p.f("uAOBias", .035);
+      p.f("uDof", env.dof ? (env.dofAmount === undefined ? 1 : env.dofAmount) : 0);
+      p.f("uFocus", env.dofFocus === undefined ? 12 : env.dofFocus);
+      p.f("uFocusRange", Math.max(.1, env.dofRange === undefined ? 8 : env.dofRange));
+      p.f("uMaxBlur", (env.dofMaxBlur === undefined ? 9 : env.dofMaxBlur) * (this.quality === "ultra" ? 1.4 : 1));
+      p.f("uMotion", env.motionBlur ? (env.motionAmount === undefined ? 1 : env.motionAmount) : 0);
+      p.f("uVol", env.volumetric ? (env.volumetricIntensity === undefined ? .5 : env.volumetricIntensity) : 0);
+      p.f("uVolDecay", env.volumetricDecay === undefined ? .93 : env.volumetricDecay);
+      // sun position on screen; shafts only make sense when it is in front of us
+      let su = .5, sv = .5, vis = 0;
+      if (cam && this._sunDir) {
+        const far = _gfxV.copy(cam.position).addS(this._sunDir, -Math.min(900, cam.far * .7));
+        const s = _gfxV2.copy(far).applyMat4(cam.viewProj);
+        const fwd = _gfxV3.set(0, 0, -1).applyQuat(cam.rotation);
+        if (_gfxV4.copy(far).sub(cam.position).dot(fwd) > 0) {
+          su = s.x * .5 + .5; sv = s.y * .5 + .5;
+          vis = (su > -.6 && su < 1.6 && sv > -.6 && sv < 1.6) ? 1 : 0;
+        }
+      }
+      p.v2("uSunUV", su, sv);
+      p.f("uSunVisible", vis);
+      this.fullscreen(p);
+
+      // composite normally, but reading the effects output
+      const scene = this.rtScene;
+      this.rtScene = { ...scene, tex: this.rtFx.tex };
+      try { origPost.call(this, env, targetFBO); } finally { this.rtScene = scene; }
+      if (cam) { this._prevVP = this._prevVP || new Mat4(); this._prevVP.copy(cam.viewProj); }
+      return;
+    }
+    return origPost.call(this, env, targetFBO);
+  };
+
+  /* --- 4. remember the camera and sun the frame was drawn with ------------ */
+  const origRender = RP.render;
+  RP.render = function (scene, camera, opts = {}) {
+    this.lastCamera = camera;
+    const sun = this.computeSun(scene.env);
+    this._sunDir = sun && sun.dir ? sun.dir : null;
+    return origRender.call(this, scene, camera, opts);
+  };
+})();
+const _gfxV = new Vec3(), _gfxV2 = new Vec3(), _gfxV3 = new Vec3(), _gfxV4 = new Vec3();
+
+/* ------------------------------------------------- ENVIRONMENT SETTINGS -- */
+/* Defaults for the new effects, added to every scene's environment. */
+(function extendEnv() {
+  const extra = {
+    dof: false, dofFocus: 12, dofRange: 8, dofAmount: 1, dofMaxBlur: 9,
+    motionBlur: false, motionAmount: 1,
+    volumetric: false, volumetricIntensity: .5, volumetricDecay: .93
+  };
+  const patch = sc => { if (sc && sc.env) for (const k in extra) if (sc.env[k] === undefined) sc.env[k] = extra[k]; };
+  // every scene, however it was made: new, loaded, or already open
+  const origDefault = window.defaultEnvironment;
+  window.defaultEnvironment = function () { return Object.assign(origDefault(), extra); };
+  const origFromJSON = Scene.fromJSON;
+  Scene.fromJSON = function (j) { const sc = origFromJSON.call(this, j); patch(sc); return sc; };
+  if (typeof Engine !== "undefined" && Engine.scene) patch(Engine.scene);
+  if (typeof Project_ !== "undefined" && Project_ && Project_.scenes) Project_.scenes.forEach(patch);
+  NOVA.gfxEnvDefaults = extra;
+})();
+
+/* -------------------------------------------------------- SCRIPT ACCESS -- */
+(function wireGfx() {
+  const S = v => v === null || v === undefined ? "" : String(v);
+  const env = () => (Engine.scene && Engine.scene.env) || {};
+  const NS_Gfx = nsdef("Graphics", "رسومات", [
+    ["Graphics.setAO(on, intensity)", (v, i) => { env().ssao = truthy(v); if (i !== undefined) env().ssaoIntensity = num(i); }, "انسداد محيطي (ظلال التلامس)"],
+    ["Graphics.setDof(on, focus, range)", (v, f, r) => { env().dof = truthy(v); if (f !== undefined) env().dofFocus = num(f); if (r !== undefined) env().dofRange = num(r); }, "عمق الميدان"],
+    ["Graphics.focusOn(entity)", e => { const x = NovaAPI.entOf(e); const c = Engine.activeCamera; if (x && c) { env().dof = true; env().dofFocus = Math.sqrt(x.worldPos(new Vec3()).dist2(c.position)); } }, "ضبط بؤرة العدسة على كائن"],
+    ["Graphics.setMotionBlur(on, amount)", (v, a) => { env().motionBlur = truthy(v); if (a !== undefined) env().motionAmount = num(a); }, "ضبابية الحركة"],
+    ["Graphics.setVolumetric(on, intensity)", (v, i) => { env().volumetric = truthy(v); if (i !== undefined) env().volumetricIntensity = num(i); }, "أشعة ضوء حجمية"],
+    ["Graphics.setBloom(on, intensity)", (v, i) => { env().bloom = truthy(v); if (i !== undefined) env().bloomIntensity = num(i); }, "توهج"],
+    ["Graphics.setFog(on, density, color)", (v, d, c) => { env().fogEnabled = truthy(v); if (d !== undefined) env().fogDensity = num(d); }, "ضباب"],
+    ["Graphics.setShadows(on)", v => { env().shadows = truthy(v); }, "ظلال"],
+    ["Graphics.setReflections(on)", v => { env().reflections = truthy(v); }, "انعكاسات"],
+    ["Graphics.setExposure(v)", v => { env().exposure = num(v); }, "التعريض الضوئي"],
+    ["Graphics.setToneMap(mode)", m => { env().toneMap = S(m); }, "منحنى الألوان: none/reinhard/aces/filmic"],
+    ["Graphics.setSaturation(v)", v => { env().saturation = num(v); }, "التشبّع اللوني"],
+    ["Graphics.setContrast(v)", v => { env().contrast = num(v); }, "التباين"],
+    ["Graphics.setVignette(v)", v => { env().vignette = num(v); }, "تعتيم الأطراف"],
+    ["Graphics.setTimeOfDay(hour)", h => { env().timeOfDay = num(h); }, "ساعة اليوم (0-24)"],
+    ["Graphics.setWeather(kind)", k => { env().weather = S(k); }, "الطقس: clear/rain/snow/storm/sand/fog"]
+  ]);
+  Object.assign(NovaAPI.builtins, { Graphics: NS_Gfx });
+  if (typeof NovaComplete !== "undefined") NovaComplete._cache = null;
+})();
+</script>
+<script>
+/* ============================================================================
  * NOVA ENGINE — 38 · PERFORMANCE
  *
  *   LOD · world streaming · occlusion culling · adaptive optimizer
@@ -21434,10 +21752,10 @@ const Optimizer = {
 
   /** Everything the optimizer is allowed to turn down, per level. */
   presets: {
-    low: { shadows: false, shadowRes: 512, reflections: false, bloom: false, fxaa: false, ao: false, dof: false, motionBlur: false, particleScale: .35, drawDistance: 120, streamRadius: 55, pixelRatio: .75, lodScale: .55 },
-    medium: { shadows: true, shadowRes: 1024, reflections: false, bloom: true, fxaa: true, ao: false, dof: false, motionBlur: false, particleScale: .7, drawDistance: 250, streamRadius: 90, pixelRatio: 1, lodScale: .8 },
-    high: { shadows: true, shadowRes: 2048, reflections: true, bloom: true, fxaa: true, ao: true, dof: false, motionBlur: false, particleScale: 1, drawDistance: 500, streamRadius: 140, pixelRatio: 1, lodScale: 1 },
-    ultra: { shadows: true, shadowRes: 4096, reflections: true, bloom: true, fxaa: true, ao: true, dof: true, motionBlur: true, particleScale: 1.4, drawDistance: 1200, streamRadius: 240, pixelRatio: 1, lodScale: 1.5 }
+    low: { shadows: false, shadowRes: 512, reflections: false, bloom: false, fxaa: false, ao: false, dof: false, motionBlur: false, volumetric: false, particleScale: .35, drawDistance: 120, streamRadius: 55, pixelRatio: .75, lodScale: .55 },
+    medium: { shadows: true, shadowRes: 1024, reflections: false, bloom: true, fxaa: true, ao: false, dof: false, motionBlur: false, volumetric: false, particleScale: .7, drawDistance: 250, streamRadius: 90, pixelRatio: 1, lodScale: .8 },
+    high: { shadows: true, shadowRes: 2048, reflections: true, bloom: true, fxaa: true, ao: true, dof: false, motionBlur: false, volumetric: true, particleScale: 1, drawDistance: 500, streamRadius: 140, pixelRatio: 1, lodScale: 1 },
+    ultra: { shadows: true, shadowRes: 4096, reflections: true, bloom: true, fxaa: true, ao: true, dof: true, motionBlur: true, volumetric: true, particleScale: 1.4, drawDistance: 1200, streamRadius: 240, pixelRatio: 1, lodScale: 1.5 }
   },
 
   settings() { const r = this.renderer(); return this.presets[this.level || (r && r.quality) || "high"] || this.presets.high; },
@@ -21457,9 +21775,10 @@ const Optimizer = {
       env.reflections = p.reflections;
       env.bloom = p.bloom;
       env.fxaa = p.fxaa;
-      if (env.ao !== undefined) env.ao = p.ao;
-      if (env.dof !== undefined) env.dof = p.dof;
-      if (env.motionBlur !== undefined) env.motionBlur = p.motionBlur;
+      env.ssao = p.ao;                       // the environment calls it ssao
+      env.dof = p.dof;
+      env.motionBlur = p.motionBlur;
+      if (p.volumetric !== undefined) env.volumetric = p.volumetric;
     }
     if (sc) {
       for (const c of sc.components("LOD")) {
