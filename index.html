@@ -1465,7 +1465,7 @@ function defaultEnvironment() {
     sunColor: [1, .96, .88, 1], sunIntensity: 1.35, sunSize: 1.0,
     timeOfDay: 10.5, dayCycle: false, dayLength: 300, latitude: 30,
     ambientColor: [.42, .48, .58, 1], ambientIntensity: .55,
-    fogEnabled: true, fogMode: "exp2", fogColor: [.62, .72, .84, 1], fogDensity: .0075, fogNear: 12, fogFar: 260, fogHeight: 0, fogHeightFalloff: 0,
+    fogEnabled: false, fogMode: "exp2", fogColor: [.62, .72, .84, 1], fogDensity: .0016, fogNear: 60, fogFar: 3000, fogHeight: 0, fogHeightFalloff: 0,
     weather: "clear",             // clear | rain | snow | storm | fog | sand
     weatherIntensity: .6,
     windDir: [1, 0, .35], windStrength: .8, windTurbulence: .5, windGusts: .4,
@@ -1475,7 +1475,7 @@ function defaultEnvironment() {
     bloom: true, bloomThreshold: 1.02, bloomIntensity: .55, bloomRadius: 1,
     vignette: .22, chromatic: 0, grain: .02, saturation: 1, contrast: 1, brightness: 1, temperature: 0,
     fxaa: true, ssao: false, ssaoIntensity: .55, ssaoRadius: .55,
-    shadows: true, shadowDistance: 65, shadowBias: .0016, shadowSoft: 1, shadowRes: 2048,
+    shadows: true, shadowDistance: 140, shadowBias: .0016, shadowSoft: 1, shadowRes: 2048,
     reflections: true, reflectionQuality: .5,
     gravity: [0, -9.81, 0], physicsSubsteps: 2, physicsSleep: true, airDensity: .0012,
     backgroundColor: [.05, .06, .08, 1], background2D: [.12, .14, .18, 1]
@@ -2905,7 +2905,7 @@ class RenderCamera {
   constructor() {
     this.position = new Vec3(0, 4, 10);
     this.rotation = new Quat();
-    this.fov = 60; this.near = .1; this.far = 1200;
+    this.fov = 60; this.near = .1; this.far = 5000;
     this.ortho = false; this.orthoSize = 10;
     this.view = new Mat4(); this.proj = new Mat4(); this.viewProj = new Mat4();
     this.invViewProj = new Mat4();
@@ -4014,7 +4014,7 @@ CR.register({
     P("priority", "int", 0, { label: "الأولوية" }),
     P("fov", "number", 60, { label: "مجال الرؤية", min: 5, max: 150 }),
     P("near", "number", .1, { label: "المستوى القريب" }),
-    P("far", "number", 1000, { label: "المستوى البعيد" }),
+    P("far", "number", 5000, { label: "المستوى البعيد" }),
     P("ortho", "bool", false, { label: "إسقاط متوازٍ" }),
     P("orthoSize", "number", 8, { label: "حجم الإسقاط", showIf: d => d.ortho }),
     P("target", "entity", "", { label: "الهدف", showIf: d => ["third", "topdown", "isometric", "side", "cinematic"].includes(d.mode) }),
@@ -22606,6 +22606,258 @@ Runtime.stop = function () { CameraModes.locked = false; return _stopLoco(); };
 })();
 
 NOVA.Locomotion = Locomotion; NOVA.CameraModes = CameraModes;
+</script>
+<script data-nova="editor">
+/* ============================================================================
+ * NOVA ENGINE — 41 · SELECTION TOOLS
+ *
+ *   Move, rotate, scale, delete, duplicate, snap and local/global space were
+ *   already here. This completes the set: group, ungroup, mirror, rename and a
+ *   pivot mode, all undoable and all reachable from the toolbar, the context
+ *   menu, the keyboard and scripts.
+ * ========================================================================= */
+
+Object.assign(Editor, {
+  pivotMode: "center",          // center = bounds middle · origin = entity origin
+
+  /* ------------------------------------------------------------- pivot -- */
+  setPivotMode(mode) {
+    this.pivotMode = mode === "origin" ? "origin" : "center";
+    Shortcuts.syncTool && Shortcuts.syncTool();
+    toast("محور التحويل", this.pivotMode === "center" ? "مركز الحدود" : "أصل الكائن", "info");
+  },
+  togglePivotMode() { this.setPivotMode(this.pivotMode === "center" ? "origin" : "center"); },
+
+  /** World-space bounds of one entity, including its mesh extent. */
+  entityBounds(e, out) {
+    const box = out || new AABB();
+    box.min.set(Infinity, Infinity, Infinity);
+    box.max.set(-Infinity, -Infinity, -Infinity);
+    let found = false;
+    e.traverse(x => {
+      const mr = x.getComponent("MeshRenderer") || x.getComponent("Terrain") || x.getComponent("Water");
+      const mesh = mr && MeshResolver.resolve(mr, x);
+      if (!mesh) return;
+      const b = mesh.bounds;
+      for (let i = 0; i < 8; i++) {
+        const p = _etA.set(i & 1 ? b.max.x : b.min.x, i & 2 ? b.max.y : b.min.y, i & 4 ? b.max.z : b.min.z).applyMat4(x.matrix);
+        box.min.set(Math.min(box.min.x, p.x), Math.min(box.min.y, p.y), Math.min(box.min.z, p.z));
+        box.max.set(Math.max(box.max.x, p.x), Math.max(box.max.y, p.y), Math.max(box.max.z, p.z));
+        found = true;
+      }
+    });
+    if (!found) { const w = e.worldPos(_etA); box.min.copy(w); box.max.copy(w); }
+    return box;
+  },
+
+  /* --------------------------------------------------------- group ------ */
+  groupSelection(name) {
+    const sel = this.selection.filter(Boolean);
+    if (sel.length < 1) { toast("لا يوجد تحديد", "اختر كائنًا أو أكثر", "warn"); return null; }
+    // a group's parent is the shallowest common parent, so grouping never
+    // yanks objects out of the hierarchy they already belong to
+    const parent = sel[0].parent;
+    const centre = new Vec3();
+    for (const e of sel) centre.add(e.worldPos(_etA));
+    centre.divS(sel.length);
+
+    const group = this.addEntity(name || "Group", [], parent);
+    group.setWorldPos(centre);
+    group.markDirty();
+
+    const before = sel.map(e => ({ e, parent: e.parent }));
+    const apply = () => { for (const e of sel) group.add(e, true); };
+    const undo = () => { for (const r of before) (r.parent || this.scene.root).add(r.e, true); };
+    apply();
+    this.history.push({
+      label: "تجميع",
+      do: () => { if (!group.parent) (parent || this.scene.root).add(group, true); apply(); this.refreshHierarchy(); },
+      undo: () => { undo(); if (group.parent) group.parent.remove(group); this.refreshHierarchy(); }
+    });
+    this.select(group);
+    this.refreshHierarchy();
+    this.markDirty();
+    return group;
+  },
+
+  ungroupSelection() {
+    const groups = this.selection.filter(e => e && e.children.length);
+    if (!groups.length) { toast("لا توجد مجموعة", "اختر كائنًا يحتوي على أبناء", "warn"); return 0; }
+    const record = [];
+    for (const g of groups) {
+      const parent = g.parent || this.scene.root;
+      const kids = g.children.slice();
+      record.push({ g, parent, kids });
+      for (const k of kids) parent.add(k, true);
+    }
+    const freed = record.reduce((n, r) => n + r.kids.length, 0);
+    const redo = () => {
+      for (const r of record) { for (const k of r.kids) r.parent.add(k, true); if (r.g.parent) r.g.parent.remove(r.g); }
+      this.refreshHierarchy();
+    };
+    const undo = () => {
+      for (const r of record) { r.parent.add(r.g, true); for (const k of r.kids) r.g.add(k, true); }
+      this.refreshHierarchy();
+    };
+    for (const r of record) if (r.g.parent) r.g.parent.remove(r.g);
+    this.history.push({ label: "فك التجميع", do: redo, undo });
+    this.select(null);
+    this.refreshHierarchy();
+    this.markDirty();
+    return freed;
+  },
+
+  /* -------------------------------------------------------- mirror ------ */
+  /**
+   * Mirror across a plane through the pivot. Negating a scale component flips
+   * the geometry; reflecting the position keeps a multi-selection's layout.
+   */
+  mirrorSelection(axis) {
+    const ax = ["x", "y", "z"].includes(axis) ? axis : "x";
+    const sel = this.selection.filter(Boolean);
+    if (!sel.length) return 0;
+    const pivot = this.selectionCenter(new Vec3());
+    const snapshot = sel.map(e => ({ e, pos: e.worldPos(new Vec3()), scl: e.scale.clone() }));
+    const apply = () => {
+      for (const s of snapshot) {
+        const p = s.pos.clone();
+        p[ax] = 2 * pivot[ax] - p[ax];            // reflect across the pivot plane
+        s.e.setWorldPos(p);
+        const sc = s.scl.clone();
+        sc[ax] = -sc[ax];                          // flip the geometry itself
+        s.e.setScale(sc.x, sc.y, sc.z);
+        s.e.markDirty();
+      }
+    };
+    const revert = () => {
+      for (const s of snapshot) {
+        s.e.setWorldPos(s.pos.clone());
+        s.e.setScale(s.scl.x, s.scl.y, s.scl.z);
+        s.e.markDirty();
+      }
+    };
+    apply();
+    this.history.push({ label: "عكس " + ax.toUpperCase(), do: apply, undo: revert });
+    this.markDirty();
+    this.refreshInspector();
+    return sel.length;
+  },
+
+  /* -------------------------------------------------------- rename ------ */
+  renameSelection() {
+    const e = this.selected;
+    if (!e) { toast("لا يوجد تحديد", "", "warn"); return; }
+    const old = e.name;
+    Modal.prompt("إعادة تسمية", "الاسم", old, v => {
+      const name = String(v || "").trim();
+      if (!name || name === old) return;
+      const set = n => { e.name = n; this.refreshHierarchy(); this.refreshInspector(); };
+      set(name);
+      this.history.push({ label: "إعادة تسمية", do: () => set(name), undo: () => set(old) });
+      this.markDirty();
+    });
+  }
+});
+const _etA = new Vec3();
+
+/* Pivot mode changes where the gizmo sits: the middle of what you selected, or
+ * each object's own origin. */
+(function hookPivot() {
+  const orig = Editor.selectionCenter.bind(Editor);
+  Editor.selectionCenter = function (out) {
+    if (this.pivotMode !== "center" || !this.selection.length) return orig(out);
+    const o = out || new Vec3();
+    const box = new AABB();
+    box.min.set(Infinity, Infinity, Infinity);
+    box.max.set(-Infinity, -Infinity, -Infinity);
+    let any = false;
+    for (const e of this.selection) {
+      const b = this.entityBounds(e);
+      if (!isFinite(b.min.x)) continue;
+      box.min.set(Math.min(box.min.x, b.min.x), Math.min(box.min.y, b.min.y), Math.min(box.min.z, b.min.z));
+      box.max.set(Math.max(box.max.x, b.max.x), Math.max(box.max.y, b.max.y), Math.max(box.max.z, b.max.z));
+      any = true;
+    }
+    if (!any) return orig(out);
+    return o.set((box.min.x + box.max.x) / 2, (box.min.y + box.max.y) / 2, (box.min.z + box.max.z) / 2);
+  };
+})();
+
+/* --------------------------------------------------------- context menu -- */
+(function extendMenus() {
+  const orig = Editor.showViewportMenu.bind(Editor);
+  Editor.showViewportMenu = function (x, y, hit) {
+    if (!hit) return orig(x, y, hit);
+    ContextMenu.show(x, y, [
+      { title: hit.name },
+      { label: "تركيز", icon: "🎯", key: "F", action: () => this.focusSelection() },
+      { label: "إعادة تسمية", icon: "✏️", key: "F2", action: () => this.renameSelection() },
+      "-",
+      { label: "تحريك", icon: "✥", key: "W", action: () => { this.gizmoMode = "move"; Shortcuts.syncTool(); } },
+      { label: "تدوير", icon: "⟳", key: "E", action: () => { this.gizmoMode = "rotate"; Shortcuts.syncTool(); } },
+      { label: "تحجيم", icon: "⤢", key: "R", action: () => { this.gizmoMode = "scale"; Shortcuts.syncTool(); } },
+      { label: this.space === "local" ? "محاور عالمية" : "محاور محلية", icon: this.space === "local" ? "🌐" : "📍", key: "X", action: () => { this.space = this.space === "local" ? "world" : "local"; } },
+      { label: this.pivotMode === "center" ? "محور: أصل الكائن" : "محور: مركز الحدود", icon: "◎", key: "Z", action: () => this.togglePivotMode() },
+      { label: this.snap.enabled ? "إيقاف المحاذاة" : "تفعيل المحاذاة", icon: "⌗", key: "G", action: () => { this.snap.enabled = !this.snap.enabled; } },
+      "-",
+      { label: "تكرار", icon: "⧉", key: "Ctrl+D", action: () => this.duplicateSelection() },
+      { label: "تجميع", icon: "🗂️", key: "Ctrl+G", action: () => this.groupSelection() },
+      { label: "فك التجميع", icon: "📤", key: "Ctrl+Shift+G", action: () => this.ungroupSelection() },
+      { label: "عكس X", icon: "↔", action: () => this.mirrorSelection("x") },
+      { label: "عكس Y", icon: "↕", action: () => this.mirrorSelection("y") },
+      { label: "عكس Z", icon: "⇕", action: () => this.mirrorSelection("z") },
+      "-",
+      { label: "وضع على الأرض", icon: "⬇", action: () => this.dropToGround() },
+      { label: "إنشاء قالب", icon: "📦", action: () => this.makePrefab() },
+      { label: hit.active ? "إخفاء" : "إظهار", icon: "👁", action: () => { hit.active = !hit.active; this.refreshHierarchy(); this.markDirty(); } },
+      "-",
+      { label: "حذف", icon: "🗑", key: "Del", action: () => this.deleteSelection() }
+    ]);
+  };
+})();
+
+/* ------------------------------------------------------------ shortcuts -- */
+(function extendShortcuts() {
+  window.addEventListener("keydown", e => {
+    if (Editor.playing || !Editor.scene) return;
+    const tag = (e.target && e.target.tagName) || "";
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(tag) || (e.target && e.target.isContentEditable)) return;
+    const k = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && k === "g") {
+      e.preventDefault();
+      if (e.shiftKey) Editor.ungroupSelection(); else Editor.groupSelection();
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (k === "x") { Editor.space = Editor.space === "local" ? "world" : "local"; toast("المحاور", Editor.space === "local" ? "محلية" : "عالمية", "info"); e.preventDefault(); }
+    else if (k === "z" && !e.shiftKey) { Editor.togglePivotMode(); e.preventDefault(); }
+    else if (e.key === "F2") { Editor.renameSelection(); e.preventDefault(); }
+  }, true);
+})();
+
+/* ----------------------------------------------------------- script API -- */
+(function wireEditTools() {
+  const E = e => NovaAPI.entOf(e);
+  const S = v => v === null || v === undefined ? "" : String(v);
+  const NS_Edit = nsdef("Editor", "أدوات المحرر", [
+    ["Editor.select(entity)", e => { Editor.select(E(e)); }, "تحديد كائن"],
+    ["Editor.selected()", () => Editor.selected || null, "الكائن المحدد"],
+    ["Editor.duplicate()", () => Editor.duplicateSelection(), "تكرار التحديد"],
+    ["Editor.delete()", () => Editor.deleteSelection(), "حذف التحديد"],
+    ["Editor.group(name)", n => Editor.groupSelection(n === undefined ? undefined : S(n)), "تجميع التحديد"],
+    ["Editor.ungroup()", () => Editor.ungroupSelection(), "فك تجميع التحديد"],
+    ["Editor.mirror(axis)", a => Editor.mirrorSelection(S(a || "x")), "عكس التحديد حول محور"],
+    ["Editor.rename(name)", n => { const e = Editor.selected; if (e) { e.name = S(n); Editor.refreshHierarchy(); } }, "إعادة تسمية المحدد"],
+    ["Editor.setTool(tool)", t => { Editor.gizmoMode = S(t); Shortcuts.syncTool && Shortcuts.syncTool(); }, "الأداة: select/move/rotate/scale"],
+    ["Editor.setSpace(space)", s => { Editor.space = S(s) === "local" ? "local" : "world"; }, "محاور محلية أو عالمية"],
+    ["Editor.setPivot(mode)", m => Editor.setPivotMode(S(m)), "محور التحويل: center أو origin"],
+    ["Editor.setSnap(on, step)", (v, st) => { Editor.snap.enabled = truthy(v); if (st !== undefined) Editor.snap.move = num(st); }, "تفعيل المحاذاة وخطوتها"],
+    ["Editor.dropToGround()", () => Editor.dropToGround(), "إنزال التحديد للأرض"],
+    ["Editor.focus()", () => Editor.focusSelection(), "التركيز على التحديد"]
+  ]);
+  Object.assign(NovaAPI.builtins, { Editor: NS_Edit });
+  if (typeof NovaComplete !== "undefined") NovaComplete._cache = null;
+})();
 </script>
 <script data-nova="editor">
 /* ============================================================================
