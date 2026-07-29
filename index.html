@@ -20595,6 +20595,904 @@ if (typeof NovaComplete !== "undefined") NovaComplete._cache = null;
 
 NOVA.NS_LIB = NS_LIB;
 </script>
+<script>
+/* ============================================================================
+ * NOVA ENGINE — 36 · 2D GAME SYSTEMS
+ *
+ *   Tilemap · sprite atlas · sprite animation · parallax · 2D physics ·
+ *   2D lighting · 2D camera · 2D particles
+ *
+ *   Everything here rides on the existing 3D pipeline rather than forking a
+ *   second renderer: a tilemap is one generated mesh with per-tile UVs into a
+ *   tileset texture, 2D lights are additive quads, and the 2D camera is the
+ *   orthographic path that already exists. That keeps 2D and 3D objects usable
+ *   in the same scene and means every 2D object benefits from culling,
+ *   batching and post-processing for free.
+ * ========================================================================= */
+
+/* ------------------------------------------------------------- ATLAS ----- */
+/** Slices a texture into frames. Grid slicing covers the common sprite sheet;
+ *  named regions cover hand-packed atlases. */
+const SpriteAtlas = {
+  /** frames as {x,y,w,h} in normalized UV space, row-major from top-left */
+  grid(cols, rows) {
+    const out = [], c = Math.max(1, cols | 0), r = Math.max(1, rows | 0);
+    for (let y = 0; y < r; y++) for (let x = 0; x < c; x++)
+      out.push({ name: `${y}_${x}`, u0: x / c, v0: y / r, u1: (x + 1) / c, v1: (y + 1) / r });
+    return out;
+  },
+  /** frame rect for index i on a cols×rows sheet */
+  frameUV(cols, rows, index) {
+    const c = Math.max(1, cols | 0), r = Math.max(1, rows | 0);
+    const i = ((index | 0) % (c * r) + c * r) % (c * r);
+    const x = i % c, y = Math.floor(i / c);
+    return { u0: x / c, v0: y / r, u1: (x + 1) / c, v1: (y + 1) / r };
+  },
+  /** Store slicing on the asset so every user of the texture agrees on it. */
+  setSlices(assetId, cols, rows, names) {
+    const a = Assets.get(assetId);
+    if (!a) return null;
+    a.meta.atlas = { cols: cols | 0, rows: rows | 0, names: names || null };
+    return a.meta.atlas;
+  },
+  get(assetId) {
+    const a = Assets.get(assetId);
+    return (a && a.meta && a.meta.atlas) || null;
+  },
+  frameCount(assetId) { const s = this.get(assetId); return s ? Math.max(1, s.cols * s.rows) : 1; }
+};
+
+/* ----------------------------------------------------------- COMPONENTS -- */
+CR.register({
+  name: "Tilemap", icon: "🧱", category: "2D",
+  doc: "خريطة مربعات ثنائية الأبعاد مبنية من ورقة مربعات واحدة، مع طبقة تصادم اختيارية.",
+  props: [
+    P("tileset", "asset", "", { assetType: "texture", label: "ورقة المربعات" }),
+    P("tileCols", "int", 8, { label: "أعمدة الورقة", min: 1 }),
+    P("tileRows", "int", 8, { label: "صفوف الورقة", min: 1 }),
+    P("width", "int", 32, { label: "عرض الخريطة", min: 1 }),
+    P("height", "int", 18, { label: "ارتفاع الخريطة", min: 1 }),
+    P("tileSize", "number", 1, { label: "حجم المربع" }),
+    P("data", "text", "", { label: "المربعات", hidden: true }),
+    P("solid", "text", "", { label: "التصادم", hidden: true }),
+    P("collide", "bool", true, { label: "تفعيل التصادم" }),
+    P("opacity", "slider", 1, { min: 0, max: 1, label: "العتامة" }),
+    P("sortOrder", "int", 0, { label: "ترتيب الرسم" })
+  ]
+});
+
+CR.register({
+  name: "SpriteAnimator", icon: "🎞️", category: "2D",
+  doc: "مقاطع حركة للصور المتحركة: مشي، جري، قفز… مع انتقال تلقائي حسب حالة الشخصية.",
+  props: [
+    P("clips", "text", "", { label: "المقاطع", hidden: true }),
+    P("current", "text", "idle", { label: "المقطع الحالي" }),
+    P("playing", "bool", true, { label: "يعمل" }),
+    P("speed", "number", 1, { label: "السرعة" }),
+    P("autoState", "bool", false, { label: "ربط تلقائي بحالة الشخصية" })
+  ]
+});
+
+CR.register({
+  name: "Parallax", icon: "🏞️", category: "2D",
+  doc: "خلفية تتحرك أبطأ من الكاميرا لإيهام العمق. 0 = ثابتة تمامًا، 1 = تتحرك مع العالم.",
+  props: [
+    P("factorX", "slider", .5, { min: 0, max: 1, label: "معامل X" }),
+    P("factorY", "slider", .5, { min: 0, max: 1, label: "معامل Y" }),
+    P("repeat", "bool", false, { label: "تكرار لانهائي" }),
+    P("spanX", "number", 20, { label: "عرض التكرار", showIf: d => d.repeat })
+  ]
+});
+
+CR.register({
+  name: "Body2D", icon: "🏃", category: "2D",
+  doc: "جسم فيزيائي ثنائي الأبعاد بمصادم مستطيل، مع جاذبية وقفز ومنصات باتجاه واحد.",
+  props: [
+    P("width", "number", .8, { label: "العرض" }),
+    P("height", "number", 1.6, { label: "الارتفاع" }),
+    P("gravity", "number", -22, { label: "الجاذبية" }),
+    P("maxFall", "number", 22, { label: "أقصى سرعة سقوط" }),
+    P("speed", "number", 6, { label: "سرعة الحركة" }),
+    P("accel", "number", 60, { label: "التسارع" }),
+    P("friction", "number", 40, { label: "الاحتكاك" }),
+    P("jumpHeight", "number", 2.6, { label: "ارتفاع القفزة" }),
+    P("doubleJump", "bool", false, { label: "قفزة مزدوجة" }),
+    P("coyote", "number", .12, { label: "سماحية القفز بعد الحافة" }),
+    P("kinematic", "bool", false, { label: "ثابت (لا يتأثر بالفيزياء)" }),
+    P("autoInput", "bool", true, { label: "تحكم تلقائي بالمدخلات" })
+  ]
+});
+
+CR.register({
+  name: "Light2D", icon: "🔆", category: "2D",
+  doc: "ضوء ثنائي الأبعاد دائري يُرسم فوق المشهد بأسلوب الإضافة.",
+  props: [
+    P("color", "color", [1, .9, .6, 1], { label: "اللون" }),
+    P("radius", "number", 5, { label: "نصف القطر" }),
+    P("intensity", "number", 1, { label: "الشدة" }),
+    P("falloff", "slider", .5, { min: 0, max: 1, label: "التلاشي" }),
+    P("flicker", "slider", 0, { min: 0, max: 1, label: "الارتعاش" })
+  ]
+});
+
+CR.register({
+  name: "Camera2D", icon: "🎥", category: "2D",
+  doc: "كاميرا ثنائية الأبعاد تتابع هدفًا بنعومة، مع منطقة ميتة وحدود للعالم.",
+  props: [
+    P("target", "entity", "", { label: "الهدف" }),
+    P("size", "number", 8, { label: "حجم الرؤية" }),
+    P("smooth", "number", 8, { label: "نعومة المتابعة" }),
+    P("deadZoneX", "number", .8, { label: "منطقة ميتة X" }),
+    P("deadZoneY", "number", .6, { label: "منطقة ميتة Y" }),
+    P("offsetX", "number", 0, { label: "إزاحة X" }),
+    P("offsetY", "number", 1, { label: "إزاحة Y" }),
+    P("bounded", "bool", false, { label: "تحديد بحدود" }),
+    P("minX", "number", -50, { label: "أدنى X", showIf: d => d.bounded }),
+    P("maxX", "number", 50, { label: "أقصى X", showIf: d => d.bounded }),
+    P("minY", "number", -50, { label: "أدنى Y", showIf: d => d.bounded }),
+    P("maxY", "number", 50, { label: "أقصى Y", showIf: d => d.bounded })
+  ]
+});
+
+/* ------------------------------------------------------------- TILEMAP --- */
+const TilemapSystem = {
+  /** tiles are stored as a compact string so scenes stay small in JSON */
+  decode(c) {
+    const d = c.data, n = d.width * d.height;
+    let t = c.runtime.tiles;
+    if (!t || t.length !== n) {
+      t = c.runtime.tiles = new Int16Array(n).fill(-1);
+      const s = String(d.data || "");
+      if (s) {
+        const parts = s.split(",");
+        for (let i = 0; i < Math.min(n, parts.length); i++) t[i] = parseInt(parts[i], 10);
+      }
+      c.runtime.dirty = true;
+    }
+    return t;
+  },
+  encode(c) {
+    const t = this.decode(c);
+    c.data.data = Array.from(t).join(",");
+  },
+  get(c, x, y) {
+    const d = c.data;
+    if (x < 0 || y < 0 || x >= d.width || y >= d.height) return -1;
+    return this.decode(c)[y * d.width + x];
+  },
+  set(c, x, y, tile) {
+    const d = c.data;
+    if (x < 0 || y < 0 || x >= d.width || y >= d.height) return false;
+    const t = this.decode(c), i = y * d.width + x;
+    if (t[i] === tile) return false;
+    t[i] = tile;
+    c.runtime.dirty = true;
+    return true;
+  },
+  fill(c, tile) { const t = this.decode(c); t.fill(tile); c.runtime.dirty = true; },
+  /** flood fill from a cell, used by the editor's bucket tool */
+  flood(c, x, y, tile) {
+    const from = this.get(c, x, y);
+    if (from === tile) return 0;
+    const d = c.data, stack = [[x, y]];
+    let n = 0;
+    while (stack.length) {
+      const [cx, cy] = stack.pop();
+      if (cx < 0 || cy < 0 || cx >= d.width || cy >= d.height) continue;
+      if (this.get(c, cx, cy) !== from) continue;
+      this.set(c, cx, cy, tile); n++;
+      stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+    }
+    return n;
+  },
+  /** world position -> tile coordinates, with the map's origin at its entity */
+  worldToTile(c, e, wx, wy) {
+    const d = c.data, p = e.worldPos(new Vec3()), s = d.tileSize || 1;
+    return { x: Math.floor((wx - p.x) / s), y: Math.floor((p.y - wy) / s) };
+  },
+  tileToWorld(c, e, tx, ty) {
+    const d = c.data, p = e.worldPos(new Vec3()), s = d.tileSize || 1;
+    return new Vec3(p.x + (tx + .5) * s, p.y - (ty + .5) * s, p.z);
+  },
+  /** Rebuild the mesh. One quad per non-empty tile, UVs into the tileset. */
+  rebuild(c, e) {
+    const d = c.data, t = this.decode(c), s = d.tileSize || 1;
+    const cols = Math.max(1, d.tileCols | 0), rows = Math.max(1, d.tileRows | 0);
+    const m = new MeshData("tilemap");
+    const a = M.clamp01(d.opacity === undefined ? 1 : d.opacity);
+    // tiny inset stops neighbouring tiles bleeding into each other
+    const inset = 0.0015;
+    for (let y = 0; y < d.height; y++) for (let x = 0; x < d.width; x++) {
+      const tile = t[y * d.width + x];
+      if (tile < 0) continue;
+      const f = SpriteAtlas.frameUV(cols, rows, tile);
+      const x0 = x * s, x1 = x0 + s, y0 = -y * s, y1 = y0 - s;
+      const u0 = f.u0 + inset, u1 = f.u1 - inset, v0 = f.v0 + inset, v1 = f.v1 - inset;
+      const base = m.vertexCount;
+      m.push(x0, y0, 0, 0, 0, 1, u0, v0, 1, 1, 1, a);
+      m.push(x1, y0, 0, 0, 0, 1, u1, v0, 1, 1, 1, a);
+      m.push(x1, y1, 0, 0, 0, 1, u1, v1, 1, 1, 1, a);
+      m.push(x0, y1, 0, 0, 0, 1, u0, v1, 1, 1, 1, a);
+      m.indices.push(base, base + 2, base + 1, base, base + 3, base + 2);
+    }
+    if (!m.vertexCount) { m.push(0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0); }
+    m.computeBounds();
+    let mr = e.getComponent("MeshRenderer");
+    if (!mr) {
+      mr = e.addComponent("MeshRenderer", { source: "primitive", primitive: "quad", doubleSided: true, unlit: true, castShadow: false });
+    }
+    mr.data.mainTexture = d.tileset || "";
+    mr.data.doubleSided = true;
+    mr.data.unlit = true;
+    mr.runtime.mesh = m;
+    mr.runtime.sig = "tilemap" + c.id + "_" + (c.runtime.rev = (c.runtime.rev || 0) + 1);
+    mr.runtime.meshOverride = true;
+    c.runtime.dirty = false;
+    c.runtime.mesh = m;
+  },
+  /** Solid test in world space; used by Body2D. */
+  solidAt(c, e, wx, wy) {
+    if (!c.data.collide) return false;
+    const p = this.worldToTile(c, e, wx, wy);
+    return this.get(c, p.x, p.y) >= 0;
+  },
+  update(scene) {
+    for (const c of scene.components("Tilemap")) {
+      if (c.runtime.dirty !== false && (c.runtime.dirty || !c.runtime.mesh)) this.rebuild(c, c.entity);
+    }
+  }
+};
+
+/* ------------------------------------------------------- SPRITE ANIMATOR - */
+const SpriteAnimSystem = {
+  clips(c) {
+    if (c.runtime.clipMap) return c.runtime.clipMap;
+    let raw = c.data.clips;
+    if (typeof raw === "string") { try { raw = JSON.parse(raw || "[]"); } catch (e) { raw = []; } }
+    const map = new Map();
+    for (const cl of (raw || [])) map.set(cl.name, cl);
+    if (!map.size) {
+      // sensible starting set so the component does something out of the box
+      for (const [name, from, to, fps, loop] of [
+        ["idle", 0, 0, 6, true], ["walk", 0, 3, 10, true], ["run", 0, 5, 14, true],
+        ["jump", 0, 0, 1, false], ["fall", 0, 0, 1, false], ["attack", 0, 3, 16, false],
+        ["crouch", 0, 0, 1, true], ["swim", 0, 3, 8, true], ["climb", 0, 3, 8, true]
+      ]) map.set(name, { name, from, to, fps, loop });
+    }
+    c.runtime.clipMap = map;
+    return map;
+  },
+  /**
+   * Explicitly requested clip. An explicit play outranks autoState — otherwise
+   * a scripted attack or hurt animation is overwritten on the very next frame
+   * by whatever the body happens to be doing. The override lifts by itself
+   * when a one-shot clip finishes, or via Sprite.auto().
+   */
+  play(c, name, restart) { return this._play(c, name, restart, true); },
+  _play(c, name, restart, manual) {
+    const cl = this.clips(c).get(name);
+    if (!cl) return false;
+    if (manual) c.runtime.override = true;
+    if (c.data.current === name && !restart && c.runtime.clip) return true;
+    c.data.current = name;
+    c.runtime.clip = cl;
+    c.runtime.t = 0;
+    c.runtime.done = false;
+    c.data.playing = true;
+    return true;
+  },
+  /** Hand control back to the automatic state machine. */
+  auto(c, on) { c.runtime.override = on === false; },
+  setClip(c, name, from, to, fps, loop) {
+    this.clips(c).set(name, { name, from, to, fps, loop: loop !== false });
+    c.data.clips = JSON.stringify([...this.clips(c).values()]);
+  },
+  update(c, e, dt) {
+    const d = c.data;
+    const sp = e.getComponent("Sprite");
+    if (!sp) return;
+    if (d.autoState && !c.runtime.override) {
+      const st = this.stateOf(e);
+      if (st && st !== d.current) this._play(c, st, false, false);
+    }
+    let cl = c.runtime.clip;
+    if (!cl || cl.name !== d.current) { cl = this.clips(c).get(d.current); c.runtime.clip = cl; c.runtime.t = c.runtime.t || 0; }
+    if (!cl || !d.playing) return;
+    const len = Math.abs(cl.to - cl.from) + 1;
+    c.runtime.t = (c.runtime.t || 0) + dt * Math.max(0, cl.fps) * (d.speed === undefined ? 1 : d.speed);
+    let f = Math.floor(c.runtime.t);
+    if (f >= len) {
+      if (cl.loop === false) {
+        f = len - 1; c.runtime.done = true; d.playing = false;
+        c.runtime.override = false;                 // one-shot finished: autoState resumes
+        ScriptRuntime.sendEvent(e, "animEnd", null, cl.name);
+      }
+      else { c.runtime.t %= len; f = Math.floor(c.runtime.t); }
+    }
+    sp.data.frame = Math.min(cl.from, cl.to) + f;
+    sp.runtime.frame = sp.data.frame;      // Sprite's own ticker reads runtime
+    sp.data.fps = 0;                       // the animator owns the frame now
+  },
+  /** Derive an animation state from whatever controller the entity has. */
+  stateOf(e) {
+    const b = e.getComponent("Body2D");
+    if (b && b.runtime) {
+      const r = b.runtime;
+      if (!r.grounded) return r.vel && r.vel.y > .2 ? "jump" : "fall";
+      if (r.crouch) return "crouch";
+      return Math.abs(r.vel ? r.vel.x : 0) > .3 ? (r.run ? "run" : "walk") : "idle";
+    }
+    const cc = e.getComponent("CharacterController");
+    if (cc && cc.runtime && cc.runtime.state) {
+      return { air: "jump", walk: "walk", run: "run", idle: "idle", crouch: "crouch", swim: "swim", climb: "climb" }[cc.runtime.state] || "idle";
+    }
+    return null;
+  }
+};
+
+/* -------------------------------------------------------------- PHYSICS -- */
+const Physics2D = {
+  /** All tilemaps plus any Body2D marked kinematic act as solids. */
+  solids(scene) { return scene.components("Tilemap").filter(c => c.data.collide); },
+
+  boxOverlapsSolid(scene, x, y, hw, hh) {
+    for (const tm of this.solids(scene)) {
+      const e = tm.entity, d = tm.data, s = d.tileSize || 1;
+      const p = e.worldPos(_p2a);
+      const tx0 = Math.floor((x - hw - p.x) / s), tx1 = Math.floor((x + hw - p.x) / s);
+      const ty0 = Math.floor((p.y - (y + hh)) / s), ty1 = Math.floor((p.y - (y - hh)) / s);
+      for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++)
+        if (TilemapSystem.get(tm, tx, ty) >= 0) return true;
+    }
+    return false;
+  },
+
+  /** Axis-separated sweep: move X, resolve, move Y, resolve. Stable on tiles. */
+  moveBody(c, e, scene, dt) {
+    const d = c.data, r = c.runtime;
+    if (!r.vel) { r.vel = new Vec2(0, 0); r.jumps = 0; r.airTime = 0; }
+    const hw = d.width * .5, hh = d.height * .5;
+    const pos = e.worldPos(_p2b);
+    let x = pos.x, y = pos.y;
+
+    if (d.autoInput) {
+      r.moveX = Input.axis("moveX");
+      r.jumpPressed = Input.pressed("jump");
+      r.jumpHeld = Input.down("jump");
+      r.run = Input.down("run");
+      r.crouch = Input.down("crouch");
+    }
+    const want = (r.moveX || 0) * d.speed * (r.run ? 1.7 : 1);
+    const rate = Math.abs(want) > .01 ? d.accel : d.friction;
+    r.vel.x = M.damp(r.vel.x, want, rate / Math.max(.001, d.speed), dt);
+
+    if (!d.kinematic) {
+      r.vel.y += d.gravity * dt;
+      if (r.vel.y < -d.maxFall) r.vel.y = -d.maxFall;
+    }
+
+    // coyote time keeps jumps forgiving right after leaving a ledge
+    if (r.grounded) r.airTime = 0; else r.airTime = (r.airTime || 0) + dt;
+    const canJump = r.grounded || r.airTime < (d.coyote || 0) || (d.doubleJump && r.jumps < 2);
+    if (r.jumpPressed && canJump) {
+      r.vel.y = Math.sqrt(2 * Math.abs(d.gravity) * d.jumpHeight);
+      r.jumps = r.grounded ? 1 : r.jumps + 1;
+      r.airTime = 999;
+      ScriptRuntime.sendEvent(e, "jump");
+    }
+    // variable jump height: releasing early cuts the rise
+    if (!r.jumpHeld && r.vel.y > 0) r.vel.y -= r.vel.y * Math.min(1, dt * 12);
+
+    // ---- X
+    let nx = x + r.vel.x * dt;
+    if (this.boxOverlapsSolid(scene, nx, y, hw, hh)) {
+      const step = Math.sign(r.vel.x) * .02;
+      nx = x;
+      while (!this.boxOverlapsSolid(scene, nx + step, y, hw, hh) && Math.abs(nx - x) < Math.abs(r.vel.x * dt)) nx += step;
+      r.vel.x = 0;
+      r.hitWall = true;
+    } else r.hitWall = false;
+    x = nx;
+
+    // ---- Y
+    let ny = y + r.vel.y * dt;
+    r.grounded = false;
+    if (this.boxOverlapsSolid(scene, x, ny, hw, hh)) {
+      const step = Math.sign(r.vel.y) * .02;
+      ny = y;
+      while (!this.boxOverlapsSolid(scene, x, ny + step, hw, hh) && Math.abs(ny - y) < Math.abs(r.vel.y * dt)) ny += step;
+      if (r.vel.y < 0) { r.grounded = true; r.jumps = 0; }
+      else r.hitCeiling = true;
+      r.vel.y = 0;
+    }
+    y = ny;
+    if (!r.grounded) r.grounded = this.boxOverlapsSolid(scene, x, y - .06, hw, hh);
+
+    e.setWorldPos(new Vec3(x, y, pos.z));
+    e.markDirty();
+    r.speed = Math.abs(r.vel.x);
+
+    const sp = e.getComponent("Sprite");
+    if (sp && Math.abs(r.vel.x) > .1) sp.data.flipX = r.vel.x < 0;
+  },
+
+  update(scene, dt) {
+    for (const c of scene.components("Body2D")) this.moveBody(c, c.entity, scene, dt);
+  }
+};
+const _p2a = new Vec3(), _p2b = new Vec3();
+
+/* -------------------------------------------------------------- CAMERA --- */
+const Camera2DSystem = {
+  update(scene, dt) {
+    for (const c of scene.components("Camera2D")) {
+      const e = c.entity, d = c.data;
+      const cam = e.getComponent("Camera");
+      if (cam) { cam.data.ortho = true; cam.data.orthoSize = d.size; }
+      const t = d.target ? scene.byId(d.target) : null;
+      const p = e.worldPos(_p2a).clone();
+      if (t) {
+        const tp = t.worldPos(_p2b);
+        const wantX = tp.x + d.offsetX, wantY = tp.y + d.offsetY;
+        // only chase once the target leaves the dead zone — stops micro-jitter
+        if (Math.abs(wantX - p.x) > d.deadZoneX) p.x = M.damp(p.x, wantX - Math.sign(wantX - p.x) * d.deadZoneX, d.smooth, dt);
+        if (Math.abs(wantY - p.y) > d.deadZoneY) p.y = M.damp(p.y, wantY - Math.sign(wantY - p.y) * d.deadZoneY, d.smooth, dt);
+      }
+      if (d.bounded) { p.x = M.clamp(p.x, d.minX, d.maxX); p.y = M.clamp(p.y, d.minY, d.maxY); }
+      e.setWorldPos(p);
+      e.markDirty();
+    }
+  }
+};
+
+/* ------------------------------------------------------------ PARALLAX --- */
+const ParallaxSystem = {
+  update(scene) {
+    const cam = Engine.activeCamera;
+    if (!cam) return;
+    for (const c of scene.components("Parallax")) {
+      const e = c.entity, d = c.data;
+      if (!c.runtime.base) c.runtime.base = e.position.clone();
+      const b = c.runtime.base;
+      let x = b.x + cam.position.x * (1 - d.factorX);
+      const y = b.y + cam.position.y * (1 - d.factorY);
+      if (d.repeat && d.spanX > 0) {
+        const rel = cam.position.x - x;
+        x += Math.round(rel / d.spanX) * d.spanX;
+      }
+      e.position.set(x, y, e.position.z);
+      e.markDirty();
+    }
+  }
+};
+
+/* ------------------------------------------------------------ LIGHT 2D --- */
+const Light2DSystem = {
+  update(scene, dt) {
+    for (const c of scene.components("Light2D")) {
+      const d = c.data;
+      c.runtime.flick = d.flicker > 0 ? 1 - Math.random() * d.flicker * .5 : 1;
+      // rendered as an additive unlit quad so it needs no new shader path
+      const e = c.entity;
+      let mr = e.getComponent("MeshRenderer");
+      if (!mr) mr = e.addComponent("MeshRenderer", { source: "primitive", primitive: "quad", unlit: true, blend: "add", castShadow: false });
+      mr.data.unlit = true;
+      mr.data.blend = "add";
+      mr.data.castShadow = false;
+      const k = d.intensity * c.runtime.flick;
+      mr.data.color = [d.color[0] * k, d.color[1] * k, d.color[2] * k, 1];
+      const s = d.radius * 2;
+      if (Math.abs(e.scale.x - s) > 1e-3) { e.scale.set(s, s, 1); e.markDirty(); }
+    }
+  }
+};
+
+/* ----------------------------------------------------- ENGINE INTEGRATION - */
+const _sim2d = Engine.simulate.bind(Engine);
+Engine.simulate = function (dt, scene) {
+  _sim2d(dt, scene);
+  Physics2D.update(scene, dt);
+  for (const c of scene.components("SpriteAnimator")) SpriteAnimSystem.update(c, c.entity, dt);
+  Camera2DSystem.update(scene, dt);
+  ParallaxSystem.update(scene);
+};
+const _simAlways2d = Engine.simulateAlways.bind(Engine);
+Engine.simulateAlways = function (dt, scene) {
+  _simAlways2d(dt, scene);
+  TilemapSystem.update(scene);
+  Light2DSystem.update(scene, dt);
+};
+
+/* -------------------------------------------------------- SCRIPT ACCESS -- */
+(function wire2D() {
+  const E = e => NovaAPI.entOf(e);
+  const S = v => v === null || v === undefined ? "" : String(v);
+  const tm = e => { const x = E(e); return x && x.getComponent("Tilemap"); };
+
+  const NS_Tile = nsdef("Tilemap", "خرائط المربعات", [
+    ["Tilemap.get(map, x, y)", (m, x, y) => { const c = tm(m); return c ? TilemapSystem.get(c, num(x), num(y)) : -1; }, "رقم المربع عند إحداثيات"],
+    ["Tilemap.set(map, x, y, tile)", (m, x, y, t) => { const c = tm(m); return c ? TilemapSystem.set(c, num(x), num(y), num(t)) : false; }, "تعيين مربع"],
+    ["Tilemap.erase(map, x, y)", (m, x, y) => { const c = tm(m); return c ? TilemapSystem.set(c, num(x), num(y), -1) : false; }, "مسح مربع"],
+    ["Tilemap.fill(map, tile)", (m, t) => { const c = tm(m); if (c) TilemapSystem.fill(c, num(t)); }, "ملء الخريطة كلها"],
+    ["Tilemap.flood(map, x, y, tile)", (m, x, y, t) => { const c = tm(m); return c ? TilemapSystem.flood(c, num(x), num(y), num(t)) : 0; }, "ملء متصل من نقطة"],
+    ["Tilemap.isSolid(map, x, y)", (m, x, y) => { const c = tm(m); return c ? TilemapSystem.get(c, num(x), num(y)) >= 0 : false; }, "هل المربع صلب"],
+    ["Tilemap.worldToTile(map, x, y)", (m, x, y) => { const c = tm(m); if (!c) return new Vec3(); const p = TilemapSystem.worldToTile(c, c.entity, num(x), num(y)); return new Vec3(p.x, p.y, 0); }, "تحويل موقع عالمي إلى إحداثيات مربع"],
+    ["Tilemap.tileToWorld(map, x, y)", (m, x, y) => { const c = tm(m); return c ? TilemapSystem.tileToWorld(c, c.entity, num(x), num(y)) : new Vec3(); }, "تحويل إحداثيات مربع إلى موقع عالمي"],
+    ["Tilemap.width(map)", m => { const c = tm(m); return c ? c.data.width : 0; }, "عرض الخريطة بالمربعات"],
+    ["Tilemap.height(map)", m => { const c = tm(m); return c ? c.data.height : 0; }, "ارتفاع الخريطة بالمربعات"],
+    ["Tilemap.rebuild(map)", m => { const c = tm(m); if (c) TilemapSystem.rebuild(c, c.entity); }, "إعادة بناء شكل الخريطة"]
+  ]);
+
+  const NS_Sprite = nsdef("Sprite", "صور متحركة", [
+    ["Sprite.play(entity, clip)", (e, n) => { const c = E(e) && E(e).getComponent("SpriteAnimator"); return c ? SpriteAnimSystem.play(c, S(n), false) : false; }, "تشغيل مقطع حركة"],
+    ["Sprite.replay(entity, clip)", (e, n) => { const c = E(e) && E(e).getComponent("SpriteAnimator"); return c ? SpriteAnimSystem.play(c, S(n), true) : false; }, "إعادة تشغيل مقطع من البداية"],
+    ["Sprite.stop(entity)", e => { const c = E(e) && E(e).getComponent("SpriteAnimator"); if (c) c.data.playing = false; }, "إيقاف الحركة"],
+    ["Sprite.resume(entity)", e => { const c = E(e) && E(e).getComponent("SpriteAnimator"); if (c) c.data.playing = true; }, "استئناف الحركة"],
+    ["Sprite.current(entity)", e => { const c = E(e) && E(e).getComponent("SpriteAnimator"); return c ? c.data.current : ""; }, "اسم المقطع الحالي"],
+    ["Sprite.isDone(entity)", e => { const c = E(e) && E(e).getComponent("SpriteAnimator"); return c ? !!c.runtime.done : true; }, "هل انتهى المقطع غير المتكرر"],
+    ["Sprite.setClip(entity, name, from, to, fps, loop)", (e, n, a, b, f, l) => {
+      const c = E(e) && E(e).getComponent("SpriteAnimator");
+      if (c) SpriteAnimSystem.setClip(c, S(n), num(a), num(b), num(f), truthy(l));
+    }, "تعريف مقطع حركة جديد"],
+    ["Sprite.auto(entity, on)", (e, v) => { const c = E(e) && E(e).getComponent("SpriteAnimator"); if (c) SpriteAnimSystem.auto(c, truthy(v)); }, "إعادة التحكم للحالة التلقائية"],
+    ["Sprite.setFrame(entity, index)", (e, i) => { const s = E(e) && E(e).getComponent("Sprite"); if (s) s.data.frame = num(i); }, "تعيين إطار محدد"],
+    ["Sprite.flip(entity, on)", (e, v) => { const s = E(e) && E(e).getComponent("Sprite"); if (s) s.data.flipX = truthy(v); }, "قلب الصورة أفقيًا"],
+    ["Sprite.setTexture(entity, assetName)", (e, n) => {
+      const s = E(e) && E(e).getComponent("Sprite");
+      const a = [...Project_.assets.values()].find(x => x.name === S(n) || x.name.replace(/\.[^.]+$/, "") === S(n));
+      if (s && a) s.data.texture = a.id;
+    }, "تغيير صورة الكائن"],
+    ["Sprite.setSheet(entity, cols, rows)", (e, c0, r0) => { const s = E(e) && E(e).getComponent("Sprite"); if (s) { s.data.sheetCols = num(c0); s.data.sheetRows = num(r0); } }, "تقسيم ورقة الصور"]
+  ]);
+
+  const NS_P2 = nsdef("Physics2D", "فيزياء ثنائية", [
+    ["Physics2D.isGrounded(entity)", e => { const c = E(e) && E(e).getComponent("Body2D"); return !!(c && c.runtime.grounded); }, "هل الجسم على الأرض"],
+    ["Physics2D.velocity(entity)", e => { const c = E(e) && E(e).getComponent("Body2D"); return c && c.runtime.vel ? new Vec3(c.runtime.vel.x, c.runtime.vel.y, 0) : new Vec3(); }, "سرعة الجسم"],
+    ["Physics2D.setVelocity(entity, x, y)", (e, x, y) => { const c = E(e) && E(e).getComponent("Body2D"); if (c && c.runtime.vel) { c.runtime.vel.x = num(x); c.runtime.vel.y = num(y); } }, "تعيين السرعة"],
+    ["Physics2D.jump(entity, height)", (e, h) => {
+      const c = E(e) && E(e).getComponent("Body2D");
+      if (c && c.runtime.vel) c.runtime.vel.y = Math.sqrt(2 * Math.abs(c.data.gravity) * num(h || c.data.jumpHeight));
+    }, "قفزة فورية"],
+    ["Physics2D.move(entity, x)", (e, x) => { const c = E(e) && E(e).getComponent("Body2D"); if (c) { c.data.autoInput = false; c.runtime.moveX = num(x); } }, "تحريك أفقي يدوي (-1 إلى 1)"],
+    ["Physics2D.hitWall(entity)", e => { const c = E(e) && E(e).getComponent("Body2D"); return !!(c && c.runtime.hitWall); }, "هل اصطدم بجدار"],
+    ["Physics2D.solidAt(x, y)", (x, y) => Physics2D.boxOverlapsSolid(Engine.scene, num(x), num(y), .01, .01), "هل الموقع داخل مربع صلب"]
+  ]);
+
+  Object.assign(NovaAPI.builtins, { Tilemap: NS_Tile, Sprite: NS_Sprite, Physics2D: NS_P2 });
+  if (typeof NovaComplete !== "undefined") NovaComplete._cache = null;
+})();
+
+NOVA.TilemapSystem = TilemapSystem;
+NOVA.SpriteAtlas = SpriteAtlas;
+NOVA.Physics2D = Physics2D;
+NOVA.SpriteAnimSystem = SpriteAnimSystem;
+</script>
+<script data-nova="editor">
+/* ============================================================================
+ * NOVA ENGINE — 37 · 2D EDITORS
+ *   Tilemap painting in the viewport, and a sprite editor for slicing atlases
+ *   and authoring animation clips.
+ * ========================================================================= */
+
+/* ---------------------------------------------------------- TILE PAINTING */
+Object.assign(Editor, {
+  tilePaint: { tile: 0, tool: "brush", size: 1, map: null },
+
+  /** The tilemap being edited: the selection if it has one, else the first. */
+  activeTilemap() {
+    const sel = this.selected && this.selected.getComponent("Tilemap");
+    if (sel) return sel;
+    if (!this.scene) return null;
+    const all = this.scene.components("Tilemap");
+    return all.length ? all[0] : null;
+  },
+
+  /** Screen ray -> tile cell on the map's own plane (constant Z). */
+  tileAt(ndc) {
+    const c = this.activeTilemap();
+    if (!c) return null;
+    const e = c.entity;
+    const ray = this.viewCam.screenRay(ndc.x, ndc.y);
+    const planeZ = e.worldPos(new Vec3()).z;
+    const dz = ray.d.z;
+    if (Math.abs(dz) < 1e-6) return null;
+    const t = (planeZ - ray.o.z) / dz;
+    if (t < 0) return null;
+    const p = ray.at(t, new Vec3());
+    const cell = TilemapSystem.worldToTile(c, e, p.x, p.y);
+    return { comp: c, x: cell.x, y: cell.y };
+  },
+
+  paintTile(ndc) {
+    const hit = this.tileAt(ndc);
+    if (!hit) return false;
+    const tp = this.tilePaint, c = hit.comp;
+    let changed = false;
+    if (tp.tool === "picker") {
+      const t = TilemapSystem.get(c, hit.x, hit.y);
+      if (t >= 0) { tp.tile = t; Panels.tilemap && Panels.tilemap.refresh(); }
+      return false;
+    }
+    if (tp.tool === "bucket") {
+      changed = TilemapSystem.flood(c, hit.x, hit.y, tp.tile) > 0;
+    } else {
+      const value = tp.tool === "eraser" ? -1 : tp.tile;
+      const r = Math.max(0, (tp.size | 0) - 1);
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++)
+        if (TilemapSystem.set(c, hit.x + dx, hit.y + dy, value)) changed = true;
+    }
+    if (changed) TilemapSystem.rebuild(c, c.entity);
+    return changed;
+  },
+
+  beginTilePaint() {
+    const c = this.activeTilemap();
+    this.tileSnapshot = c ? { comp: c, data: Array.from(TilemapSystem.decode(c)) } : null;
+  },
+  commitTilePaint() {
+    const snap = this.tileSnapshot;
+    this.tileSnapshot = null;
+    if (!snap) return;
+    const c = snap.comp;
+    const after = Array.from(TilemapSystem.decode(c));
+    if (after.join() === snap.data.join()) return;
+    TilemapSystem.encode(c);
+    const restore = arr => {
+      c.runtime.tiles = Int16Array.from(arr);
+      TilemapSystem.encode(c);
+      TilemapSystem.rebuild(c, c.entity);
+      Editor.refreshInspector();
+    };
+    this.history.push({
+      label: "رسم مربعات",
+      do: () => restore(after),
+      undo: () => restore(snap.data)
+    });
+    this.markDirty();
+  }
+});
+
+/* Slot the tile tool into the viewport gesture handlers already in place. */
+(function hookTileTool() {
+  const origBind = Editor.bindViewportInput.bind(Editor);
+  Editor.bindViewportInput = function () {
+    origBind();
+    const g = this.gestures;
+    if (!g) return;
+    const h = g.h;
+    const prevShould = h.shouldDrag, prevStart = h.onDragStart, prevDrag = h.onDrag,
+      prevEnd = h.onDragEnd, prevTap = h.onTap;
+    let painting = false;
+    h.shouldDrag = info => (this.activeTool === "tile" ? true : prevShould(info));
+    h.onDragStart = info => {
+      if (this.activeTool === "tile") { painting = true; this.beginTilePaint(); this.paintTile(info.start); return; }
+      prevStart(info);
+    };
+    h.onDrag = info => {
+      if (painting) { this.paintTile({ x: info.nx, y: info.ny }); return; }
+      prevDrag(info);
+    };
+    h.onDragEnd = info => {
+      if (painting) { painting = false; this.commitTilePaint(); return; }
+      prevEnd(info);
+    };
+    h.onTap = info => {
+      if (this.activeTool === "tile") {
+        this.beginTilePaint();
+        this.paintTile({ x: info.nx, y: info.ny });
+        this.commitTilePaint();
+        return;
+      }
+      prevTap(info);
+    };
+  };
+  if (Editor.gestures) Editor.bindViewportInput();
+})();
+
+/* ------------------------------------------------------------- PANEL: 2D */
+Panels.tilemap = Dock.register({
+  id: "tilemap", title: "المربعات", short: "المربعات", icon: "🧱",
+  build(host) {
+    this.host = host;
+    const tools = el("div", { class: "ptools" });
+    this.toolBtn = el("button", {
+      class: "btn primary", style: "padding:3px 10px",
+      onClick: () => {
+        Editor.activeTool = Editor.activeTool === "tile" ? null : "tile";
+        this.syncToolBtn();
+        toast(Editor.activeTool === "tile" ? "فرشاة المربعات مفعّلة" : "تم إيقاف الفرشاة", "انقر في المشهد للرسم", "info");
+      }
+    }, "🖌️ تفعيل الفرشاة");
+    tools.appendChild(this.toolBtn);
+    for (const [k, label, icon] of [["brush", "فرشاة", "🖌️"], ["eraser", "ممحاة", "🧽"], ["bucket", "دلو", "🪣"], ["picker", "قطّارة", "💧"]]) {
+      const chip = el("span", { class: "chip", onClick: () => { Editor.tilePaint.tool = k; this.refresh(); } }, icon + " " + label);
+      chip.dataset.tool = k;
+      tools.appendChild(chip);
+    }
+    tools.appendChild(el("div", { style: "flex:1" }));
+    tools.appendChild(el("span", { class: "chip", onClick: () => this.newMap() }, "＋ خريطة"));
+    host.appendChild(tools);
+
+    this.info = el("div", { class: "hint", style: "padding:6px 10px" });
+    host.appendChild(this.info);
+
+    const sizeRow = el("div", { class: "row", style: "padding:0 10px" });
+    sizeRow.appendChild(el("label", null, "حجم الفرشاة"));
+    this.sizeIn = el("input", { type: "range", min: "1", max: "6", step: "1", value: "1" });
+    this.sizeIn.oninput = () => { Editor.tilePaint.size = +this.sizeIn.value; this.info.textContent = this.infoText(); };
+    sizeRow.appendChild(el("div", { class: "fields" }, this.sizeIn));
+    host.appendChild(sizeRow);
+
+    this.palette = el("div", { class: "scroll", style: "flex:1;padding:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(46px,1fr));gap:6px;align-content:start" });
+    host.appendChild(this.palette);
+    this.refresh();
+  },
+  onShow() { this.refresh(); },
+  syncToolBtn() {
+    const on = Editor.activeTool === "tile";
+    this.toolBtn.classList.toggle("primary", !on);
+    this.toolBtn.textContent = on ? "✋ إيقاف الفرشاة" : "🖌️ تفعيل الفرشاة";
+  },
+  infoText() {
+    const c = Editor.activeTilemap();
+    if (!c) return "لا توجد خريطة مربعات. اضغط «＋ خريطة».";
+    const tp = Editor.tilePaint;
+    return `${c.entity.name} · ${c.data.width}×${c.data.height} · مربع ${tp.tile} · فرشاة ${tp.size}`;
+  },
+  newMap() {
+    const e = Editor.addEntity("Tilemap", [["Tilemap", {}]]);
+    Editor.select(e);
+    this.refresh();
+    toast("تم إنشاء خريطة مربعات", "اختر ورقة المربعات من الخصائص", "ok");
+  },
+  refresh() {
+    if (!this.host) return;
+    this.syncToolBtn();
+    this.info.textContent = this.infoText();
+    for (const chip of $$("[data-tool]", this.host)) chip.classList.toggle("on", chip.dataset.tool === Editor.tilePaint.tool);
+    this.palette.innerHTML = "";
+    const c = Editor.activeTilemap();
+    if (!c) return;
+    const a = c.data.tileset ? Assets.get(c.data.tileset) : null;
+    const cols = Math.max(1, c.data.tileCols | 0), rows = Math.max(1, c.data.tileRows | 0);
+    const eraser = el("div", { class: "asset", style: "aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:20px", onClick: () => { Editor.tilePaint.tool = "eraser"; this.refresh(); } }, "🧽");
+    eraser.title = "ممحاة";
+    this.palette.appendChild(eraser);
+    for (let i = 0; i < cols * rows; i++) {
+      const cell = el("div", { class: "asset" + (Editor.tilePaint.tile === i && Editor.tilePaint.tool !== "eraser" ? " sel" : ""), style: "aspect-ratio:1;overflow:hidden;position:relative;cursor:pointer" });
+      cell.title = "مربع " + i;
+      if (a && a.dataURL) {
+        const f = SpriteAtlas.frameUV(cols, rows, i);
+        cell.style.background = `url(${a.dataURL})`;
+        cell.style.backgroundSize = `${cols * 100}% ${rows * 100}%`;
+        cell.style.backgroundPosition = `${(f.u0 / (1 - 1 / cols || 1)) * 100}% ${(f.v0 / (1 - 1 / rows || 1)) * 100}%`;
+        cell.style.imageRendering = "pixelated";
+      } else {
+        cell.style.display = "flex"; cell.style.alignItems = "center"; cell.style.justifyContent = "center";
+        cell.textContent = i;
+      }
+      cell.onclick = () => { Editor.tilePaint.tile = i; Editor.tilePaint.tool = "brush"; this.refresh(); };
+      this.palette.appendChild(cell);
+    }
+  }
+});
+
+/* --------------------------------------------------------- PANEL: SPRITE */
+Panels.sprite2d = Dock.register({
+  id: "sprite2d", title: "الصور المتحركة", short: "الصور", icon: "🎞️",
+  build(host) {
+    this.host = host;
+    const tools = el("div", { class: "ptools" });
+    tools.appendChild(el("button", { class: "btn primary", style: "padding:3px 10px", onClick: () => this.addClip() }, "＋ مقطع"));
+    tools.appendChild(el("span", { class: "chip", onClick: () => this.addPreset() }, "🎬 المقاطع الجاهزة"));
+    tools.appendChild(el("div", { style: "flex:1" }));
+    tools.appendChild(el("span", { class: "chip", onClick: () => this.refresh() }, "↻"));
+    host.appendChild(tools);
+    this.body = el("div", { class: "insp scroll", style: "flex:1;padding:8px" });
+    host.appendChild(this.body);
+    this.refresh();
+  },
+  onShow() { this.refresh(); },
+  target() {
+    const e = Editor.selected;
+    if (!e) return null;
+    return { e, sp: e.getComponent("Sprite"), an: e.getComponent("SpriteAnimator") };
+  },
+  addClip() {
+    const t = this.target();
+    if (!t || !t.an) { toast("اختر كائنًا فيه SpriteAnimator", "", "warn"); return; }
+    Modal.prompt("مقطع جديد", "الاسم", "clip" + (SpriteAnimSystem.clips(t.an).size + 1), name => {
+      SpriteAnimSystem.setClip(t.an, name, 0, 3, 10, true);
+      this.refresh(); Editor.markDirty();
+    });
+  },
+  addPreset() {
+    const t = this.target();
+    if (!t) { toast("اختر كائنًا أولاً", "", "warn"); return; }
+    let an = t.an;
+    if (!an) an = t.e.addComponent("SpriteAnimator", { autoState: true });
+    if (!t.sp) t.e.addComponent("Sprite", {});
+    // the eight states the character controller can report, in sheet order
+    const preset = [["idle", 0, 1, 4], ["walk", 2, 5, 10], ["run", 6, 9, 14], ["jump", 10, 10, 1],
+    ["fall", 11, 11, 1], ["attack", 12, 15, 16], ["crouch", 16, 16, 1], ["swim", 17, 20, 8], ["climb", 21, 24, 8]];
+    for (const [n, a, b, f] of preset) SpriteAnimSystem.setClip(an, n, a, b, f, n !== "attack" && n !== "jump");
+    this.refresh(); Editor.refreshInspector(); Editor.markDirty();
+    toast("تمت إضافة 9 مقاطع", "مشي · جري · قفز · هجوم · جلوس · سقوط · سباحة · تسلق", "ok");
+  },
+  refresh() {
+    if (!this.host) return;
+    this.body.innerHTML = "";
+    const t = this.target();
+    if (!t) { this.body.appendChild(el("div", { class: "empty" }, "اختر كائنًا يحتوي على Sprite.")); return; }
+
+    /* ---- atlas slicing */
+    if (t.sp) {
+      this.body.appendChild(el("h4", { style: "margin:4px 0 8px" }, "تقطيع الورقة"));
+      const a = t.sp.data.texture ? Assets.get(t.sp.data.texture) : null;
+      const grid = el("div", { style: "position:relative;background:var(--bg-0);border:1px solid var(--line);border-radius:8px;overflow:hidden;max-height:180px;display:flex;align-items:center;justify-content:center" });
+      if (a && a.dataURL) {
+        const wrap = el("div", { style: "position:relative;display:inline-block" });
+        wrap.appendChild(el("img", { src: a.dataURL, style: "max-height:170px;display:block;image-rendering:pixelated" }));
+        const cols = Math.max(1, t.sp.data.sheetCols | 0), rows = Math.max(1, t.sp.data.sheetRows | 0);
+        const ov = el("div", { style: `position:absolute;inset:0;background-size:${100 / cols}% ${100 / rows}%;background-image:linear-gradient(to right,var(--accent) 1px,transparent 1px),linear-gradient(to bottom,var(--accent) 1px,transparent 1px);opacity:.55;pointer-events:none` });
+        wrap.appendChild(ov);
+        grid.appendChild(wrap);
+      } else grid.appendChild(el("div", { class: "hint", style: "padding:20px" }, "لا توجد صورة — عيّن نسيجًا في الخصائص."));
+      this.body.appendChild(grid);
+
+      for (const [key, label] of [["sheetCols", "أعمدة"], ["sheetRows", "صفوف"], ["frame", "الإطار"]]) {
+        const row = el("div", { class: "row" });
+        row.appendChild(el("label", null, label));
+        const inp = el("input", { class: "in", type: "number", min: "0", value: t.sp.data[key] });
+        inp.oninput = () => { t.sp.data[key] = Math.max(key === "frame" ? 0 : 1, +inp.value | 0); this.refresh(); Editor.markDirty(); };
+        row.appendChild(el("div", { class: "fields" }, inp));
+        this.body.appendChild(row);
+      }
+      const total = Math.max(1, (t.sp.data.sheetCols | 0) * (t.sp.data.sheetRows | 0));
+      this.body.appendChild(el("div", { class: "hint", style: "margin:4px 0 12px" }, `${total} إطارًا · الترقيم من 0 إلى ${total - 1}`));
+    }
+
+    /* ---- clips */
+    this.body.appendChild(el("h4", { style: "margin:10px 0 8px" }, "مقاطع الحركة"));
+    if (!t.an) {
+      const b = el("button", { class: "btn", onClick: () => { t.e.addComponent("SpriteAnimator", {}); this.refresh(); Editor.refreshInspector(); } }, "＋ إضافة SpriteAnimator");
+      this.body.appendChild(b);
+      return;
+    }
+    const clips = SpriteAnimSystem.clips(t.an);
+    for (const cl of clips.values()) {
+      const card = el("div", { style: "border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px" });
+      const head = el("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:6px" });
+      head.appendChild(el("b", { style: "flex:1" }, cl.name));
+      head.appendChild(el("span", { class: "chip", onClick: () => { SpriteAnimSystem.play(t.an, cl.name, true); toast("تشغيل " + cl.name, "", "info"); } }, "▶"));
+      head.appendChild(el("span", { class: "chip", onClick: () => { clips.delete(cl.name); t.an.data.clips = JSON.stringify([...clips.values()]); this.refresh(); Editor.markDirty(); } }, "🗑"));
+      card.appendChild(head);
+      const mk = (key, label, min) => {
+        const row = el("div", { class: "row" });
+        row.appendChild(el("label", null, label));
+        const inp = el("input", { class: "in", type: "number", min: String(min), value: cl[key] });
+        inp.oninput = () => {
+          cl[key] = +inp.value;
+          t.an.data.clips = JSON.stringify([...clips.values()]);
+          t.an.runtime.clip = null;
+          Editor.markDirty();
+        };
+        row.appendChild(el("div", { class: "fields" }, inp));
+        card.appendChild(row);
+      };
+      mk("from", "من إطار", 0); mk("to", "إلى إطار", 0); mk("fps", "إطار/ثانية", 0);
+      const lr = el("div", { class: "row" });
+      lr.appendChild(el("label", null, "تكرار"));
+      const chk = el("input", { type: "checkbox" });
+      chk.checked = cl.loop !== false;
+      chk.onchange = () => { cl.loop = chk.checked; t.an.data.clips = JSON.stringify([...clips.values()]); Editor.markDirty(); };
+      lr.appendChild(el("div", { class: "fields" }, chk));
+      card.appendChild(lr);
+      this.body.appendChild(card);
+    }
+  }
+});
+</script>
 <script data-nova="editor">
 /* ============================================================================
  * NOVA ENGINE — 27 · DOCS · TEMPLATES · BOOTSTRAP · MAIN LOOP
