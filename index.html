@@ -13538,6 +13538,8 @@ Panels.project = Dock.register({
           ev.dataTransfer.setData(dragType || "nova/asset", it.id);
           ev.dataTransfer.effectAllowed = "copy";
         });
+        if (!dragType || dragType === "nova/asset" || dragType === "nova/prefab")
+          TouchDrag.source(n, () => ({ kind: dragType === "nova/prefab" ? "prefab" : "asset", id: it.id, name: it.name, icon: it.icon }));
         kids.appendChild(n);
       }
       this.tree.appendChild(kids);
@@ -13662,6 +13664,7 @@ Panels.assets = Dock.register({
       card.onclick = () => { $$(".asset", this.grid).forEach(x => x.classList.remove("sel")); card.classList.add("sel"); };
       card.ondblclick = () => AssetPreview.show(a);
       card.addEventListener("dragstart", ev => { ev.dataTransfer.setData("nova/asset", a.id); ev.dataTransfer.effectAllowed = "copy"; });
+      TouchDrag.source(card, () => ({ kind: "asset", id: a.id, name: a.name, img: a.type === "texture" ? a.dataURL : null, icon: (FILE_KINDS[a.type] || {}).icon }));
       card.oncontextmenu = ev => {
         ev.preventDefault();
         ContextMenu.show(ev.clientX, ev.clientY, [
@@ -19569,6 +19572,169 @@ if (Panels.assets) {
   };
 }
 NOVA.FileManager = FileManager; NOVA.FILE_KINDS = FILE_KINDS;
+</script>
+<style data-nova="editor">
+/* ---- pointer-based drag & drop (touch / pen) ---------------------------- */
+.tdrag-ghost{
+  position:fixed; z-index:9999; pointer-events:none; transform:translate(-50%,-50%);
+  display:flex; align-items:center; gap:8px; max-width:200px;
+  padding:8px 12px; border-radius:12px; font-size:13px; font-weight:600;
+  background:var(--bg-3); color:var(--text); border:1px solid var(--accent);
+  box-shadow:0 12px 32px rgba(0,0,0,.45); opacity:.94;
+}
+.tdrag-ghost img{width:28px;height:28px;object-fit:cover;border-radius:6px}
+.tdrag-ghost .g-ic{font-size:20px;line-height:1}
+.tdrag-ghost .g-nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tdrag-src{opacity:.4}
+.tdrag-target{outline:2px dashed var(--accent) !important; outline-offset:-3px}
+body.tdragging{-webkit-user-select:none;user-select:none}
+</style>
+<script data-nova="editor">
+/* ============================================================================
+ * NOVA ENGINE — 32 · POINTER DRAG & DROP
+ *   HTML5 drag-and-drop never fires on touch screens, so assets could only be
+ *   dragged into the scene with a mouse. This adds a pointer-driven drag that
+ *   covers touch and pen while leaving the native mouse path untouched.
+ *
+ *   Touch drags are armed by a short hold, so a plain swipe still scrolls the
+ *   list it started in and a tap still selects.
+ * ========================================================================= */
+
+const TouchDrag = {
+  HOLD: 280,          // ms of stillness before a touch drag arms
+  CANCEL_MOVE: 12,    // px of travel that abandons the pending drag (a scroll)
+  pending: null,
+  cur: null,
+  ghost: null,
+  target: null,
+
+  /**
+   * Register a drag source.
+   * @param {HTMLElement} node
+   * @param {function():?object} payload  -> { kind:"asset"|"prefab", id, name, icon, img }
+   */
+  source(node, payload) {
+    if (!node || node.__tdrag) return;
+    node.__tdrag = true;
+    node.addEventListener("pointerdown", e => {
+      if (e.pointerType === "mouse" || this.cur || e.isPrimary === false) return;
+      const p = payload();
+      if (!p) return;
+      this.pending = { pid: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, node, payload: p };
+      clearTimeout(this._timer);
+      this._timer = setTimeout(() => this.arm(), this.HOLD);
+    }, { passive: true });
+  },
+
+  arm() {
+    const st = this.pending;
+    if (!st) return;
+    this.pending = null;
+    this.cur = st;
+    Platform.vibrate(16);
+    document.body.classList.add("tdragging");
+    st.node.classList.add("tdrag-src");
+    this.ghost = el("div", { class: "tdrag-ghost" });
+    if (st.payload.img) this.ghost.appendChild(el("img", { src: st.payload.img }));
+    else this.ghost.appendChild(el("span", { class: "g-ic" }, st.payload.icon || "📦"));
+    this.ghost.appendChild(el("span", { class: "g-nm" }, st.payload.name || "أصل"));
+    document.body.appendChild(this.ghost);
+    this.moveGhost(st.x, st.y);
+    // On a phone the asset browser fills the screen, so slide the sheet away and
+    // reveal the viewport under the finger. Height state is left untouched so it
+    // comes back exactly as the user had it.
+    if (typeof MobileUI !== "undefined" && MobileUI.active && MobileUI.sheet && MobileUI.sheetPanel) {
+      st.ducked = MobileUI.sheet;
+      st.ducked.style.transition = "transform .16s ease";
+      st.ducked.style.transform = "translateY(110%)";
+      st.ducked.style.pointerEvents = "none";
+    }
+  },
+
+  moveGhost(x, y) { if (this.ghost) { this.ghost.style.left = x + "px"; this.ghost.style.top = (y - 34) + "px"; } },
+
+  /** Which drop zone is under the pointer, if any. */
+  hitTarget(x, y) {
+    if (this.ghost) this.ghost.style.display = "none";
+    const node = document.elementFromPoint(x, y);
+    if (this.ghost) this.ghost.style.display = "";
+    if (!node) return null;
+    const vp = Editor.viewport;
+    if (vp && (node === vp || vp.contains(node))) return { zone: "viewport", el: vp };
+    const tree = Panels.hierarchy && Panels.hierarchy.tree;
+    if (tree && (node === tree || tree.contains(node))) return { zone: "hierarchy", el: tree };
+    return null;
+  },
+
+  setTarget(t) {
+    if (this.target && (!t || t.el !== this.target.el)) {
+      this.target.el.classList.remove("tdrag-target");
+      if (this.target.zone === "viewport" && Editor.dropIndicator) Editor.dropIndicator.classList.remove("show");
+    }
+    if (t && (!this.target || t.el !== this.target.el)) {
+      t.el.classList.add("tdrag-target");
+      if (t.zone === "viewport" && Editor.dropIndicator) Editor.dropIndicator.classList.add("show");
+    }
+    this.target = t;
+  },
+
+  move(e) {
+    const st = this.pending;
+    if (st && e.pointerId === st.pid) {
+      // still deciding: any real travel means the user is scrolling the list
+      if (Math.hypot(e.clientX - st.x0, e.clientY - st.y0) > this.CANCEL_MOVE) this.cancelPending();
+      else { st.x = e.clientX; st.y = e.clientY; }
+      return;
+    }
+    const c = this.cur;
+    if (!c || e.pointerId !== c.pid) return;
+    e.preventDefault();
+    c.x = e.clientX; c.y = e.clientY;
+    this.moveGhost(c.x, c.y);
+    this.setTarget(this.hitTarget(c.x, c.y));
+  },
+
+  up(e, cancelled) {
+    if (this.pending && e.pointerId === this.pending.pid) { this.cancelPending(); return; }
+    const c = this.cur;
+    if (!c || e.pointerId !== c.pid) return;
+    const target = cancelled ? null : this.target;
+    this.finish();
+    if (!target) return;
+    const p = c.payload;
+    let ndc = { x: 0, y: 0 };
+    if (target.zone === "viewport") {
+      const r = Editor.viewport.getBoundingClientRect();
+      ndc = { x: ((c.x - r.left) / r.width) * 2 - 1, y: -(((c.y - r.top) / r.height) * 2 - 1) };
+    }
+    if (p.kind === "prefab") Editor.dropPrefab(p.id, ndc);
+    else Editor.dropAsset(p.id, ndc);
+  },
+
+  cancelPending() { clearTimeout(this._timer); this.pending = null; },
+
+  finish() {
+    clearTimeout(this._timer);
+    const c = this.cur;
+    this.setTarget(null);
+    if (this.ghost) { this.ghost.remove(); this.ghost = null; }
+    if (c) {
+      c.node.classList.remove("tdrag-src");
+      if (c.ducked) { c.ducked.style.transform = ""; c.ducked.style.pointerEvents = ""; }
+    }
+    this.cur = null;
+    document.body.classList.remove("tdragging");
+  },
+
+  init() {
+    window.addEventListener("pointermove", e => this.move(e), { passive: false });
+    window.addEventListener("pointerup", e => this.up(e, false));
+    window.addEventListener("pointercancel", e => this.up(e, true));
+    window.addEventListener("blur", () => { this.cancelPending(); this.finish(); });
+  }
+};
+TouchDrag.init();
+NOVA.TouchDrag = TouchDrag;
 </script>
 <script data-nova="editor">
 /* ============================================================================

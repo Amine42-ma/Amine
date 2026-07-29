@@ -175,6 +175,12 @@ component Patrol:
 
 كل ما يُستورد يظهر في متصفح الأصول ويمكن سحبه وإفلاته داخل المشهد.
 
+**السحب والإفلات باللمس:** سحب HTML5 القياسي لا يعمل على شاشات اللمس إطلاقًا،
+لذلك أُضيفت طبقة سحب مبنية على الـ Pointer تغطي اللمس والقلم: اضغط مطوّلًا على
+الأصل (‎280 مللي ثانية مع اهتزاز خفيف) ثم اسحبه إلى المشهد. تمرير عادي بالإصبع
+يظل يمرّر القائمة، والنقرة تظل تحدّد. على الهاتف تنزلق الورقة السفلية تلقائيًا
+أثناء السحب لتكشف المشهد تحت إصبعك، ثم تعود كما كانت.
+
 ## التحكم متعدد المنصات
 
 - أزرار لمس قابلة للسحب وتغيير الحجم واللون والشفافية، مع دعم اللمس المتعدد.
@@ -204,14 +210,14 @@ component Patrol:
 
 ## البنية
 
-ملف واحد، ‎~20.4 ألف سطر، مقسّم إلى 29 وحدة مستقلة:
+ملف واحد، ‎~20.6 ألف سطر، مقسّم إلى 30 وحدة مستقلة:
 
 ```
 الرياضيات · ECS · الهندسة · الشيدرات · العارض · خط الأنابيب · المكوّنات ·
 الفيزياء · أنظمة العالم · لغة NovaScript · NovaScript 2.0 · واجهة اللغة البرمجية ·
 المدخلات · الصوت/الحركة/الذكاء · الأصول · نواة المحرك · مشغّل اللعبة · الإيماءات ·
 هيكل المحرر · نواة المحرر · اللوحات · المحررات المتخصصة · واجهة الهاتف ·
-مدير الملفات · البناء · القوائم · التوثيق
+مدير الملفات · السحب باللمس · البناء · القوائم · التوثيق
 ```
 
 وحدات 2.0 مبنية فوق نواة 1.0 بالامتداد لا بإعادة الكتابة: تُوسِّع المُحلل
@@ -257,6 +263,9 @@ themeable, touch-capable IDE that runs on phones, tablets and desktops.
 - **File manager**: drag-and-drop or device picker, automatic type detection,
   audio split into SFX and music by duration, models placed straight into the
   scene with auto-rescaling, and a usage prompt for images (sprite, 3D quad,
-  ground, or texture only).
+  ground, or texture only). Because HTML5 drag-and-drop never fires on touch
+  screens, a pointer-based drag layer covers touch and pen: hold an asset
+  briefly, then drag it into the scene. A plain swipe still scrolls the list,
+  and on a phone the bottom sheet ducks out of the way mid-drag.
 
 Open `index.html` — that's it.
