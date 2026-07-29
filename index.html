@@ -3801,6 +3801,8 @@ Object.assign(Renderer.prototype, {
   /* ------------------------------------------------------- main entry point */
   render(scene, camera, opts = {}) {
     if (this.failed) return;
+    if (!this.rtScene) this.ensureTargets(Math.max(2, this.width), Math.max(2, this.height));
+    if (!this.rtScene) return;
     const gl = this.gl, env = scene.env;
     this.envRef = env;
     this.stats.draws = 0; this.stats.tris = 0; this.stats.particles = 0;
@@ -5961,7 +5963,7 @@ const NS_KEYWORDS = {
   "not": "not", "ليس": "not",
   "is": "is", "يساوي": "is",
   // commands
-  "say": "say", "print": "say", "log": "say", "قل": "say", "اطبع": "say",
+  "say": "say", "قل": "say", "اطبع": "say",
   "move": "move", "تحرك": "move", "حرك": "move",
   "rotate": "rotate", "دوّر": "rotate", "دور": "rotate",
   "scale": "scale", "حجم": "scale",
@@ -6079,7 +6081,8 @@ class NSLexer {
         let id = "";
         while (this.pos < s.length && /[A-Za-z0-9_؀-ۿ$]/.test(s[this.pos])) { id += s[this.pos]; this.pos++; this.col++; }
         const low = id.toLowerCase();
-        const kw = NS_KEYWORDS[low] || NS_KEYWORDS[id];
+        const uniformCase = id === low || id === id.toUpperCase();
+        const kw = NS_KEYWORDS[id] || (uniformCase ? NS_KEYWORDS[low] : undefined);
         if (kw) this.push("KW", kw, startLine, startCol), this.tokens[this.tokens.length - 1].raw = id;
         else this.push("ID", id, startLine, startCol);
         continue;
@@ -6562,6 +6565,12 @@ class NSParser {
         }
         break;
     }
+    // A keyword used where a value belongs is just an identifier (e.g. a variable
+    // called `other` or `move`). Only genuinely unusable tokens raise an error.
+    if (t.type === "KW") {
+      this.i++;
+      return { type: "Ident", name: String(t.raw || t.value), line: t.line, col: t.col };
+    }
     this.error(`تعبير غير متوقع "${this.describe(t)}"`);
     this.i++;
     return { type: "Literal", value: null };
@@ -6688,7 +6697,8 @@ class NSCompiler {
         return (ctx, sc) => {
           let arr = list(ctx, sc);
           if (arr === null || arr === undefined) return;
-          if (!Array.isArray(arr)) arr = typeof arr === "object" ? Object.values(arr) : [arr];
+          if (arr instanceof NSDict) arr = arr.keys();
+          else if (!Array.isArray(arr)) arr = typeof arr === "object" ? Object.values(arr) : [arr];
           for (let i = 0; i < arr.length; i++) {
             const local = new NSScope(sc);
             local.declare(s.name, arr[i]); local.declare("index", i);
@@ -6761,8 +6771,8 @@ class NSCompiler {
           return ctx.api.__getGlobal(n, ctx);
         };
       }
-      case "Self": return ctx => ctx.self;
-      case "Other": return ctx => ctx.other;
+      case "Self": return (ctx, sc) => sc.has("self") ? sc.get("self") : ctx.self;
+      case "Other": return (ctx, sc) => sc.has("other") ? sc.get("other") : ctx.other;
       case "VecLit": {
         const parts = e.parts.map(p => this.expr(p));
         return (ctx, sc) => {
@@ -6795,7 +6805,15 @@ class NSCompiler {
       }
       case "Index": {
         const o = this.expr(e.obj), i = this.expr(e.index);
-        return (ctx, sc) => { const ob = o(ctx, sc); return ob === null || ob === undefined ? null : ob[i(ctx, sc)]; };
+        return (ctx, sc) => {
+          const ob = o(ctx, sc);
+          if (ob === null || ob === undefined) return null;
+          const k = i(ctx, sc);
+          if (ob instanceof NSDict) return ob.get(k);
+          if (ob instanceof NSInstance) return NovaAPI.__getProp(ob, String(k));
+          const v = ob[k];
+          return v === undefined ? null : v;
+        };
       }
       case "Call": {
         const args = e.args.map(a => this.expr(a));
@@ -6920,7 +6938,12 @@ const NovaScript = {
     }
     // undefined-name warnings
     if (ast) {
-      const known = new Set([...ast.declared, ...ast.functions, ...Object.keys(NovaAPI.globals), ...NS_GLOBAL_NAMES]);
+      const known = new Set([...ast.declared, ...ast.functions, ...Object.keys(NovaAPI.globals), ...Object.keys(NovaAPI.builtins), ...NS_GLOBAL_NAMES]);
+      for (const node of ast.body) {                       // names pulled in by `import`
+        if (node.type !== "Import") continue;
+        if (node.alias) { known.add(node.alias); continue; }
+        if (typeof NSModules !== "undefined") for (const n of NSModules.exportNames(node.source)) known.add(n);
+      }
       const walk = n => {
         if (!n || typeof n !== "object") return;
         if (n.type === "Ident" && !known.has(n.name) && n.line) {
@@ -7653,7 +7676,39 @@ const NovaComplete = {
     { label: "add score", kind: "command", detail: "إضافة نقاط" },
     { label: "show", kind: "command", detail: "إظهار" }, { label: "hide", kind: "command", detail: "إخفاء" },
     { label: "self", kind: "value", detail: "هذا الكائن" }, { label: "other", kind: "value", detail: "الكائن الآخر" },
-    { label: "true", kind: "value" }, { label: "false", kind: "value" }
+    { label: "true", kind: "value" }, { label: "false", kind: "value" },
+    { label: "class", kind: "keyword", detail: "صنف: class Enemy:" },
+    { label: "struct", kind: "keyword", detail: "بنية بقيمة منسوخة: struct Point:" },
+    { label: "interface", kind: "keyword", detail: "واجهة: interface Damageable:" },
+    { label: "component", kind: "keyword", detail: "مكوّن يظهر في الخصائص: component Health:" },
+    { label: "extends", kind: "keyword", detail: "وراثة" },
+    { label: "implements", kind: "keyword", detail: "تنفيذ واجهة" },
+    { label: "new", kind: "keyword", detail: "إنشاء نسخة: new Enemy(10)" },
+    { label: "this", kind: "value", detail: "النسخة الحالية داخل الصنف" },
+    { label: "super", kind: "keyword", detail: "استدعاء الصنف الأب: super.init()" },
+    { label: "static", kind: "keyword", detail: "عضو ثابت مشترك" },
+    { label: "coroutine", kind: "keyword", detail: "إجراء قابل للإيقاف المؤقت" },
+    { label: "async function", kind: "keyword", detail: "دالة لاتزامنية" },
+    { label: "await", kind: "keyword", detail: "انتظار نتيجة داخل coroutine" },
+    { label: "yield wait", kind: "keyword", detail: "إيقاف مؤقت داخل coroutine" },
+    { label: "start", kind: "keyword", detail: "بدء إجراء: start patrol()" },
+    { label: "import", kind: "keyword", detail: 'استيراد وحدة: import "utils"' },
+    { label: "export", kind: "keyword", detail: "تصدير من وحدة" },
+    { label: "try", kind: "keyword", detail: "try / catch / finally" },
+    { label: "throw", kind: "keyword", detail: "رمي خطأ" },
+    { label: "switch", kind: "keyword", detail: "switch / case / default" },
+    { label: "Physics", kind: "value", detail: "فيزياء: raycast · addForce · groundHeight" },
+    { label: "AI", kind: "value", detail: "ذكاء: pathTo · canSee · findPath" },
+    { label: "Animation", kind: "value", detail: "حركة: play · tween · ik" },
+    { label: "Audio", kind: "value", detail: "صوت: play · playMusic · setVolume" },
+    { label: "UI", kind: "value", detail: "واجهة: setText · message · addScore" },
+    { label: "Net", kind: "value", detail: "شبكة: host · join · send · chat" },
+    { label: "Scene", kind: "value", detail: "مشهد: load · spawn · findByTag" },
+    { label: "Input", kind: "value", detail: "مدخلات: key · axis · touch" },
+    { label: "Time", kind: "value", detail: "زمن: delta · now · scale" },
+    { label: "Storage", kind: "value", detail: "تخزين: save · load" },
+    { label: "Math", kind: "value", detail: "رياضيات: clamp · lerp · random" },
+    { label: "Dict()", kind: "function", detail: "قاموس مفتاح/قيمة" }
   ],
   props: ["position", "rotation", "scale", "x", "y", "z", "name", "tag", "active", "velocity", "speed",
     "forward", "right", "up", "health", "maxHealth", "color", "text", "parent", "children", "grounded", "state"],
@@ -7674,6 +7729,19 @@ const NovaComplete = {
     let prefix = "", items = [];
     if (dotMatch) {
       prefix = dotMatch[2];
+      const ns = NovaAPI.builtins[dotMatch[1]];
+      if (ns && typeof ns === "object" && !Array.isArray(ns)) {
+        const members = Object.keys(ns).map(k => ({
+          label: typeof ns[k] === "function" ? k + "()" : k,
+          kind: typeof ns[k] === "function" ? "method" : "property",
+          detail: dotMatch[1] + "." + k
+        }));
+        const p0 = prefix.toLowerCase();
+        return {
+          items: members.filter(i => !p0 || i.label.toLowerCase().startsWith(p0)).slice(0, 40),
+          prefix, replaceFrom: cursor - prefix.length
+        };
+      }
       items = this.props.map(p => ({ label: p, kind: "property", detail: "خاصية كائن" }))
         .concat([{ label: "distanceTo()", kind: "method" }, { label: "lookAt()", kind: "method" },
         { label: "destroy()", kind: "method" }, { label: "playSound()", kind: "method" },
@@ -11501,11 +11569,216 @@ const DEFAULT_LAYOUT = {
 </script>
 <script data-nova="editor">
 /* ============================================================================
+ * NOVA ENGINE — 29 · GESTURE ENGINE
+ *   One recognizer per surface. Emits high-level, non-overlapping gestures so
+ *   camera control and object manipulation can never fight over the same touch.
+ *
+ *   tap · doubleTap · longPress · dragStart/drag/dragEnd · pan · pinch · rotate
+ * ========================================================================= */
+
+const GESTURE = {
+  TAP_MOVE: 12,          // px of slop still counted as a tap
+  TAP_TIME: 320,         // ms
+  DOUBLE_GAP: 300,       // ms between taps
+  LONG_PRESS: 480,       // ms
+  LONG_MOVE: 14,         // px before a long press is cancelled
+  DRAG_START: 8,         // px before a drag begins
+  PINCH_START: 14,       // px of scale change before pinch engages
+  ROTATE_START: 0.12     // radians before rotate engages
+};
+
+class GestureRecognizer {
+  /**
+   * @param {HTMLElement} el      surface to watch
+   * @param {object}      handlers  { onTap, onDoubleTap, onLongPress, onDragStart,
+   *                                  onDrag, onDragEnd, onPan, onPinch, onRotate,
+   *                                  onHover, onWheel, shouldDrag }
+   */
+  constructor(el, handlers = {}) {
+    this.el = el;
+    this.h = handlers;
+    this.pointers = new Map();      // id -> {id, x, y, sx, sy, t, type, button}
+    this.mode = "idle";             // idle | pending | drag | camera | multi
+    this.primary = null;
+    this.longTimer = null;
+    this.lastTap = 0;
+    this.lastTapPos = { x: 0, y: 0 };
+    this.multi = null;
+    this.enabled = true;
+    this.suppressUntil = 0;
+    this._bind();
+  }
+  destroy() {
+    for (const [ev, fn] of this._listeners) this.el.removeEventListener(ev, fn);
+    clearTimeout(this.longTimer);
+  }
+  rect() { return this.el.getBoundingClientRect(); }
+  local(e) { const r = this.rect(); return { x: e.clientX - r.left, y: e.clientY - r.top, w: r.width, h: r.height }; }
+  ndc(p) { const r = this.rect(); return { x: (p.x / r.width) * 2 - 1, y: -((p.y / r.height) * 2 - 1) }; }
+
+  _bind() {
+    this._listeners = [];
+    const on = (ev, fn, opts) => { this.el.addEventListener(ev, fn, opts); this._listeners.push([ev, fn]); };
+    on("pointerdown", e => this.down(e));
+    on("pointermove", e => this.move(e));
+    on("pointerup", e => this.up(e));
+    on("pointercancel", e => this.up(e, true));
+    on("pointerleave", e => { if (e.pointerType === "mouse" && !this.pointers.size && this.h.onHover) this.h.onHover(null); });
+    on("wheel", e => {
+      if (!this.enabled) return;
+      e.preventDefault();
+      if (this.h.onWheel) this.h.onWheel(Math.sign(e.deltaY), this.local(e), e);
+    }, { passive: false });
+    on("contextmenu", e => e.preventDefault());
+    // block the browser's own gesture handling on touch surfaces
+    on("touchstart", e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+    on("gesturestart", e => e.preventDefault());
+  }
+
+  down(e) {
+    if (!this.enabled) return;
+    try { this.el.setPointerCapture && this.el.setPointerCapture(e.pointerId); } catch (err) { /* synthetic pointers */ }
+    const p = this.local(e);
+    const rec = { id: e.pointerId, x: p.x, y: p.y, sx: p.x, sy: p.y, t: nowMs(), type: e.pointerType, button: e.button, moved: 0 };
+    this.pointers.set(e.pointerId, rec);
+
+    if (this.pointers.size === 1) {
+      this.primary = rec;
+      this.mode = "pending";
+      this.startEvent = e;
+      clearTimeout(this.longTimer);
+      this.longTimer = setTimeout(() => {
+        if (this.mode !== "pending" || this.pointers.size !== 1) return;
+        this.mode = "longpress";
+        Platform.vibrate(18);
+        if (this.h.onLongPress) this.h.onLongPress({ ...this.pos(rec), event: this.startEvent });
+      }, GESTURE.LONG_PRESS);
+    } else if (this.pointers.size === 2) {
+      clearTimeout(this.longTimer);
+      // a second finger always cancels object dragging and switches to camera work
+      if (this.mode === "drag" && this.h.onDragEnd) this.h.onDragEnd({ cancelled: true });
+      const [a, b] = [...this.pointers.values()];
+      this.multi = {
+        dist: Math.hypot(a.x - b.x, a.y - b.y),
+        angle: Math.atan2(b.y - a.y, b.x - a.x),
+        cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2,
+        startDist: Math.hypot(a.x - b.x, a.y - b.y),
+        pinched: false, rotated: false
+      };
+      this.mode = "multi";
+    }
+  }
+
+  move(e) {
+    if (!this.enabled) return;
+    const rec = this.pointers.get(e.pointerId);
+    const p = this.local(e);
+    if (!rec) {
+      if (e.pointerType === "mouse" && this.h.onHover) this.h.onHover({ ...this.pos({ x: p.x, y: p.y }), event: e });
+      return;
+    }
+    const dx = p.x - rec.x, dy = p.y - rec.y;
+    rec.moved += Math.hypot(dx, dy);
+    rec.x = p.x; rec.y = p.y;
+
+    if (this.mode === "multi" && this.pointers.size >= 2) {
+      const [a, b] = [...this.pointers.values()];
+      const dist = Math.hypot(a.x - b.x, a.y - b.y);
+      const angle = Math.atan2(b.y - a.y, b.x - a.x);
+      const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+      const m = this.multi;
+      const panDX = cx - m.cx, panDY = cy - m.cy;
+
+      if (!m.pinched && Math.abs(dist - m.startDist) > GESTURE.PINCH_START) m.pinched = true;
+      let dAng = angle - m.angle;
+      while (dAng > Math.PI) dAng -= TAU;
+      while (dAng < -Math.PI) dAng += TAU;
+      if (!m.rotated && Math.abs(dAng) > GESTURE.ROTATE_START) m.rotated = true;
+
+      if (m.pinched && this.h.onPinch && m.dist > 0) this.h.onPinch({ scale: dist / m.dist, center: { x: cx, y: cy }, delta: dist - m.dist });
+      if (m.rotated && this.h.onRotate) this.h.onRotate({ delta: dAng, center: { x: cx, y: cy } });
+      if ((Math.abs(panDX) > .01 || Math.abs(panDY) > .01) && this.h.onPan) this.h.onPan({ dx: panDX, dy: panDY, center: { x: cx, y: cy }, fingers: this.pointers.size });
+
+      m.dist = dist; m.angle = angle; m.cx = cx; m.cy = cy;
+      return;
+    }
+
+    if (this.mode === "pending") {
+      const total = Math.hypot(p.x - rec.sx, p.y - rec.sy);
+      if (total > GESTURE.LONG_MOVE) clearTimeout(this.longTimer);
+      if (total < GESTURE.DRAG_START) return;
+      // Decide once: manipulate an object, or move the camera.
+      const info = { ...this.pos(rec), start: this.ndc({ x: rec.sx, y: rec.sy }), event: this.startEvent, button: rec.button, pointerType: rec.type };
+      const wantsDrag = this.h.shouldDrag ? this.h.shouldDrag(info) : false;
+      this.mode = wantsDrag ? "drag" : "camera";
+      if (wantsDrag && this.h.onDragStart) this.h.onDragStart(info);
+      else if (this.h.onCameraStart) this.h.onCameraStart(info);
+      return;
+    }
+
+    if (this.mode === "drag" && this.h.onDrag) {
+      this.h.onDrag({ ...this.pos(rec), dx, dy, event: e });
+    } else if ((this.mode === "camera" || this.mode === "longpress") && this.h.onCameraDrag) {
+      this.h.onCameraDrag({ ...this.pos(rec), dx, dy, button: rec.button, event: e, shift: e.shiftKey, alt: e.altKey });
+    }
+  }
+
+  up(e, cancelled) {
+    const rec = this.pointers.get(e.pointerId);
+    this.pointers.delete(e.pointerId);
+    clearTimeout(this.longTimer);
+    if (!rec) return;
+
+    if (this.mode === "multi") {
+      if (this.pointers.size < 2) { this.mode = this.pointers.size === 1 ? "camera" : "idle"; this.multi = null; }
+      if (this.pointers.size === 1) {                    // keep dragging the camera with the remaining finger
+        this.primary = [...this.pointers.values()][0];
+        this.primary.x = this.primary.x; this.primary.y = this.primary.y;
+      }
+      return;
+    }
+    if (this.mode === "drag") { if (this.h.onDragEnd) this.h.onDragEnd({ ...this.pos(rec), cancelled: !!cancelled }); }
+    else if (this.mode === "camera") { if (this.h.onCameraEnd) this.h.onCameraEnd({ ...this.pos(rec) }); }
+    else if (this.mode === "pending" && !cancelled) {
+      const dt = nowMs() - rec.t;
+      const dist = Math.hypot(rec.x - rec.sx, rec.y - rec.sy);
+      if (dt < GESTURE.TAP_TIME && dist < GESTURE.TAP_MOVE) {
+        const now = nowMs();
+        const near = Math.hypot(rec.x - this.lastTapPos.x, rec.y - this.lastTapPos.y) < 40;
+        if (now - this.lastTap < GESTURE.DOUBLE_GAP && near) {
+          this.lastTap = 0;
+          if (this.h.onDoubleTap) this.h.onDoubleTap({ ...this.pos(rec), event: this.startEvent });
+        } else {
+          this.lastTap = now;
+          this.lastTapPos = { x: rec.x, y: rec.y };
+          const info = { ...this.pos(rec), event: this.startEvent, button: rec.button, pointerType: rec.type };
+          // hold the single tap briefly so a double tap can pre-empt it
+          setTimeout(() => { if (this.lastTap && nowMs() - this.lastTap >= GESTURE.DOUBLE_GAP - 20 && this.h.onTap) this.h.onTap(info); }, GESTURE.DOUBLE_GAP);
+        }
+      }
+    }
+    if (!this.pointers.size) { this.mode = "idle"; this.multi = null; this.primary = null; }
+  }
+
+  pos(rec) {
+    const n = this.ndc(rec);
+    return { x: rec.x, y: rec.y, nx: n.x, ny: n.y };
+  }
+  cancel() {
+    clearTimeout(this.longTimer);
+    this.pointers.clear();
+    this.mode = "idle"; this.multi = null;
+  }
+}
+NOVA.GestureRecognizer = GestureRecognizer;
+</script>
+<script data-nova="editor">
+/* ============================================================================
  * NOVA ENGINE — 20 · EDITOR CORE + SCENE VIEWPORT
  * ========================================================================= */
 const Editor = {
   scene: null, selection: [], history: new History(), clipboard: null,
-  gizmoMode: "move", space: "world", snap: { enabled: false, move: .5, rotate: 15, scale: .1 },
+  gizmoMode: "select", space: "world", snap: { enabled: false, move: .5, rotate: 15, scale: .1 },
   showGrid: true, showGizmos: true, showColliders: false, showNav: false, showStats: true,
   viewCam: new RenderCamera(), renderer: null, canvas: null, viewport: null,
   orbit: { target: new Vec3(0, 1, 0), distance: 14, yaw: -.6, pitch: .5, panning: false },
@@ -11744,144 +12017,119 @@ const Editor = {
   },
   bindViewportInput() {
     const vp = this.viewport;
-    let drag = null, downPos = null, gizmoDrag = null;
-    const pointers = new Map();
-    let pinchDist = 0;
+    /* ------------------------------------------------------------------
+       Gesture rules (identical on touch and mouse):
+         · tap on empty space  → deselect, camera only
+         · tap on an object    → select it
+         · double tap          → focus
+         · long press          → context menu
+         · drag on empty space → orbit the camera
+         · drag on the active gizmo / selected object with a transform tool
+                               → manipulate that object
+         · two fingers         → pan      · pinch → zoom · twist → orbit yaw
+       Nothing moves unless a transform tool is chosen: the default tool is
+       "select", which can never move an object.
+       ------------------------------------------------------------------ */
+    let gizmoDrag = null, camDrag = null, sculpting = false;
 
-    const localPos = e => {
-      const r = vp.getBoundingClientRect();
-      return { x: e.clientX - r.left, y: e.clientY - r.top, w: r.width, h: r.height };
-    };
-    const ndc = p => ({ x: (p.x / p.w) * 2 - 1, y: -((p.y / p.h) * 2 - 1) });
+    const toolActive = () => ["move", "rotate", "scale"].includes(this.gizmoMode);
 
-    vp.addEventListener("pointerdown", e => {
-      if (this.playing) return;
-      vp.setPointerCapture(e.pointerId);
-      pointers.set(e.pointerId, e);
-      const p = localPos(e);
-      downPos = p;
-      if (pointers.size === 2) {
-        const [a, b] = [...pointers.values()];
-        pinchDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-        drag = { mode: "pinch" };
-        return;
-      }
-      const n = ndc(p);
-      // terrain sculpting
-      if (this.activeTool === "terrain" && e.button === 0) {
-        this.terrainBrush.active = true;
-        this.terrainSnapshot = clone(this.selectedTerrainComp() ? this.selectedTerrainComp().data.heights : null);
-        return;
-      }
-      // gizmo handle?
-      if (e.button === 0 && this.selection.length && this.showGizmos) {
-        const axis = this.pickGizmo(n);
-        if (axis) {
-          gizmoDrag = this.beginGizmoDrag(axis, n);
+    this.gestures = new GestureRecognizer(vp, {
+      /* ---------- decide once, at drag start, who owns this pointer ------ */
+      shouldDrag: info => {
+        if (this.playing) return false;
+        if (this.activeTool === "terrain") return true;                    // sculpting owns the drag
+        if (info.pointerType === "mouse" && info.button !== 0) return false; // right/middle = camera
+        if (info.event && (info.event.altKey || info.event.shiftKey)) return false;
+        if (!toolActive()) return false;                                   // ← no tool ⇒ nothing moves
+        if (!this.selection.length || !this.showGizmos) return false;
+        if (this.pickGizmo(info.start)) return true;                       // grabbed a handle
+        const hit = this.pickEntity(info.start);                           // or the selected object itself
+        return !!hit && this.selection.includes(hit);
+      },
+
+      /* ------------------------------ object manipulation / sculpting --- */
+      onDragStart: info => {
+        if (this.activeTool === "terrain") {
+          sculpting = true;
+          const tc = this.selectedTerrainComp();
+          this.terrainSnapshot = tc ? tc.data.heights.slice() : null;
+          this.sculptAt(info.start);
           return;
         }
-      }
-      if (e.button === 0 && !e.altKey) {
-        const hit = this.pickEntity(n);
+        const axis = this.pickGizmo(info.start) ||
+          (this.gizmoMode === "move" ? "xz" : this.gizmoMode === "rotate" ? "ry" : "all");
+        gizmoDrag = this.beginGizmoDrag(axis, info.start);
+      },
+      onDrag: info => {
+        if (sculpting) { this.sculptAt({ x: info.nx, y: info.ny }); return; }
+        if (gizmoDrag) this.updateGizmoDrag(gizmoDrag, { x: info.nx, y: info.ny });
+      },
+      onDragEnd: () => {
+        if (sculpting) { sculpting = false; this.commitSculpt(); return; }
+        if (gizmoDrag) { this.endGizmoDrag(gizmoDrag); gizmoDrag = null; }
+      },
+
+      /* ------------------------------------------- camera: one pointer -- */
+      onCameraStart: info => {
+        const e = info.event || {};
+        const pan = info.button === 1 || (info.button === 0 && e.shiftKey) || (info.button === 2 && e.shiftKey);
+        camDrag = { mode: pan ? "pan" : "orbit" };
+      },
+      onCameraDrag: info => {
+        if (!camDrag) camDrag = { mode: "orbit" };
+        if (camDrag.mode === "pan") this.cameraPan(info.dx, info.dy);
+        else this.cameraOrbit(info.dx, info.dy);
+      },
+      onCameraEnd: () => { camDrag = null; },
+
+      /* --------------------------------------------- camera: two fingers */
+      onPan: info => { if (info.fingers >= 2) this.cameraPan(info.dx, info.dy); },
+      onPinch: info => { if (info.scale > 0) this.orbit.distance = M.clamp(this.orbit.distance / info.scale, .4, 2000); },
+      onRotate: info => { this.orbit.yaw -= info.delta * .9; },
+      onWheel: dir => { this.orbit.distance = M.clamp(this.orbit.distance * Math.pow(1.14, dir), .4, 2000); },
+
+      /* ------------------------------------------------------- discrete -- */
+      onTap: info => {
+        if (this.playing) return;
+        if (this.activeTool === "terrain") {
+          const tc = this.selectedTerrainComp();
+          this.terrainSnapshot = tc ? tc.data.heights.slice() : null;
+          this.sculptAt({ x: info.nx, y: info.ny });
+          this.commitSculpt();
+          return;
+        }
+        const e = info.event || {};
+        const hit = this.pickEntity({ x: info.nx, y: info.ny });
         this.select(hit, e.shiftKey || e.ctrlKey || e.metaKey);
-        if (hit) {
-          drag = { mode: "maybe-move", start: n, moved: false };
-          return;
+      },
+      onDoubleTap: info => {
+        if (this.playing) return;
+        const hit = this.pickEntity({ x: info.nx, y: info.ny });
+        if (hit) { this.select(hit); this.focusSelection(); }
+        else this.frameScene();
+      },
+      onLongPress: info => {
+        if (this.playing) return;
+        const hit = this.pickEntity({ x: info.nx, y: info.ny });
+        if (hit) this.select(hit);
+        this.showViewportMenu(info.x + vp.getBoundingClientRect().left, info.y + vp.getBoundingClientRect().top, hit);
+      },
+      onHover: info => {
+        if (this.playing || Platform.isTouch) return;
+        this.hoverEntity = info ? this.pickEntity({ x: info.nx, y: info.ny }) : null;
+        if (this.activeTool === "terrain" && info) {
+          const tc = this.selectedTerrainComp();
+          if (tc) {
+            const ray = this.viewCam.screenRay(info.nx, info.ny);
+            const t = TerrainSystem.raycast(tc, tc.entity, ray, 800);
+            this.brushPoint = t === null ? null : ray.at(t, new Vec3());
+          }
         }
       }
-      if (e.button === 1 || (e.button === 0 && e.shiftKey && !this.selection.length) || (e.button === 2 && e.shiftKey)) drag = { mode: "pan", last: p };
-      else if (e.button === 2 || (e.button === 0 && e.altKey)) drag = { mode: "orbit", last: p };
-      else if (e.button === 0 && !this.selection.length) drag = { mode: "orbit", last: p };
     });
-    vp.addEventListener("pointermove", e => {
-      if (this.playing) return;
-      const p = localPos(e);
-      const n = ndc(p);
-      pointers.set(e.pointerId, e);
-      this.mouseNDC = n;
-      if (this.activeTool === "terrain" && this.terrainBrush.active) {
-        this.sculptAt(n);
-        return;
-      }
-      if (gizmoDrag) { this.updateGizmoDrag(gizmoDrag, n); return; }
-      if (!drag) {
-        // hover highlight
-        if (!Platform.isTouch) this.hoverEntity = this.pickEntity(n);
-        return;
-      }
-      if (drag.mode === "pinch" && pointers.size === 2) {
-        const [a, b] = [...pointers.values()];
-        const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-        this.orbit.distance = M.clamp(this.orbit.distance * (pinchDist / (d || 1)), .6, 900);
-        pinchDist = d;
-        return;
-      }
-      if (drag.mode === "maybe-move") {
-        if (Math.hypot(n.x - drag.start.x, n.y - drag.start.y) > .012) {
-          const axis = this.gizmoMode === "move" ? "xz" : this.gizmoMode === "rotate" ? "ry" : "all";
-          gizmoDrag = this.beginGizmoDrag(axis, drag.start);
-          drag = null;
-          if (gizmoDrag) this.updateGizmoDrag(gizmoDrag, n);
-        }
-        return;
-      }
-      const dx = p.x - drag.last.x, dy = p.y - drag.last.y;
-      drag.last = p;
-      if (drag.mode === "orbit") {
-        this.orbit.yaw -= dx * .0075;
-        this.orbit.pitch = M.clamp(this.orbit.pitch + dy * .0075, -1.55, 1.55);
-      } else if (drag.mode === "pan") {
-        const scale = this.orbit.distance * .0016;
-        const right = _ed0.set(1, 0, 0).applyQuat(this.viewCam.rotation);
-        const up = _ed1.set(0, 1, 0).applyQuat(this.viewCam.rotation);
-        this.orbit.target.addS(right, -dx * scale).addS(up, dy * scale);
-      }
-    });
-    const endPointer = e => {
-      pointers.delete(e.pointerId);
-      if (gizmoDrag) { this.endGizmoDrag(gizmoDrag); gizmoDrag = null; }
-      if (this.terrainBrush.active) {
-        this.terrainBrush.active = false;
-        const tc = this.selectedTerrainComp();
-        if (tc && this.terrainSnapshot) {
-          const before = this.terrainSnapshot, after = tc.data.heights.slice();
-          this.history.push({
-            label: "نحت التضاريس",
-            do: () => { tc.data.heights = after.slice(); tc.runtime.forceRebuild = true; },
-            undo: () => { tc.data.heights = before.slice(); tc.runtime.forceRebuild = true; }
-          });
-          this.markDirty();
-        }
-      }
-      drag = null;
-    };
-    vp.addEventListener("pointerup", endPointer);
-    vp.addEventListener("pointercancel", endPointer);
-    vp.addEventListener("wheel", e => {
-      if (this.playing) return;
-      e.preventDefault();
-      const f = Math.pow(1.14, Math.sign(e.deltaY));
-      this.orbit.distance = M.clamp(this.orbit.distance * f, .5, 1200);
-    }, { passive: false });
-    vp.addEventListener("contextmenu", e => {
-      e.preventDefault();
-      if (this.playing) return;
-      const p = localPos(e), n = ndc(p);
-      const hit = this.pickEntity(n);
-      if (hit) this.select(hit);
-      ContextMenu.show(e.clientX, e.clientY, hit ? [
-        { label: "تركيز", icon: "🎯", key: "F", action: () => this.focusSelection() },
-        { label: "تكرار", icon: "⧉", key: "Ctrl+D", action: () => this.duplicateSelection() },
-        { label: "حذف", icon: "🗑", key: "Del", action: () => this.deleteSelection() },
-        "-",
-        { label: "إنشاء قالب", icon: "📦", action: () => this.makePrefab() },
-        { label: "وضع على الأرض", icon: "⬇", action: () => this.dropToGround() }
-      ] : [
-        { title: "إضافة كائن" },
-        ...ADD_MENU.slice(0, 8).map(m => ({ label: m.label, icon: m.icon, action: m.action }))
-      ]);
-    });
-    // asset drag & drop into scene
+
+    /* --------------------------------------------- asset drag & drop ---- */
     vp.addEventListener("dragover", e => { e.preventDefault(); this.dropIndicator.classList.add("show"); });
     vp.addEventListener("dragleave", () => this.dropIndicator.classList.remove("show"));
     vp.addEventListener("drop", e => {
@@ -11893,16 +12141,59 @@ const Editor = {
       const n = { x: ((e.clientX - r.left) / r.width) * 2 - 1, y: -(((e.clientY - r.top) / r.height) * 2 - 1) };
       if (id) this.dropAsset(id, n);
       else if (pf) this.dropPrefab(pf, n);
-      else if (e.dataTransfer.files && e.dataTransfer.files.length) {
-        (async () => {
-          for (const f of e.dataTransfer.files) {
-            const a = await Assets.importFile(f);
-            if (a) this.dropAsset(a.id, n);
-          }
-          this.refreshProject();
-        })();
-      }
+      else if (e.dataTransfer.files && e.dataTransfer.files.length) FileManager.importFiles(e.dataTransfer.files, { dropAt: n });
     });
+    window.addEventListener("nova-relayout", () => this.resize());
+  },
+
+  /* ------------------------------------------------- camera primitives -- */
+  cameraOrbit(dx, dy) {
+    const s = Platform.isTouch ? .0065 : .0075;
+    this.orbit.yaw -= dx * s;
+    this.orbit.pitch = M.clamp(this.orbit.pitch + dy * s, -1.55, 1.55);
+  },
+  cameraPan(dx, dy) {
+    const scale = this.orbit.distance * .0016;
+    const right = _ed0.set(1, 0, 0).applyQuat(this.viewCam.rotation);
+    const up = _ed1.set(0, 1, 0).applyQuat(this.viewCam.rotation);
+    this.orbit.target.addS(right, -dx * scale).addS(up, dy * scale);
+  },
+  commitSculpt() {
+    const tc = this.selectedTerrainComp();
+    if (!tc || !this.terrainSnapshot) return;
+    const before = this.terrainSnapshot, after = tc.data.heights.slice();
+    let changed = false;
+    for (let i = 0; i < before.length; i++) if (before[i] !== after[i]) { changed = true; break; }
+    this.terrainSnapshot = null;
+    if (!changed) return;
+    this.history.push({
+      label: "نحت التضاريس",
+      do: () => { tc.data.heights = after.slice(); tc.runtime.forceRebuild = true; },
+      undo: () => { tc.data.heights = before.slice(); tc.runtime.forceRebuild = true; }
+    });
+    this.markDirty();
+  },
+  showViewportMenu(clientX, clientY, hit) {
+    ContextMenu.show(clientX, clientY, hit ? [
+      { title: hit.name },
+      { label: "تركيز", icon: "🎯", key: "F", action: () => this.focusSelection() },
+      { label: "أداة التحريك", icon: "✥", key: "W", action: () => { this.gizmoMode = "move"; Shortcuts.syncTool(); } },
+      { label: "أداة التدوير", icon: "⟳", key: "E", action: () => { this.gizmoMode = "rotate"; Shortcuts.syncTool(); } },
+      { label: "أداة التحجيم", icon: "⤢", key: "R", action: () => { this.gizmoMode = "scale"; Shortcuts.syncTool(); } },
+      "-",
+      { label: "تكرار", icon: "⧉", key: "Ctrl+D", action: () => this.duplicateSelection() },
+      { label: "وضع على الأرض", icon: "⬇", action: () => this.dropToGround() },
+      { label: "إنشاء قالب", icon: "📦", action: () => this.makePrefab() },
+      { label: hit.active ? "إخفاء" : "إظهار", icon: "👁", action: () => { hit.active = !hit.active; this.refreshHierarchy(); this.markDirty(); } },
+      "-",
+      { label: "حذف", icon: "🗑", key: "Del", action: () => this.deleteSelection() }
+    ] : [
+      { title: "إضافة كائن" },
+      ...ADD_MENU.filter(m => m !== "-" && !m.title).slice(0, 10).map(m => ({ label: m.label, icon: m.icon, action: m.action })),
+      "-",
+      { label: "تأطير المشهد", icon: "🔲", action: () => this.frameScene() },
+      { label: "كل الكائنات…", icon: "➕", action: () => Dock.openPanel("hierarchy") }
+    ]);
   },
   screenToGround(n) {
     const ray = this.viewCam.screenRay(n.x, n.y);
@@ -11915,6 +12206,7 @@ const Editor = {
     const a = Assets.get(id);
     if (!a) return;
     const pos = this.screenToGround(n);
+    if (typeof FileManager !== "undefined" && ["model", "audio", "video"].includes(a.type)) { FileManager.placeInScene(a, n); return; }
     if (a.type === "model") {
       const e = this.addEntity(a.name.replace(/\.[^.]+$/, ""), [["MeshRenderer", { source: "asset", model: id }], ["Collider", { shape: "box" }]]);
       e.setWorldPos(pos); e.markDirty();
@@ -12029,7 +12321,7 @@ const Editor = {
   },
   gizmoAxes() {
     const e = this.selected;
-    if (!e) return null;
+    if (!e || this.gizmoMode === "select") return null;
     const origin = this.selectionCenter(_ed7);
     const q = this.space === "local" ? e.worldQuat(_edq) : _edq.identity();
     const s = this.gizmoScreenScale();
@@ -12284,7 +12576,7 @@ const Editor = {
     }
     r.endLines(cam, true, 1);
     // gizmo drawn on top without depth
-    if (this.showGizmos && this.selection.length) {
+    if (this.showGizmos && this.selection.length && this.gizmoMode !== "select") {
       r.beginLines();
       this.drawGizmo(r);
       r.endLines(cam, false, 2);
@@ -16408,8 +16700,9 @@ const MENUS = [
       { label: "حفظ", icon: "💾", key: "Ctrl+S", action: () => ProjectManager.save() },
       { label: "حفظ باسم…", icon: "💾", action: () => ProjectManager.saveAs() },
       "-",
-      { label: "استيراد ملفات…", icon: "📥", action: () => $("#fileInput").click() },
-      { label: "استيراد مجلد…", icon: "📁", action: () => $("#folderInput").click() },
+      { label: "استيراد ملفات…", icon: "📥", key: "Ctrl+I", action: () => FileManager.pickFiles() },
+      { label: "استيراد مجلد…", icon: "📁", action: () => FileManager.pickFolder() },
+      { label: "مدير الملفات…", icon: "🗂️", action: () => FileManager.open() },
       { label: "استيراد مشروع…", icon: "📦", action: () => ProjectManager.importFile() },
       "-",
       { label: "التصدير والنشر…", icon: "🚀", key: "Ctrl+B", action: () => Build.openDialog() },
@@ -16455,6 +16748,10 @@ const MENUS = [
       { label: "الأداء", icon: "📈", action: () => Dock.openPanel("profiler") },
       { label: "الشبكة", icon: "🌐", action: () => Dock.openPanel("network") },
       { label: "أزرار اللمس", icon: "👆", action: () => Dock.openPanel("touch") },
+      "-",
+      { label: "واجهة الهاتف", icon: "📱", action: () => { MobileUI.forced = true; MobileUI.sync(); toast("واجهة الهاتف", "من القائمة ☰ يمكن الرجوع"); } },
+      { label: "واجهة الحاسوب", icon: "🖥️", action: () => { MobileUI.forced = false; MobileUI.sync(); } },
+      { label: "واجهة تلقائية", icon: "🔁", action: () => { MobileUI.forced = null; MobileUI.sync(); } },
       "-",
       { label: "استعادة التخطيط الافتراضي", icon: "🔄", action: () => Dock.resetLayout() },
       { label: "حفظ التخطيط", icon: "💾", action: () => { Dock.saveLayout(); toast("تم حفظ التخطيط"); } }
@@ -16528,7 +16825,9 @@ function buildMenuBar() {
 function buildToolbars() {
   const tt = $("#transformTools");
   tt.innerHTML = "";
-  const modes = [["move", ICON.move, "تحريك (W)"], ["rotate", ICON.rotate, "تدوير (E)"], ["scale", ICON.scale, "تحجيم (R)"]];
+  const modes = [
+    ["select", '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3l14 7-6 1.6L10 19z"/></svg>', "تحديد فقط (Q) — لا يتحرك أي مجسم"],
+    ["move", ICON.move, "تحريك (W)"], ["rotate", ICON.rotate, "تدوير (E)"], ["scale", ICON.scale, "تحجيم (R)"]];
   for (const [mode, icon, title] of modes) {
     const b = el("button", { class: "tbtn" + (Editor.gizmoMode === mode ? " on" : ""), html: icon, title });
     b.onclick = () => {
@@ -16606,11 +16905,11 @@ function toggleTheme() {
 /* -------------------------------------------------------------- SHORTCUTS */
 const Shortcuts = {
   list: [
-    ["W", "أداة التحريك"], ["E", "أداة التدوير"], ["R", "أداة التحجيم"],
+    ["Q", "أداة التحديد (لا حركة)"], ["W", "أداة التحريك"], ["E", "أداة التدوير"], ["R", "أداة التحجيم"],
     ["F", "تركيز على المحدد"], ["G", "إظهار/إخفاء الشبكة"], ["X", "تفعيل المحاذاة"],
     ["Delete", "حذف المحدد"], ["Ctrl+D", "تكرار"], ["Ctrl+C / Ctrl+V", "نسخ / لصق"],
     ["Ctrl+Z / Ctrl+Y", "تراجع / إعادة"], ["Ctrl+S", "حفظ المشروع"], ["Ctrl+N", "مشروع جديد"],
-    ["Ctrl+O", "فتح مشروع"], ["Ctrl+B", "التصدير والنشر"], ["Ctrl+P", "تشغيل / إيقاف"],
+    ["Ctrl+O", "فتح مشروع"], ["Ctrl+B", "التصدير والنشر"], ["Ctrl+I", "استيراد ملفات"], ["Ctrl+P", "تشغيل / إيقاف"],
     ["Ctrl+L", "الوضع الليلي/الفاتح"], ["Ctrl+A", "تحديد الكل"], ["Escape", "إيقاف التشغيل / إغلاق النوافذ"],
     ["F1", "مرجع اللغة"], ["F5", "تشغيل"], ["مسافة", "الطيران بالكاميرا (مع WASD)"],
     ["WASD + QE", "تحريك كاميرا المحرر"], ["زر أيمن + سحب", "تدوير العرض"], ["زر أوسط + سحب", "تحريك العرض"],
@@ -16639,13 +16938,14 @@ const Shortcuts = {
           s: () => ProjectManager.save(), n: () => ProjectManager.newProject(), o: () => ProjectManager.open(),
           z: () => e.shiftKey ? Editor.redo() : Editor.undo(), y: () => Editor.redo(),
           d: () => Editor.duplicateSelection(), c: () => Editor.copySelection(), v: () => Editor.paste(),
-          b: () => Build.openDialog(), p: () => Runtime.playing ? Runtime.stop() : Runtime.start(),
+          b: () => Build.openDialog(), i: () => FileManager.pickFiles(), p: () => Runtime.playing ? Runtime.stop() : Runtime.start(),
           l: () => toggleTheme(), a: () => { Editor.selection = Editor.scene.entities.slice(); Editor.refreshInspector(); Editor.refreshHierarchySelection(); }
         };
         if (map[k]) { e.preventDefault(); map[k](); }
         return;
       }
       switch (e.key.toLowerCase()) {
+        case "q": Editor.gizmoMode = "select"; this.syncTool(); break;
         case "w": Editor.gizmoMode = "move"; this.syncTool(); break;
         case "e": Editor.gizmoMode = "rotate"; this.syncTool(); break;
         case "r": Editor.gizmoMode = "scale"; this.syncTool(); break;
@@ -17007,6 +17307,2269 @@ Panels.network = Dock.register({
   }
 });
 </script>
+<script>
+/* ============================================================================
+ * NOVA ENGINE — 28 · NOVASCRIPT 2.0
+ *   Extends the 1.0 lexer/parser/compiler in place — nothing is rewritten.
+ *   Adds: classes · structs · interfaces · components · modules & packages
+ *         async/await · coroutines · dictionaries · try/catch · switch
+ *         and the Physics/AI/Animation/Audio/UI/Net namespaces.
+ * ========================================================================= */
+
+/* ------------------------------------------------------- new keywords */
+Object.assign(NS_KEYWORDS, {
+  "class": "class", "صنف": "class", "فئة": "class",
+  "struct": "struct", "بنية": "struct",
+  "interface": "interface", "واجهة": "interface",
+  "component": "component", "مكون": "component", "مكوّن": "component",
+  "extends": "extends", "يرث": "extends",
+  "implements": "implements", "ينفذ": "implements", "يحقق": "implements",
+  "new": "new", "جديد": "new",
+  "this": "this", "هذا_الكائن": "this",
+  "super": "super", "الأصل": "super",
+  "static": "static", "ثابت": "static",
+  "private": "private", "خاص": "private",
+  "public": "public", "عام": "public",
+  "import": "import", "استورد": "import",
+  "export": "export", "صدّر": "export", "صدر": "export",
+  "module": "module", "وحدة": "module",
+  "package": "package", "حزمة": "package",
+  "async": "async", "متزامن": "async", "لاتزامني": "async",
+  "await": "await", "انتظر_نتيجة": "await",
+  "coroutine": "coroutine", "إجراء": "coroutine", "اجراء": "coroutine",
+  "yield": "yield", "سلّم": "yield", "سلم": "yield",
+  "start": "start", "ابدأ": "start", "ابدا": "start",
+  "try": "try", "حاول": "try",
+  "catch": "catch", "التقط": "catch",
+  "finally": "finally", "أخيراً": "finally", "اخيرا": "finally",
+  "throw": "throw", "ارمِ": "throw", "ارم": "throw",
+  "switch": "switch", "بدّل": "switch", "بدل": "switch",
+  "case": "case", "حالة": "case",
+  "default": "default", "افتراضي": "default",
+  "قاموس": "dict", "قائمة": "listKw"
+});
+
+/* ============================================================ RUNTIME TYPES */
+class NSClass {
+  constructor(name, kind) {
+    this.name = name; this.kind = kind || "class";     // class | struct | component
+    this.parent = null; this.interfaces = [];
+    this.fields = [];                                   // [{name, expr}]
+    this.methods = new Map();                           // name -> {params, fn, isStatic, isAsync, isCo, ast}
+    this.statics = new Map();                           // static field values
+    this.scope = null;
+  }
+  get isStruct() { return this.kind === "struct"; }
+  findMethod(n) { let c = this; while (c) { if (c.methods.has(n)) return c.methods.get(n); c = c.parent; } return null; }
+  ownerOf(n) { let c = this; while (c) { if (c.methods.has(n)) return c; c = c.parent; } return null; }
+  allFields() {
+    const chain = []; let c = this;
+    while (c) { chain.unshift(c); c = c.parent; }
+    const out = [];
+    for (const k of chain) out.push(...k.fields);
+    return out;
+  }
+  isA(name) { let c = this; while (c) { if (c.name === name) return true; if (c.interfaces.includes(name)) return true; c = c.parent; } return false; }
+}
+
+class NSInstance {
+  constructor(cls) { this.__class = cls; this.__props = Object.create(null); }
+  get className() { return this.__class.name; }
+  copy() {
+    const n = new NSInstance(this.__class);
+    for (const k in this.__props) {
+      const v = this.__props[k];
+      n.__props[k] = (v instanceof NSInstance && v.__class.isStruct) ? v.copy() : (Array.isArray(v) ? v.slice() : v);
+    }
+    return n;
+  }
+  toString() { return this.__class.name + "{" + Object.keys(this.__props).map(k => k + ":" + fmtVal(this.__props[k])).join(", ") + "}"; }
+}
+
+/** A dictionary keeps insertion order and stringified keys, like a JS Map facade. */
+class NSDict {
+  constructor(entries) { this.m = new Map(entries || []); }
+  get size() { return this.m.size; }
+  get(k) { const v = this.m.get(String(k)); return v === undefined ? null : v; }
+  set(k, v) { this.m.set(String(k), v); return this; }
+  has(k) { return this.m.has(String(k)); }
+  remove(k) { return this.m.delete(String(k)); }
+  delete(k) { return this.m.delete(String(k)); }
+  clear() { this.m.clear(); return this; }
+  keys() { return [...this.m.keys()]; }
+  values() { return [...this.m.values()]; }
+  entries() { return [...this.m.entries()].map(([k, v]) => [k, v]); }
+  forEach(fn) { this.m.forEach((v, k) => fn(v, k)); }
+  toJSON() { const o = {}; this.m.forEach((v, k) => o[k] = v); return o; }
+  toString() { return "{" + this.keys().map(k => k + ": " + fmtVal(this.get(k))).join(", ") + "}"; }
+}
+
+class NSError extends Error {
+  constructor(value) { super(typeof value === "string" ? value : fmtVal(value)); this.novaValue = value; }
+}
+
+/* -------------------------------------------------------------- COROUTINES */
+const YIELD_FRAME = { __yield: "frame" };
+
+class NSTask {
+  constructor(name, gen, ctx) {
+    this.name = name || "task"; this.gen = gen; this.ctx = ctx;
+    this.done = false; this.cancelled = false; this.result = null; this.error = null;
+    this.waitUntil = 0; this.awaiting = null;
+    this._resolvers = [];
+  }
+  get isRunning() { return !this.done && !this.cancelled; }
+  stop() { this.cancelled = true; this.done = true; Coroutines.remove(this); }
+  cancel() { this.stop(); }
+  then(fn) { if (this.done) fn(this.result); else this._resolvers.push(fn); return this; }
+  _finish(v, err) {
+    this.done = true; this.result = v; this.error = err || null;
+    for (const r of this._resolvers) { try { r(v); } catch (e) { } }
+    this._resolvers.length = 0;
+    Coroutines.remove(this);
+  }
+  /** Advance the task until it suspends again. Returns true while still alive. */
+  step() {
+    if (this.cancelled || this.done) return false;
+    if (this.waitUntil > Engine.time) return true;
+    if (this.awaiting) {
+      if (this.awaiting instanceof NSTask) { if (!this.awaiting.done) return true; }
+      else if (this.awaiting.__pending) return true;
+      const val = this.awaiting instanceof NSTask ? this.awaiting.result : this.awaiting.__value;
+      this.awaiting = null;
+      return this._resume(val);
+    }
+    return this._resume(undefined);
+  }
+  _resume(sent) {
+    let r;
+    try { r = this.gen.next(sent); }
+    catch (e) {
+      NovaLog.err(`[${this.name}] ${e.message}`, "coroutine");
+      this._finish(null, e);
+      return false;
+    }
+    if (r.done) {
+      let out = r.value;
+      if (out instanceof ReturnSignal) out = out.value;
+      this._finish(out === undefined ? null : out);
+      return false;
+    }
+    const y = r.value;
+    if (y === YIELD_FRAME || y === undefined || y === null) return true;      // resume next frame
+    if (typeof y === "number") { this.waitUntil = Engine.time + Math.max(0, y); return true; }
+    if (y && y.__wait !== undefined) { this.waitUntil = Engine.time + Math.max(0, y.__wait); return true; }
+    if (y instanceof NSTask) { this.awaiting = y; return true; }
+    if (y && typeof y.then === "function") {           // native promise
+      const box = { __pending: true, __value: null };
+      y.then(v => { box.__pending = false; box.__value = v; }, e => { box.__pending = false; box.__value = null; NovaLog.err(String(e && e.message || e), "await"); });
+      this.awaiting = box;
+      return true;
+    }
+    return true;
+  }
+}
+
+const Coroutines = {
+  tasks: [],
+  start(name, gen, ctx) {
+    const t = new NSTask(name, gen, ctx);
+    this.tasks.push(t);
+    t.step();                                        // run until the first suspension
+    return t;
+  },
+  remove(t) { const i = this.tasks.indexOf(t); if (i >= 0) this.tasks.splice(i, 1); },
+  update() {
+    for (let i = 0; i < this.tasks.length; i++) {
+      const t = this.tasks[i];
+      if (!t.step()) { i--; }
+    }
+  },
+  stopAll() { for (const t of this.tasks.slice()) t.stop(); this.tasks.length = 0; },
+  stopFor(ctx) { for (const t of this.tasks.slice()) if (t.ctx === ctx) t.stop(); },
+  get count() { return this.tasks.length; }
+};
+
+/* ==================================================== PARSER EXTENSIONS */
+const _NS_origStatement = NSParser.prototype.statement;
+NSParser.prototype.statement = function () {
+  const t = this.cur;
+  if (t.type === "KW") {
+    switch (t.value) {
+      case "class": return this.typeDecl("class");
+      case "struct": return this.typeDecl("struct");
+      case "component": return this.typeDecl("component");
+      case "interface": return this.interfaceDecl();
+      case "import": return this.importStmt();
+      case "module": case "package": return this.moduleStmt();
+      case "export": return this.exportStmt();
+      case "coroutine": return this.coroutineDecl();
+      case "async": return this.asyncDecl();
+      case "start": return this.startStmt();
+      case "yield": return this.yieldStmt();
+      case "try": return this.tryStmt();
+      case "throw": { this.i++; const v = this.expr(); return { type: "Throw", value: v, line: t.line }; }
+      case "switch": return this.switchStmt();
+      case "await": { this.i++; const v = this.expr(); return { type: "ExprStmt", expr: { type: "Await", value: v }, line: t.line }; }
+    }
+  }
+  return _NS_origStatement.call(this);
+};
+
+Object.assign(NSParser.prototype, {
+  /** class / struct / component declaration. */
+  typeDecl(kind) {
+    const line = this.cur.line;
+    this.i++;
+    const nameTok = this.expect("ID", undefined, "اسم " + kind);
+    const name = nameTok ? nameTok.value : "__Anon";
+    this.declared.add(name);
+    let parent = null; const interfaces = [];
+    if (this.isKW("extends")) { this.i++; const p = this.accept("ID"); if (p) parent = p.value; else this.error("توقعت اسم الصنف الأب"); }
+    if (this.isKW("implements")) {
+      this.i++;
+      for (; ;) { const p = this.accept("ID"); if (p) interfaces.push(p.value); else break; if (!this.accept("OP", ",")) break; }
+    }
+    const body = this.memberBlock(kind);
+    return { type: "TypeDecl", kind, name, parent, interfaces, members: body, line };
+  },
+  /** Parses the indented member list of a class/struct/component/interface. */
+  memberBlock(kind) {
+    const members = [];
+    this.accept("OP", ":");
+    if (this.cur.type !== "NEWLINE") { this.error("توقعت سطرًا جديدًا بعد ':'"); return members; }
+    this.skipNewlines();
+    if (this.cur.type !== "INDENT") { this.error("توقعت كتلة بمسافة بادئة"); return members; }
+    this.i++;
+    this.skipNewlines();
+    while (this.cur.type !== "DEDENT" && this.cur.type !== "EOF") {
+      const m = this.member(kind);
+      if (m) members.push(m);
+      this.skipNewlines();
+      if (this.isKW("end")) { this.i++; this.skipNewlines(); break; }
+    }
+    if (this.cur.type === "DEDENT") this.i++;
+    return members;
+  },
+  member(kind) {
+    let isStatic = false, isPrivate = false, isAsync = false, isCo = false;
+    for (; ;) {
+      if (this.isKW("static")) { isStatic = true; this.i++; continue; }
+      if (this.isKW("private")) { isPrivate = true; this.i++; continue; }
+      if (this.isKW("public")) { this.i++; continue; }
+      if (this.isKW("async")) { isAsync = true; this.i++; continue; }
+      if (this.isKW("coroutine")) { isCo = true; this.i++; continue; }
+      break;
+    }
+    if (this.isKW("function")) {
+      const line = this.cur.line;
+      this.i++;
+      const n = this.cur.type === "ID" || this.cur.type === "KW" ? this.next() : null;
+      const name = n ? String(n.raw || n.value) : "__m";
+      const params = this.paramList();
+      // interfaces may declare a signature with no body
+      if (this.cur.type === "NEWLINE" && kind === "interface") {
+        return { kind: "signature", name, params, line };
+      }
+      const body = this.block();
+      return { kind: "method", name, params, body, isStatic, isPrivate, isAsync, isCo, line };
+    }
+    if (this.isKW("make") || this.isKW("set")) this.i++;      // optional 'make' before a field
+    const line = this.cur.line;
+    const fname = this.identName("اسم حقل");
+    if (!fname) { this.i++; return null; }
+    let value = null;
+    if (this.accept("OP", "=") || (this.isKW("to") && this.i++ >= 0)) value = this.expr();
+    return { kind: "field", name: fname, value, isStatic, isPrivate, line };
+  },
+  paramList() {
+    const params = [];
+    if (this.accept("OP", "(")) {
+      while (!this.isOP(")") && this.cur.type !== "EOF") {
+        const pname = this.identName("معاملاً");
+        if (!pname) { this.i++; continue; }
+        this.declared.add(pname);
+        let def = null;
+        if (this.accept("OP", "=")) def = this.expr();
+        params.push(def ? { name: pname, def } : pname);
+        if (!this.accept("OP", ",")) break;
+      }
+      this.expect("OP", ")", "')'");
+    }
+    return params;
+  },
+  interfaceDecl() {
+    const line = this.cur.line;
+    this.i++;
+    const nameTok = this.expect("ID", undefined, "اسم الواجهة");
+    const name = nameTok ? nameTok.value : "__Iface";
+    this.declared.add(name);
+    const members = this.memberBlock("interface");
+    return { type: "InterfaceDecl", name, members, line };
+  },
+  importStmt() {
+    const line = this.cur.line;
+    this.i++;
+    const src = this.cur.type === "STR" ? this.next().value : (this.cur.type === "ID" ? this.next().value : null);
+    if (src === null) { this.error("توقعت اسم الوحدة"); return null; }
+    let alias = null, names = null;
+    if (this.isKW("as")) { this.i++; const a = this.accept("ID"); if (a) { alias = a.value; this.declared.add(alias); } }
+    return { type: "Import", source: String(src), alias, names, line };
+  },
+  moduleStmt() {
+    const line = this.cur.line;
+    this.i++;
+    const n = this.cur.type === "STR" || this.cur.type === "ID" ? this.next().value : "main";
+    return { type: "ModuleDecl", name: String(n), line };
+  },
+  exportStmt() {
+    const line = this.cur.line;
+    this.i++;
+    const inner = this.statement();
+    let names = [];
+    if (inner) {
+      if (inner.type === "FuncDecl" || inner.type === "TypeDecl" || inner.type === "InterfaceDecl" || inner.type === "CoroutineDecl") names.push(inner.name);
+      else if (inner.type === "VarDecl") names.push(inner.name);
+    }
+    return { type: "Export", decl: inner, names, line };
+  },
+  coroutineDecl() {
+    const line = this.cur.line;
+    this.i++;
+    if (this.isKW("function")) this.i++;
+    const nameTok = this.expect("ID", undefined, "اسم الإجراء");
+    const name = nameTok ? nameTok.value : "__co";
+    this.functions.add(name);
+    const params = this.paramList();
+    const body = this.block();
+    return { type: "CoroutineDecl", name, params, body, isAsync: false, line };
+  },
+  asyncDecl() {
+    const line = this.cur.line;
+    this.i++;
+    if (this.isKW("coroutine")) { const d = this.coroutineDecl(); d.isAsync = true; return d; }
+    if (this.isKW("function")) {
+      this.i++;
+      const nameTok = this.expect("ID", undefined, "اسم الدالة");
+      const name = nameTok ? nameTok.value : "__af";
+      this.functions.add(name);
+      const params = this.paramList();
+      const body = this.block();
+      return { type: "CoroutineDecl", name, params, body, isAsync: true, line };
+    }
+    this.error("توقعت function أو coroutine بعد async");
+    return null;
+  },
+  startStmt() {
+    const line = this.cur.line;
+    this.i++;
+    const call = this.expr();
+    return { type: "StartCo", call, line };
+  },
+  yieldStmt() {
+    const line = this.cur.line;
+    this.i++;
+    if (this.cur.type === "NEWLINE" || this.cur.type === "EOF" || this.cur.type === "DEDENT")
+      return { type: "Yield", value: null, line };
+    if (this.isKW("wait")) { this.i++; const v = this.expr(); if (this.isKW("seconds")) this.i++; return { type: "Yield", value: v, wait: true, line }; }
+    const v = this.expr();
+    return { type: "Yield", value: v, line };
+  },
+  tryStmt() {
+    const line = this.cur.line;
+    this.i++;
+    const body = this.block();
+    let param = null, handler = null, fin = null;
+    this.skipNewlines();
+    if (this.isKW("catch")) {
+      this.i++;
+      if (this.accept("OP", "(")) { const p = this.accept("ID"); if (p) param = p.value; this.expect("OP", ")", "')'"); }
+      else if (this.cur.type === "ID") param = this.next().value;
+      if (param) this.declared.add(param);
+      handler = this.block();
+      this.skipNewlines();
+    }
+    if (this.isKW("finally")) { this.i++; fin = this.block(); }
+    return { type: "Try", body, param, handler, fin, line };
+  },
+  switchStmt() {
+    const line = this.cur.line;
+    this.i++;
+    const subject = this.expr();
+    const cases = [];
+    let def = null;
+    this.accept("OP", ":");
+    this.skipNewlines();
+    if (this.cur.type !== "INDENT") { this.error("توقعت كتلة بمسافة بادئة"); return { type: "Switch", subject, cases, def, line }; }
+    this.i++;
+    this.skipNewlines();
+    while (this.cur.type !== "DEDENT" && this.cur.type !== "EOF") {
+      if (this.isKW("case")) {
+        this.i++;
+        const vals = [this.expr()];
+        while (this.accept("OP", ",")) vals.push(this.expr());
+        const body = this.block();
+        cases.push({ vals, body });
+      } else if (this.isKW("default")) {
+        this.i++;
+        def = this.block();
+      } else { this.error("توقعت case أو default"); this.i++; }
+      this.skipNewlines();
+    }
+    if (this.cur.type === "DEDENT") this.i++;
+    return { type: "Switch", subject, cases, def, line };
+  }
+});
+
+/** Plain `function` declarations reuse the richer parameter parser. */
+NSParser.prototype.funcDecl = function () {
+  const line = this.cur.line;
+  this.i++;
+  const nameTok = this.expect("ID", undefined, "اسم الدالة");
+  const name = nameTok ? nameTok.value : "__anon";
+  this.functions.add(name);
+  const params = this.paramList();
+  const body = this.block();
+  return { type: "FuncDecl", name, params, body, line };
+};
+
+/** Name in a declaration position: keywords are allowed (`make other = ...`). */
+NSParser.prototype.identName = function (what) {
+  const t = this.cur;
+  if (t.type === "ID") { this.i++; return t.value; }
+  if (t.type === "KW") { this.i++; return String(t.raw || t.value); }
+  this.error("توقعت " + (what || "اسمًا") + ` لكن وجدت "${this.describe(t)}"`);
+  return null;
+};
+/** `make x = ...` — now tolerant of keyword-shaped names. */
+NSParser.prototype.makeStmt = function () {
+  const line = this.cur.line; this.i++;
+  const name = this.identName("اسم المتغير") || "__x";
+  this.declared.add(name);
+  let value = { type: "Literal", value: 0 };
+  if (this.accept("OP", "=") || (this.isKW("to") && this.i++ >= 0)) value = this.expr();
+  return { type: "VarDecl", name, value, line };
+};
+NSParser.prototype.forEachStmt = function () {
+  const line = this.cur.line; this.i++;
+  if (this.isKW("each")) this.i++;
+  const name = this.identName("اسم المتغير") || "item";
+  this.declared.add(name);
+  if (this.isKW("in")) this.i++; else this.error("توقعت 'in'");
+  const list = this.expr();
+  const body = this.block();
+  return { type: "ForEach", name, list, body, line };
+};
+
+/* -------------------------------------------------- expression extensions */
+const _NS_origPrimary = NSParser.prototype.primary;
+NSParser.prototype.primary = function () {
+  const t = this.cur;
+  if (t.type === "KW") {
+    switch (t.value) {
+      case "this": this.i++; return { type: "This" };
+      case "new": {
+        this.i++;
+        const n = this.expect("ID", undefined, "اسم الصنف");
+        const args = [];
+        if (this.accept("OP", "(")) {
+          while (!this.isOP(")") && this.cur.type !== "EOF") { args.push(this.expr()); if (!this.accept("OP", ",")) break; }
+          this.expect("OP", ")", "')'");
+        }
+        return { type: "New", name: n ? n.value : "?", args, line: t.line };
+      }
+      case "super": {
+        this.i++;
+        this.accept("OP", ".");
+        const m = this.cur.type === "ID" || this.cur.type === "KW" ? this.next() : null;
+        const args = [];
+        if (this.accept("OP", "(")) {
+          while (!this.isOP(")") && this.cur.type !== "EOF") { args.push(this.expr()); if (!this.accept("OP", ",")) break; }
+          this.expect("OP", ")", "')'");
+        }
+        return { type: "SuperCall", method: m ? String(m.raw || m.value) : "init", args, line: t.line };
+      }
+      case "await": { this.i++; const v = this.unary(); return { type: "Await", value: v, line: t.line }; }
+      case "dict": {
+        this.i++;
+        if (this.isOP("(")) { this.i++; this.expect("OP", ")", "')'"); }
+        return { type: "DictLit", props: [] };
+      }
+      case "listKw": {
+        this.i++;
+        if (this.isOP("(")) { this.i++; this.expect("OP", ")", "')'"); }
+        return { type: "ListLit", items: [] };
+      }
+    }
+  }
+  return _NS_origPrimary.call(this);
+};
+
+/** Structs have value semantics: every assignment stores an independent copy. */
+function structCopy(v) { return (v instanceof NSInstance && v.__class.isStruct) ? v.copy() : v; }
+
+/* ==================================================== COMPILER EXTENSIONS */
+const _NS_origStmt = NSCompiler.prototype.stmt;
+NSCompiler.prototype.stmt = function (s) {
+  if (!s) return null;
+  switch (s.type) {
+    case "TypeDecl": return this.typeDecl(s);
+    case "InterfaceDecl": return this.interfaceDecl(s);
+    case "Import": return this.importStmt(s);
+    case "ModuleDecl": return () => { };
+    case "Export": return this.stmt(s.decl);
+    case "CoroutineDecl": return this.coroutineDecl(s);
+    case "StartCo": return this.startCo(s);
+    case "Yield": {
+      // outside a coroutine `yield` is a no-op that logs once
+      return () => { };
+    }
+    case "VarDecl": {                        // struct-aware declaration
+      const v = this.expr(s.value);
+      return (ctx, sc) => sc.declare(s.name, structCopy(v(ctx, sc)));
+    }
+    case "Assign": {                         // struct-aware assignment
+      const val = this.expr(s.value), t = s.target, op = s.op;
+      if (t.type === "Ident") {
+        return (ctx, sc) => {
+          const nv = val(ctx, sc);
+          if (op === "=") sc.set(t.name, structCopy(nv));
+          else {
+            const old = sc.has(t.name) ? sc.get(t.name) : (ctx.api.__getGlobal(t.name, ctx) || 0);
+            sc.set(t.name, applyOp(op, old, nv));
+          }
+        };
+      }
+      if (t.type === "Member") {
+        const obj = this.expr(t.obj);
+        return (ctx, sc) => {
+          const o = obj(ctx, sc);
+          if (o === null || o === undefined) return;
+          const nv = val(ctx, sc);
+          ctx.api.__setProp(o, t.name, op === "=" ? structCopy(nv) : applyOp(op, ctx.api.__getProp(o, t.name), nv));
+        };
+      }
+      if (t.type === "Index") {
+        const obj = this.expr(t.obj), idx = this.expr(t.index);
+        return (ctx, sc) => {
+          const o = obj(ctx, sc), k = idx(ctx, sc);
+          if (o === null || o === undefined) return;
+          const nv = val(ctx, sc);
+          if (o instanceof NSDict) o.set(k, op === "=" ? structCopy(nv) : applyOp(op, o.get(k), nv));
+          else o[k] = op === "=" ? structCopy(nv) : applyOp(op, o[k], nv);
+        };
+      }
+      break;
+    }
+    case "Throw": { const v = this.expr(s.value); return (ctx, sc) => { throw new NSError(v(ctx, sc)); }; }
+    case "Try": return this.tryStmt(s);
+    case "Switch": return this.switchStmt(s);
+  }
+  return _NS_origStmt.call(this, s);
+};
+
+Object.assign(NSCompiler.prototype, {
+  paramNames(params) { return params.map(p => typeof p === "string" ? p : p.name); },
+  bindParams(params, args, sc, ctx) {
+    params.forEach((p, i) => {
+      if (typeof p === "string") sc.declare(p, args[i] === undefined ? null : args[i]);
+      else sc.declare(p.name, args[i] === undefined ? (p.__c || (p.__c = this.expr(p.def)))(ctx, sc) : args[i]);
+    });
+  },
+
+  typeDecl(s) {
+    const self = this;
+    const fields = s.members.filter(m => m.kind === "field");
+    const methods = s.members.filter(m => m.kind === "method");
+    const compiledFields = fields.map(f => ({ name: f.name, isStatic: f.isStatic, fn: f.value ? this.expr(f.value) : null }));
+    const compiledMethods = methods.map(m => ({
+      name: m.name, params: m.params, isStatic: m.isStatic, isAsync: m.isAsync, isCo: m.isCo,
+      body: m.isCo || m.isAsync ? null : this.block(m.body), ast: m.body
+    }));
+    return (ctx, sc) => {
+      const cls = new NSClass(s.name, s.kind);
+      cls.scope = sc;
+      cls.interfaces = s.interfaces || [];
+      if (s.parent) {
+        const p = sc.has(s.parent) ? sc.get(s.parent) : ctx.api.__getGlobal(s.parent, ctx);
+        if (p instanceof NSClass) cls.parent = p;
+        else ctx.api.error(`الصنف الأب "${s.parent}" غير معروف`);
+      }
+      for (const f of compiledFields) {
+        if (f.isStatic) cls.statics.set(f.name, f.fn ? f.fn(ctx, sc) : null);
+        else cls.fields.push(f);
+      }
+      for (const m of compiledMethods) cls.methods.set(m.name, m);
+      sc.declare(s.name, cls);
+      if (s.kind === "component") NSComponents.register(cls, ctx);
+      return undefined;
+    };
+  },
+
+  interfaceDecl(s) {
+    return (ctx, sc) => {
+      const iface = { __interface: true, name: s.name, methods: s.members.filter(m => m.kind === "signature" || m.kind === "method").map(m => m.name) };
+      sc.declare(s.name, iface);
+    };
+  },
+
+  importStmt(s) {
+    return (ctx, sc) => {
+      const mod = NSModules.load(s.source, ctx);
+      if (!mod) { ctx.api.error(`تعذّر استيراد الوحدة "${s.source}"`); return; }
+      if (s.alias) sc.declare(s.alias, mod.namespace);
+      else for (const k in mod.exports) sc.declare(k, mod.exports[k]);
+    };
+  },
+
+  coroutineDecl(s) {
+    const ast = s.body, params = s.params, name = s.name, isAsync = s.isAsync;
+    const self = this;
+    return (ctx, sc) => {
+      const factory = function (...args) {
+        const local = new NSScope(sc);
+        self.bindParams(params, args, local, ctx);
+        local.declare("args", args);
+        const gen = NSCo.exec(ast, ctx, local);
+        return Coroutines.start(name, gen, ctx);
+      };
+      factory.__nova = true; factory.__coroutine = true; factory.__async = isAsync; factory.__params = self.paramNames(params);
+      sc.declare(name, factory);
+    };
+  },
+
+  startCo(s) {
+    const call = this.expr(s.call);
+    return (ctx, sc) => {
+      const r = call(ctx, sc);
+      if (r instanceof NSTask) return r;
+      return r;
+    };
+  },
+
+  tryStmt(s) {
+    const body = this.block(s.body);
+    const handler = s.handler ? this.block(s.handler) : null;
+    const fin = s.fin ? this.block(s.fin) : null;
+    const param = s.param;
+    return (ctx, sc) => {
+      let out;
+      try { out = body(ctx, sc); }
+      catch (e) {
+        if (handler) {
+          const hs = new NSScope(sc);
+          hs.declare(param || "error", e instanceof NSError ? e.novaValue : (e && e.message ? e.message : String(e)));
+          out = handler(ctx, hs);
+        } else if (!fin) throw e;
+      }
+      finally { if (fin) { const r = fin(ctx, sc); if (r !== undefined) out = r; } }
+      return out;
+    };
+  },
+
+  switchStmt(s) {
+    const subj = this.expr(s.subject);
+    const cases = s.cases.map(c => ({ vals: c.vals.map(v => this.expr(v)), body: this.block(c.body) }));
+    const def = s.def ? this.block(s.def) : null;
+    return (ctx, sc) => {
+      const v = subj(ctx, sc);
+      for (const c of cases) {
+        for (const vf of c.vals) {
+          if (looseEq(v, vf(ctx, sc))) {
+            const r = c.body(ctx, sc);
+            return r === BREAK ? undefined : r;
+          }
+        }
+      }
+      if (def) { const r = def(ctx, sc); return r === BREAK ? undefined : r; }
+    };
+  }
+});
+
+/* --------------------------------------------- expression node extensions */
+const _NS_origExpr = NSCompiler.prototype.expr;
+NSCompiler.prototype.expr = function (e) {
+  if (!e) return () => null;
+  switch (e.type) {
+    case "This": return (ctx, sc) => sc.has("this") ? sc.get("this") : null;
+    case "New": {
+      const args = e.args.map(a => this.expr(a));
+      const name = e.name, line = e.line;
+      return (ctx, sc) => {
+        const cls = sc.has(name) ? sc.get(name) : ctx.api.__getGlobal(name, ctx);
+        if (!(cls instanceof NSClass)) { ctx.api.error(`"${name}" ليس صنفًا (سطر ${line})`); return null; }
+        return NSRuntime.instantiate(cls, args.map(a => a(ctx, sc)), ctx);
+      };
+    }
+    case "SuperCall": {
+      const args = e.args.map(a => this.expr(a));
+      const m = e.method;
+      return (ctx, sc) => {
+        const inst = sc.has("this") ? sc.get("this") : null;
+        const owner = sc.has("__class") ? sc.get("__class") : (inst ? inst.__class : null);
+        if (!inst || !owner || !owner.parent) { ctx.api.error("لا يوجد صنف أب"); return null; }
+        return NSRuntime.invoke(inst, m, args.map(a => a(ctx, sc)), ctx, owner.parent);
+      };
+    }
+    case "Await": {
+      const v = this.expr(e.value);
+      return (ctx, sc) => {
+        const r = v(ctx, sc);
+        if (r instanceof NSTask) { if (!r.done) NovaLog.warn("await خارج coroutine لا يوقف التنفيذ", "script"); return r.result; }
+        return r;
+      };
+    }
+    case "DictLit": {
+      const props = (e.props || []).map(p => ({ key: p.key, fn: this.expr(p.value) }));
+      return (ctx, sc) => { const d = new NSDict(); for (const p of props) d.set(p.key, p.fn(ctx, sc)); return d; };
+    }
+  }
+  return _NS_origExpr.call(this, e);
+};
+
+/* ================================================= INSTANCE / DISPATCH */
+const NSRuntime = {
+  instantiate(cls, args, ctx) {
+    const inst = new NSInstance(cls);
+    for (const f of cls.allFields()) inst.__props[f.name] = f.fn ? f.fn(ctx, cls.scope || new NSScope(null)) : null;
+    const init = cls.findMethod("init") || cls.findMethod("constructor");
+    if (init) this.invoke(inst, init === cls.findMethod("init") ? "init" : "constructor", args, ctx);
+    else if (args.length) {
+      // positional field initialisation for structs and simple classes
+      const fs = cls.allFields();
+      args.forEach((a, i) => { if (fs[i]) inst.__props[fs[i].name] = a; });
+    }
+    return inst;
+  },
+  invoke(inst, name, args, ctx, startClass) {
+    const cls = startClass || inst.__class;
+    const m = cls.findMethod(name);
+    if (!m) { NovaAPI.error(`لا توجد دالة "${name}" في ${inst.__class.name}`); return null; }
+    const owner = cls.ownerOf(name);
+    const sc = new NSScope(owner.scope || inst.__class.scope || new NSScope(null));
+    sc.declare("this", inst);
+    sc.declare("__class", owner);
+    const comp = NSCo.compiler();
+    comp.bindParams(m.params, args, sc, ctx);
+    sc.declare("args", args);
+    if (m.isCo || m.isAsync) {
+      const gen = NSCo.exec(m.ast, ctx, sc);
+      return Coroutines.start(inst.__class.name + "." + name, gen, ctx);
+    }
+    if (!m.body) m.body = comp.block(m.ast);
+    const r = m.body(ctx, sc);
+    return r instanceof ReturnSignal ? r.value : null;
+  },
+  getProp(inst, n) {
+    if (n === "class" || n === "className") return inst.__class.name;
+    if (n in inst.__props) return inst.__props[n];
+    const st = inst.__class;
+    let c = st; while (c) { if (c.statics.has(n)) return c.statics.get(n); c = c.parent; }
+    if (inst.__class.findMethod(n)) {
+      const bound = (...a) => NSRuntime.invoke(inst, n, a, bound.__ctx || { api: NovaAPI, self: inst.__props.entity || null });
+      bound.__nova = true;
+      return bound;
+    }
+    return undefined;
+  },
+  setProp(inst, n, v) {
+    inst.__props[n] = (v instanceof NSInstance && v.__class.isStruct) ? v.copy() : v;
+  }
+};
+
+/* ================================================ COROUTINE INTERPRETER */
+const NSCo = {
+  _comp: null,
+  compiler() { return this._comp || (this._comp = new NSCompiler({ body: [] }, [])); },
+  ev(node, ctx, scope) {
+    if (!node) return null;
+    if (!node.__c) node.__c = this.compiler().expr(node);
+    return node.__c(ctx, scope);
+  },
+  st(node, ctx, scope) {
+    if (!node.__s) node.__s = this.compiler().stmt(node);
+    return node.__s ? node.__s(ctx, scope) : undefined;
+  },
+  hasAwait(n) {
+    if (!n || typeof n !== "object") return false;
+    if (n.type === "Await") return true;
+    for (const k in n) {
+      const v = n[k];
+      if (Array.isArray(v)) { for (const x of v) if (this.hasAwait(x)) return true; }
+      else if (v && typeof v === "object" && this.hasAwait(v)) return true;
+    }
+    return false;
+  },
+  /** Generator-based statement walker: suspension works at any nesting depth. */
+  *exec(node, ctx, scope) {
+    if (!node) return;
+    if (node.type === "Block") {
+      const local = new NSScope(scope);
+      for (const s of node.body) {
+        const r = yield* this.exec(s, ctx, local);
+        if (r === BREAK || r === CONTINUE || r instanceof ReturnSignal) return r;
+      }
+      return;
+    }
+    switch (node.type) {
+      case "Yield": {
+        if (node.value) {
+          const v = this.ev(node.value, ctx, scope);
+          if (node.wait || typeof v === "number") { yield { __wait: num(v) }; return; }
+          yield v; return;
+        }
+        yield YIELD_FRAME; return;
+      }
+      case "Command":
+        if (node.verb === "wait") { yield { __wait: num(this.ev(node.value, ctx, scope)) }; return; }
+        this.st(node, ctx, scope); return;
+      case "ExprStmt": {
+        if (node.expr && node.expr.type === "Await") { yield this.ev(node.expr.value, ctx, scope); return; }
+        if (this.hasAwait(node.expr)) { const v = yield* this.evalAwait(node.expr, ctx, scope); return; }
+        this.st(node, ctx, scope); return;
+      }
+      case "VarDecl": {
+        const v = this.hasAwait(node.value) ? yield* this.evalAwait(node.value, ctx, scope) : this.ev(node.value, ctx, scope);
+        scope.declare(node.name, v);
+        return;
+      }
+      case "Assign": {
+        if (this.hasAwait(node.value)) {
+          const v = yield* this.evalAwait(node.value, ctx, scope);
+          const fake = { type: "Assign", target: node.target, op: node.op, value: { type: "Literal", value: null }, line: node.line };
+          // apply directly
+          if (node.target.type === "Ident") scope.set(node.target.name, node.op === "=" ? v : applyOp(node.op, scope.get(node.target.name), v));
+          else if (node.target.type === "Member") {
+            const o = this.ev(node.target.obj, ctx, scope);
+            ctx.api.__setProp(o, node.target.name, node.op === "=" ? v : applyOp(node.op, ctx.api.__getProp(o, node.target.name), v));
+          } else if (node.target.type === "Index") {
+            const o = this.ev(node.target.obj, ctx, scope), k = this.ev(node.target.index, ctx, scope);
+            if (o instanceof NSDict) o.set(k, v); else if (o) o[k] = v;
+          }
+          return;
+        }
+        this.st(node, ctx, scope); return;
+      }
+      case "If": {
+        if (truthy(this.ev(node.cond, ctx, scope))) return yield* this.exec(node.then, ctx, scope);
+        if (node.alt) return yield* this.exec(node.alt, ctx, scope);
+        return;
+      }
+      case "While": {
+        let guard = 0;
+        while (truthy(this.ev(node.cond, ctx, scope))) {
+          if (++guard > 100000) { ctx.api.error("حلقة لا نهائية في coroutine"); break; }
+          const r = yield* this.exec(node.body, ctx, scope);
+          if (r === BREAK) break;
+          if (r instanceof ReturnSignal) return r;
+          if (guard % 2000 === 0) yield YIELD_FRAME;      // never freeze the frame
+        }
+        return;
+      }
+      case "Repeat": {
+        const n = Math.min(1000000, Math.floor(num(this.ev(node.count, ctx, scope))));
+        for (let i = 0; i < n; i++) {
+          const local = new NSScope(scope);
+          local.declare("index", i);
+          const r = yield* this.exec(node.body, ctx, local);
+          if (r === BREAK) break;
+          if (r instanceof ReturnSignal) return r;
+        }
+        return;
+      }
+      case "ForEach": {
+        let arr = this.ev(node.list, ctx, scope);
+        if (arr instanceof NSDict) arr = arr.keys();
+        if (arr === null || arr === undefined) return;
+        if (!Array.isArray(arr)) arr = typeof arr === "object" ? Object.values(arr) : [arr];
+        for (let i = 0; i < arr.length; i++) {
+          const local = new NSScope(scope);
+          local.declare(node.name, arr[i]); local.declare("index", i);
+          const r = yield* this.exec(node.body, ctx, local);
+          if (r === BREAK) break;
+          if (r instanceof ReturnSignal) return r;
+        }
+        return;
+      }
+      case "Return": {
+        const v = node.value ? (this.hasAwait(node.value) ? yield* this.evalAwait(node.value, ctx, scope) : this.ev(node.value, ctx, scope)) : null;
+        return new ReturnSignal(v);
+      }
+      case "Break": return BREAK;
+      case "Continue": return CONTINUE;
+      case "Try": {
+        try {
+          const r = yield* this.exec(node.body, ctx, scope);
+          if (node.fin) yield* this.exec(node.fin, ctx, scope);
+          return r;
+        } catch (e) {
+          if (node.handler) {
+            const hs = new NSScope(scope);
+            hs.declare(node.param || "error", e instanceof NSError ? e.novaValue : String(e && e.message || e));
+            const r = yield* this.exec(node.handler, ctx, hs);
+            if (node.fin) yield* this.exec(node.fin, ctx, scope);
+            return r;
+          }
+          if (node.fin) yield* this.exec(node.fin, ctx, scope);
+          throw e;
+        }
+      }
+      case "Switch": {
+        const v = this.ev(node.subject, ctx, scope);
+        for (const c of node.cases) {
+          for (const vf of c.vals) {
+            if (looseEq(v, this.ev(vf, ctx, scope))) {
+              const r = yield* this.exec(c.body, ctx, scope);
+              return r === BREAK ? undefined : r;
+            }
+          }
+        }
+        if (node.def) { const r = yield* this.exec(node.def, ctx, scope); return r === BREAK ? undefined : r; }
+        return;
+      }
+      default:
+        this.st(node, ctx, scope);
+        return;
+    }
+  },
+  /** Evaluates an expression tree that contains `await`, suspending as needed. */
+  *evalAwait(node, ctx, scope) {
+    if (node.type === "Await") {
+      const target = this.ev(node.value, ctx, scope);
+      const r = yield target;
+      return r;
+    }
+    // only the common shapes need deep handling; everything else evaluates directly
+    if (node.type === "Call") {
+      const argv = [];
+      for (const a of node.args) argv.push(this.hasAwait(a) ? yield* this.evalAwait(a, ctx, scope) : this.ev(a, ctx, scope));
+      const fakeArgs = argv.map(v => ({ type: "Literal", value: v }));
+      const fake = { type: "Call", callee: node.callee, args: fakeArgs, line: node.line };
+      return this.ev(fake, ctx, scope);
+    }
+    if (node.type === "Binary" || node.type === "Logic") {
+      const l = this.hasAwait(node.l) ? yield* this.evalAwait(node.l, ctx, scope) : this.ev(node.l, ctx, scope);
+      const r = this.hasAwait(node.r) ? yield* this.evalAwait(node.r, ctx, scope) : this.ev(node.r, ctx, scope);
+      return node.type === "Logic" ? (node.op === "&&" ? (truthy(l) && truthy(r)) : (truthy(l) || truthy(r))) : applyOp(node.op, l, r);
+    }
+    return this.ev(node, ctx, scope);
+  }
+};
+
+/* ===================================================== MODULES & PACKAGES */
+const NSModules = {
+  cache: new Map(),
+  loading: new Set(),
+  clear() { this.cache.clear(); this.loading.clear(); },
+  find(name) {
+    if (!Project_) return null;
+    const base = String(name).replace(/\.nova$/i, "");
+    for (const s of Project_.scripts.values()) {
+      const n = s.name.replace(/\.[^.]+$/, "");
+      if (n === base || s.name === name || s.id === name) return s;
+    }
+    return null;
+  },
+  /** Names a module exports, resolved without running it (used by diagnostics). */
+  exportNames(name) {
+    const asset = this.find(name);
+    if (!asset) return [];
+    this._names = this._names || new Map();
+    const cached = this._names.get(asset.id);
+    if (cached && cached.v === (asset.version || 0)) return cached.names;
+    let names = [];
+    try {
+      const lex = new NSLexer(asset.code || "");
+      const parser = new NSParser(lex.tokenize(), []);
+      const ast = parser.parse();
+      const explicit = ast.body.filter(n => n.type === "Export").flatMap(n => n.names || []);
+      names = explicit.length ? explicit : [...ast.declared, ...ast.functions];
+    } catch (e) { names = []; }
+    this._names.set(asset.id, { v: asset.version || 0, names });
+    return names;
+  },
+  load(name, parentCtx) {
+    const key = String(name);
+    if (this.cache.has(key)) return this.cache.get(key);
+    if (this.loading.has(key)) { NovaLog.warn(`استيراد دائري للوحدة "${key}"`, "modules"); return this.cache.get(key) || null; }
+    const asset = this.find(key);
+    if (!asset) return null;
+    this.loading.add(key);
+    const res = NovaScript.compile(asset.code || "", asset.name);
+    if (!res.program) { this.loading.delete(key); NovaLog.err(`الوحدة "${key}" بها أخطاء`, "modules"); return null; }
+    const scope = new NSScope(null);
+    const ctx = { self: null, other: null, program: res.program, scope, api: NovaAPI, module: key, waitUntil: 0 };
+    for (const fname in res.program.functions) {
+      const f = res.program.functions[fname];
+      const fn = makeUserFn(f.params, f.fn, scope); fn.__ctx = ctx; scope.declare(fname, fn);
+    }
+    for (const st of res.program.topLevel) { try { st(ctx, scope); } catch (e) { NovaLog.err(`[${key}] ${e.message}`, "modules"); } }
+    const exportNames = (res.ast && res.ast.body || []).filter(n => n.type === "Export").flatMap(n => n.names);
+    const exports = {};
+    if (exportNames.length) { for (const n of exportNames) exports[n] = scope.get(n); }
+    else scope.vars.forEach((v, k) => exports[k] = v);      // no explicit exports → export everything
+    const namespace = new NSDict(Object.entries(exports));
+    namespace.__module = key;
+    const mod = { name: key, exports, namespace, scope, ctx };
+    this.cache.set(key, mod);
+    this.loading.delete(key);
+    NovaLog.ok(`تم تحميل الوحدة "${key}" (${Object.keys(exports).length} عنصر)`, "modules");
+    return mod;
+  }
+};
+
+/* ============================================= SCRIPT-DEFINED COMPONENTS */
+const NSComponents = {
+  defs: new Map(),
+  register(cls, ctx) {
+    if (this.defs.has(cls.name) && this.defs.get(cls.name).cls === cls) return;
+    const props = [];
+    for (const f of cls.allFields()) {
+      let def = null;
+      try { def = f.fn ? f.fn(ctx, cls.scope) : null; } catch (e) { }
+      let type = "text";
+      if (typeof def === "number") type = "number";
+      else if (typeof def === "boolean") type = "bool";
+      else if (def instanceof Vec3) { type = "vec3"; def = [def.x, def.y, def.z]; }
+      else if (def instanceof Color) { type = "color"; def = [def.r, def.g, def.b, def.a]; }
+      else if (Array.isArray(def)) { type = "list"; }
+      else if (def === null || def === undefined) { type = "text"; def = ""; }
+      props.push({ key: f.name, type, def, label: f.name });
+    }
+    const def = ComponentRegistry.register({
+      name: cls.name, icon: "🧩", category: "مكوّنات NOVA",
+      doc: `مكوّن معرّف بلغة NOVA (${cls.name}).`,
+      props,
+      novaClass: cls,
+      onAdd(c, e) { c.runtime.inst = null; }
+    });
+    this.defs.set(cls.name, { cls, def });
+    if (window.Editor && Editor.refreshInspector) Editor.refreshInspector();
+    return def;
+  },
+  /** Instantiate + wire lifecycle for every entity carrying a NOVA component. */
+  bind(scene) {
+    for (const [name, entry] of this.defs) {
+      for (const c of scene.allComponents(name)) {
+        if (!c.entity) continue;
+        if (c.runtime.inst) continue;
+        const ctx = { self: c.entity, other: null, api: NovaAPI, comp: c, waitUntil: 0, program: { functions: {} }, scope: entry.cls.scope || new NSScope(null) };
+        const inst = new NSInstance(entry.cls);
+        for (const f of entry.cls.allFields()) {
+          inst.__props[f.name] = c.data[f.name] !== undefined ? c.data[f.name] : (f.fn ? f.fn(ctx, entry.cls.scope) : null);
+        }
+        inst.__props.entity = c.entity;
+        inst.__props.self = c.entity;
+        c.runtime.inst = inst;
+        c.runtime.ctx = ctx;
+        if (entry.cls.findMethod("start")) { try { NSRuntime.invoke(inst, "start", [], ctx); } catch (e) { NovaLog.err(e.message, "component"); } }
+      }
+    }
+  },
+  update(scene, dt) {
+    for (const [name, entry] of this.defs) {
+      if (!entry.cls.findMethod("update")) continue;
+      for (const c of scene.components(name)) {
+        if (!c.runtime.inst) continue;
+        try { NSRuntime.invoke(c.runtime.inst, "update", [dt], c.runtime.ctx); }
+        catch (e) { NovaLog.err(`[${name}.update] ${e.message}`, "component"); c.enabled = false; }
+      }
+    }
+  },
+  event(entity, evName, other) {
+    const capital = "on" + evName.charAt(0).toUpperCase() + evName.slice(1);
+    for (const c of entity.components) {
+      const entry = this.defs.get(c.type);
+      if (!entry || !c.runtime.inst) continue;
+      const method = entry.cls.findMethod(capital) ? capital : (entry.cls.findMethod(evName) ? evName : null);
+      if (!method) continue;
+      try { NSRuntime.invoke(c.runtime.inst, method, [other], c.runtime.ctx); }
+      catch (e) { NovaLog.err(`[${c.type}.${method}] ${e.message}`, "component"); }
+    }
+  },
+  clear() {
+    for (const [name] of this.defs) ComponentRegistry.types.delete(name);
+    this.defs.clear();
+  }
+};
+
+/* ================================ PROPERTY / METHOD DISPATCH INTEGRATION */
+const _api_getProp = NovaAPI.__getProp.bind(NovaAPI);
+NovaAPI.__getProp = function (o, n) {
+  if (o instanceof NSInstance) { const v = NSRuntime.getProp(o, n); return v === undefined ? null : v; }
+  if (o instanceof NSDict) {
+    if (n === "count" || n === "size" || n === "length") return o.size;
+    if (n === "keys") return o.keys();
+    if (n === "values") return o.values();
+    return o.has(n) ? o.get(n) : null;
+  }
+  if (o instanceof NSClass) { let c = o; while (c) { if (c.statics.has(n)) return c.statics.get(n); c = c.parent; } return null; }
+  if (o instanceof NSTask) {
+    if (n === "done") return o.done;
+    if (n === "running") return o.isRunning;
+    if (n === "result") return o.result;
+    return o[n];
+  }
+  return _api_getProp(o, n);
+};
+const _api_setProp = NovaAPI.__setProp.bind(NovaAPI);
+NovaAPI.__setProp = function (o, n, v) {
+  if (o instanceof NSInstance) return NSRuntime.setProp(o, n, v);
+  if (o instanceof NSDict) return void o.set(n, v);
+  if (o instanceof NSClass) return void o.statics.set(n, v);
+  return _api_setProp(o, n, v);
+};
+const _api_callMethod = NovaAPI.__callMethod.bind(NovaAPI);
+NovaAPI.__callMethod = function (obj, name, args, ctx, line) {
+  if (obj instanceof NSInstance) {
+    if (obj.__class.findMethod(name)) return NSRuntime.invoke(obj, name, args, ctx);
+    const v = obj.__props[name];
+    if (typeof v === "function") return v(...args);
+    NovaAPI.error(`لا توجد دالة "${name}" في ${obj.__class.name} (سطر ${line})`);
+    return null;
+  }
+  if (obj instanceof NSDict) {
+    switch (name) {
+      case "get": return obj.get(args[0]);
+      case "set": case "add": case "put": return obj.set(args[0], args[1]);
+      case "has": case "contains": return obj.has(args[0]);
+      case "remove": case "delete": return obj.remove(args[0]);
+      case "clear": return obj.clear();
+      case "keys": return obj.keys();
+      case "values": return obj.values();
+      case "count": case "size": return obj.size;
+      case "forEach": return obj.forEach((v, k) => args[0] && args[0](v, k));
+    }
+    const member = obj.get(name);           // module namespaces expose functions
+    if (typeof member === "function") { if (member.__nova) member.__ctx = ctx; return member(...args); }
+  }
+  if (obj instanceof NSClass) {
+    const m = obj.findMethod(name);
+    if (m && m.isStatic) {
+      const sc = new NSScope(obj.scope || new NSScope(null));
+      sc.declare("__class", obj);
+      NSCo.compiler().bindParams(m.params, args, sc, ctx);
+      if (!m.body) m.body = NSCo.compiler().block(m.ast);
+      const r = m.body(ctx, sc);
+      return r instanceof ReturnSignal ? r.value : null;
+    }
+  }
+  if (obj instanceof NSTask) {
+    if (name === "stop" || name === "cancel") return obj.stop();
+    if (name === "then") return obj.then(args[0]);
+  }
+  return _api_callMethod(obj, name, args, ctx, line);
+};
+const _api_call = NovaAPI.__call.bind(NovaAPI);
+NovaAPI.__call = function (fn, args, name, ctx, line) {
+  if (fn instanceof NSClass) return NSRuntime.instantiate(fn, args, ctx);      // Foo(...) == new Foo(...)
+  if (typeof fn === "function" && fn.__nova) fn.__ctx = ctx;
+  return _api_call(fn, args, name, ctx, line);
+};
+
+/* ------------------------------------------- value formatting for new types */
+const _origFmtVal = fmtVal;
+fmtVal = function (v) {
+  if (v instanceof NSInstance) return v.toString();
+  if (v instanceof NSDict) return v.toString();
+  if (v instanceof NSClass) return "<" + v.kind + " " + v.name + ">";
+  if (v instanceof NSTask) return "<task " + v.name + (v.done ? " done" : " running") + ">";
+  return _origFmtVal(v);
+};
+const _origTruthy = truthy;
+truthy = function (v) {
+  if (v instanceof NSDict) return v.size > 0;
+  if (v instanceof NSInstance) return true;
+  return _origTruthy(v);
+};
+
+/* =========================================== NAMESPACE APIs FOR SCRIPTS */
+(function buildNamespaces() {
+  const V = v => NovaAPI.vecOf(v);
+  const E = e => NovaAPI.entOf(e);
+
+  const NS_Physics = {
+    raycast: (o, d, dist) => NovaAPI.builtins.raycast(o, d, dist),
+    raycastAll: (o, d, dist) => {
+      const ray = new Ray(V(o), V(d).clone().norm());
+      const out = [];
+      for (const b of Physics.bodies) {
+        const t = b.shape === "sphere" ? ray.intersectSphere(b.center, b.radius) : ray.intersectAABB(b.aabb);
+        if (t !== null && t <= (dist === undefined ? 1000 : num(dist))) out.push({ entity: b.entity, distance: t, point: ray.at(t, new Vec3()) });
+      }
+      return out.sort((a, b) => a.distance - b.distance);
+    },
+    overlapSphere: (p, r) => Physics.overlapSphere(V(p), num(r)),
+    groundHeight: (x, z) => Physics.groundHeight(num(x), num(z), Engine.scene),
+    addForce: (e, v) => NovaAPI.addKind("force", v, E(e)),
+    addImpulse: (e, v) => NovaAPI.addKind("impulse", v, E(e)),
+    addTorque: (e, v) => NovaAPI.addKind("torque", v, E(e)),
+    setVelocity: (e, v) => EntityProps.set(E(e), "velocity", v),
+    getVelocity: e => EntityProps.get(E(e), "velocity"),
+    setGravity: v => { if (Engine.scene) { const g = V(v); Engine.scene.env.gravity = [g.x, g.y, g.z]; } },
+    getGravity: () => Engine.scene ? V(Engine.scene.env.gravity) : new Vec3(0, -9.81, 0),
+    isGrounded: e => { const c = E(e); const cc = c && c.getComponent("CharacterController"); return cc ? !!cc.runtime.grounded : false; },
+    sleep: e => { const c = E(e); const rb = c && c.getComponent("RigidBody"); if (rb) rb.runtime.sleeping = true; },
+    wake: e => Physics.wake(E(e)),
+    bodies: () => Physics.bodies.length
+  };
+
+  const NS_AI = {
+    moveTo: (e, t, s) => AISystem.moveTowards(E(e), V(t), s === undefined ? 3 : num(s)),
+    pathTo: (e, t) => AISystem.setDestination(E(e), V(t)),
+    findPath: (from, to) => NavMesh.findPath(V(from), V(to)),
+    canSee: (a, b) => AISystem.canSee(E(a), E(b)),
+    setState: (e, s) => NovaAPI.builtins.setState(e, s),
+    getState: e => NovaAPI.builtins.getState(e),
+    learn: (e, a, r) => AISystem.learn(E(e), String(a), num(r)),
+    bestAction: e => AISystem.bestAction(E(e)),
+    bakeNavMesh: () => { const s = Engine.scene && Engine.scene.components("NavMeshSurface")[0]; if (s) NavMesh.build(Engine.scene, s); return NavMesh.built; },
+    isWalkable: p => { const v = V(p); const c = NavMesh.cellOf(v.x, v.z); return c ? NavMesh.walkable(c.cx, c.cz) : false; },
+    nearest: (from, tag) => NovaAPI.builtins.nearest(from, tag),
+    distanceTo: (a, b) => V(E(a) ? E(a).worldPos(new Vec3()) : a).dist(V(E(b) ? E(b).worldPos(new Vec3()) : b))
+  };
+
+  const NS_Animation = {
+    play: (e, clip) => { const a = E(e) && E(e).getComponent("Animator"); if (a) AnimationSystem.play(a, String(clip)); },
+    stop: e => { const a = E(e) && E(e).getComponent("Animator"); if (a) a.runtime.playing = false; },
+    pause: e => { const a = E(e) && E(e).getComponent("Animator"); if (a) a.runtime.playing = false; },
+    resume: e => { const a = E(e) && E(e).getComponent("Animator"); if (a) a.runtime.playing = true; },
+    setSpeed: (e, s) => { const a = E(e) && E(e).getComponent("Animator"); if (a) a.data.speed = num(s); },
+    isPlaying: e => { const a = E(e) && E(e).getComponent("Animator"); return a ? !!a.runtime.playing : false; },
+    current: e => { const a = E(e) && E(e).getComponent("Animator"); return a && a.runtime.current ? a.runtime.current.name : ""; },
+    tween: (e, prop, to, time, ease) => Tween.start(E(e), String(prop), to, num(time), String(ease || "outQuad")),
+    ik: (e, side, target) => {
+      const ent = E(e); if (!ent) return;
+      const names = String(side).toUpperCase() === "L" ? ["UpperArmL", "LowerArmL", "HandL"] : ["UpperArmR", "LowerArmR", "HandR"];
+      const chain = names.map(n => ent.find(n));
+      if (chain.every(Boolean)) AnimationSystem.twoBoneIK(chain[0], chain[1], chain[2], V(target));
+    },
+    buildSkeleton: e => AnimationSystem.buildSkeleton(E(e))
+  };
+
+  const NS_AudioNS = {
+    play: (n, v) => Audio.playByName(String(n), v === undefined ? 1 : num(v)),
+    playAt: (n, pos, v) => { const rec = Audio.playByName(String(n), v === undefined ? 1 : num(v)); return rec; },
+    playMusic: n => Audio.playMusic(String(n)),
+    stopMusic: () => Audio.stopMusic(),
+    stopAll: () => Audio.stopAll(),
+    setVolume: (bus, v) => Audio.setBus(String(bus), num(v)),
+    getVolume: bus => Project_ ? (Project_.mixer[String(bus)] === undefined ? 1 : Project_.mixer[String(bus)]) : 1,
+    beep: (f, d, t, v) => Audio.beep(num(f) || 440, d === undefined ? .12 : num(d), t ? String(t) : "square", v === undefined ? .25 : num(v)),
+    isPlaying: () => Audio.playing.length > 0,
+    count: () => Audio.playing.length
+  };
+
+  const NS_UI = {
+    setText: (n, t) => RuntimeUI.setText(String(n), fmtVal(t)),
+    getText: n => { const r = RuntimeUI.find(String(n)); return r ? r.comp.data.text : ""; },
+    setValue: (n, v) => RuntimeUI.setValue(String(n), num(v)),
+    getValue: n => { const r = RuntimeUI.find(String(n)); return r ? r.comp.data.value : 0; },
+    show: n => RuntimeUI.setVisible(String(n), true),
+    hide: n => RuntimeUI.setVisible(String(n), false),
+    toggle: n => { const r = RuntimeUI.find(String(n)); if (r) RuntimeUI.setVisible(String(n), !r.comp.data.visible); },
+    setColor: (n, c) => { const r = RuntimeUI.find(String(n)); if (r) { const col = c instanceof Color ? c : new Color().setStr(String(c)); r.comp.data.color = [col.r, col.g, col.b, col.a]; RuntimeUI.markDirty(); } },
+    message: (t, s) => Runtime.hudMessage(fmtVal(t), s === undefined ? 2 : num(s)),
+    score: v => { if (v === undefined) return NovaAPI.score; NovaAPI.score = num(v); Runtime.updateHUD(); },
+    addScore: v => { NovaAPI.score += num(v); Runtime.updateHUD(); }
+  };
+
+  const NS_Net = {
+    host: room => Net.connectLocal(String(room || "nova-room")),
+    join: room => Net.connectLocal(String(room || "nova-room")),
+    connect: (url, room) => Net.connectServer(String(url), String(room || "nova")),
+    disconnect: () => Net.disconnect(),
+    send: (type, data) => Net.send(String(type), data),
+    chat: msg => Net.chat(fmtVal(msg)),
+    players: () => Net.players().map(p => new NSDict(Object.entries(p))),
+    playerCount: () => Net.players().length,
+    isHost: () => Net.isHost,
+    room: () => Net.room || "",
+    saveWorld: () => Net.saveWorld(),
+    loadWorld: () => Net.loadWorld()
+  };
+
+  const NS_Scene = {
+    load: n => Runtime.loadScene(String(n)),
+    restart: () => Runtime.restart(),
+    find: n => Engine.scene ? Engine.scene.byName(String(n)) : null,
+    findAll: n => Engine.scene ? Engine.scene.allByName(String(n)) : [],
+    findByTag: t => Engine.scene ? Engine.scene.byTag(String(t)) : [],
+    spawn: (n, at) => NovaAPI.spawn(n, at),
+    destroy: e => NovaAPI.destroy(e),
+    count: () => Engine.scene ? Engine.scene.entities.length : 0,
+    name: () => Engine.scene ? Engine.scene.name : "",
+    setTimeOfDay: h => NovaAPI.builtins.setTimeOfDay(h),
+    setWeather: w => NovaAPI.builtins.setWeather(w),
+    setFog: (on, d) => NovaAPI.builtins.setFog(on, d),
+    setWind: (d, s) => NovaAPI.builtins.setWind(d, s)
+  };
+
+  const NS_Input = {
+    key: k => Input.key(String(k)),
+    keyPressed: k => Input.keyPressed(String(k)),
+    keyReleased: k => Input.keyUp(String(k)),
+    axis: a => Input.axis(String(a)),
+    button: b => Input.down(String(b)),
+    buttonPressed: b => Input.pressed(String(b)),
+    buttonReleased: b => Input.released(String(b)),
+    mouse: b => Input.mouseButton(num(b) || 0),
+    mouseClicked: b => Input.mouseClicked(num(b) || 0),
+    mousePos: () => new Vec3(Input.mouse.x, Input.mouse.y, 0),
+    wheel: () => Input.wheel,
+    touchCount: () => Input.touches.length,
+    touch: i => { const t = Input.touches[num(i) || 0]; return t ? new NSDict([["x", t.x], ["y", t.y], ["id", t.id]]) : null; },
+    isMobile: () => Platform.isTouch,
+    vibrate: ms => Platform.vibrate(num(ms) || 20)
+  };
+
+  const NS_Time = {
+    delta: () => Engine.dt,
+    now: () => Engine.time,
+    frame: () => Engine.frame,
+    fps: () => Math.round(Engine.fpsSmooth),
+    scale: v => { if (v === undefined) return Engine.timeScale; Engine.timeScale = num(v); },
+    after: (s, msg) => Runtime.after(num(s), String(msg))
+  };
+
+  const NS_Storage = {
+    save: (k, v) => NovaAPI.builtins.save(k, v instanceof NSDict ? v.toJSON() : v),
+    load: (k, d) => { const v = NovaAPI.builtins.load(k, d); return (v && typeof v === "object" && !Array.isArray(v)) ? new NSDict(Object.entries(v)) : v; },
+    remove: k => { try { localStorage.removeItem("nova.save." + k); } catch (e) { } },
+    has: k => { try { return localStorage.getItem("nova.save." + k) !== null; } catch (e) { return false; } }
+  };
+
+  Object.assign(NovaAPI.builtins, {
+    Physics: NS_Physics, AI: NS_AI, Animation: NS_Animation, Audio: NS_AudioNS,
+    UI: NS_UI, Net: NS_Net, Scene: NS_Scene, Input: NS_Input, Time: NS_Time, Storage: NS_Storage,
+    Math: {
+      pi: Math.PI, e: Math.E,
+      abs: v => Math.abs(num(v)), floor: v => Math.floor(num(v)), ceil: v => Math.ceil(num(v)),
+      round: (v, p) => M.round(num(v), p === undefined ? 0 : num(p)),
+      sqrt: v => Math.sqrt(Math.max(0, num(v))), pow: (a, b) => Math.pow(num(a), num(b)),
+      min: (...a) => Math.min(...a.map(num)), max: (...a) => Math.max(...a.map(num)),
+      sin: v => Math.sin(num(v) * DEG2RAD), cos: v => Math.cos(num(v) * DEG2RAD), tan: v => Math.tan(num(v) * DEG2RAD),
+      atan2: (y, x) => Math.atan2(num(y), num(x)) * RAD2DEG,
+      random: (a, b) => NovaAPI.builtins.random(a, b), randomInt: (a, b) => NovaAPI.builtins.randomInt(a, b),
+      clamp: (v, a, b) => M.clamp(num(v), num(a), num(b)), lerp: (a, b, t) => NovaAPI.builtins.lerp(a, b, t),
+      sign: v => Math.sign(num(v)), noise: (x, y, z) => NOISE.n3(num(x), num(y), num(z))
+    },
+    // constructors
+    Dict: (...pairs) => { const d = new NSDict(); for (let i = 0; i < pairs.length; i += 2) d.set(pairs[i], pairs[i + 1]); return d; },
+    List: (...items) => items,
+    // coroutine helpers usable from plain code
+    startCoroutine: fn => (typeof fn === "function" ? fn() : null),
+    stopAllCoroutines: () => Coroutines.stopAll(),
+    runningCoroutines: () => Coroutines.count,
+    typeOf: v => v instanceof NSInstance ? v.__class.name
+      : v instanceof NSDict ? "dict" : Array.isArray(v) ? "list"
+        : v instanceof Vec3 ? "vector" : v instanceof Entity ? "entity"
+          : v instanceof NSTask ? "task" : v === null || v === undefined ? "null" : typeof v,
+    isA: (v, name) => v instanceof NSInstance ? v.__class.isA(String(name)) : (NovaAPI.builtins.typeOf(v) === String(name))
+  });
+  NS_GLOBAL_NAMES.push("Physics", "AI", "Animation", "Audio", "UI", "Net", "Scene", "Input", "Time", "Storage", "Math", "this");
+})();
+
+/* ------------------------------------------ engine integration for 2.0 */
+const _origEngineSimulate = Engine.simulate.bind(Engine);
+Engine.simulate = function (dt, scene) {
+  _origEngineSimulate(dt, scene);
+  try { NSComponents.update(scene, dt); } catch (e) { NovaLog.err(e.message, "component"); }
+  try { Coroutines.update(); } catch (e) { NovaLog.err(e.message, "coroutine"); }
+};
+
+const _origBindScene = ScriptRuntime.bindScene.bind(ScriptRuntime);
+ScriptRuntime.bindScene = function (scene) {
+  NSModules.clear();
+  Coroutines.stopAll();
+  _origBindScene(scene);
+  NSComponents.bind(scene);
+};
+const _origSendEvent = ScriptRuntime.sendEvent.bind(ScriptRuntime);
+ScriptRuntime.sendEvent = function (entity, name, other, data) {
+  _origSendEvent(entity, name, other, data);
+  if (entity && NSComponents.defs.size) { try { NSComponents.event(entity, name, other); } catch (e) { } }
+};
+/** `emit "x"` now also triggers `when x:` handlers, not just `when message "x"`. */
+const _origBroadcast = ScriptRuntime.broadcast.bind(ScriptRuntime);
+ScriptRuntime.broadcast = function (name, data) {
+  _origBroadcast(name, data);
+  const key = String(name);
+  for (const inst of ScriptRuntime.instances) {
+    if (inst.program.events[key]) ScriptRuntime.fire(inst, key, null, data);
+  }
+};
+/** Imports run before a script's top level. */
+const _origRunTopLevel = ScriptRuntime.runTopLevel.bind(ScriptRuntime);
+ScriptRuntime.runTopLevel = function (inst) {
+  _origRunTopLevel(inst);
+};
+
+NOVA.NSClass = NSClass; NOVA.NSInstance = NSInstance; NOVA.NSDict = NSDict;
+NOVA.Coroutines = Coroutines; NOVA.NSModules = NSModules; NOVA.NSComponents = NSComponents;
+</script>
+<style>
+/* ============================================================================
+   NOVA ENGINE — MOBILE SHELL
+   A purpose-built phone layout: the 3D view owns the screen, panels arrive as
+   draggable bottom sheets, and every target is at least 44px.
+   ========================================================================= */
+:root{ --m-tab:60px; --m-safe-b: env(safe-area-inset-bottom, 0px); --m-safe-t: env(safe-area-inset-top, 0px); }
+
+body.mobileui #workspace{ position:relative; }
+body.mobileui .dock-node,body.mobileui .panelgroup,body.mobileui .splitter{ display:none!important; }
+body.mobileui #statusbar{ display:none; }
+body.mobileui #mobileTabs{ display:none; }
+body.mobileui .menubar{ display:none; }
+body.mobileui #topbar{ height:52px; min-height:52px; padding:0 6px; padding-top:var(--m-safe-t); }
+body.mobileui .tool-group{ display:none; }
+body.mobileui .vp-tools{ display:none; }
+body.mobileui .vp-stats{ font-size:10px; bottom:4px; }
+body.mobileui .vp-hud{ font-size:10px; }
+body.mobileui .brand small{ display:none; }
+body.mobileui .brand{ padding-inline:4px; }
+
+/* ------------------------------------------------------------ stage */
+#mStage{ position:absolute; inset:0; display:none; }
+body.mobileui #mStage{ display:block; }
+#mStage .viewport{ position:absolute; inset:0; }
+#mStage .panel-page{ position:absolute; inset:0; display:flex!important; }
+
+/* ------------------------------------------------------- top actions */
+.m-top{ display:none; align-items:center; gap:6px; margin-inline-start:auto; }
+body.mobileui .m-top{ display:flex; }
+.m-btn{
+  min-width:44px; height:44px; padding:0 12px; border-radius:12px; border:1px solid var(--line);
+  background:var(--bg-3); color:var(--fg-0); display:inline-flex; align-items:center; justify-content:center;
+  gap:6px; font-size:15px; font-weight:600; cursor:pointer; user-select:none; -webkit-tap-highlight-color:transparent;
+  touch-action:manipulation; transition:transform .08s, background .12s;
+}
+.m-btn:active{ transform:scale(.94); background:var(--bg-4); }
+.m-btn.primary{ background:var(--accent); border-color:var(--accent); color:var(--accent-fg); }
+.m-btn.play{ background:var(--ok); border-color:var(--ok); color:#04231a; }
+.m-btn.danger{ background:var(--err); border-color:var(--err); color:#fff; }
+.m-btn svg{ width:20px; height:20px; }
+.m-btn.on{ background:var(--accent); border-color:var(--accent); color:var(--accent-fg); }
+
+/* ------------------------------------------------------ floating tools */
+#mTools{
+  position:absolute; inset-inline-start:10px; top:50%; transform:translateY(-50%);
+  display:none; flex-direction:column; gap:8px; z-index:30; pointer-events:auto;
+}
+body.mobileui #mTools{ display:flex; }
+#mTools .m-btn{ width:48px; min-width:48px; height:48px; padding:0;
+  background:rgba(20,24,32,.78); border-color:rgba(255,255,255,.14); color:#e6eef8; backdrop-filter:blur(8px); }
+html[data-theme="light"] #mTools .m-btn{ background:rgba(255,255,255,.85); color:#1a2230; border-color:rgba(0,0,0,.12); }
+#mTools .m-btn.on{ background:var(--accent); border-color:var(--accent); color:var(--accent-fg); }
+
+/* ------------------------------------------------------------ the FAB */
+#mFab{
+  position:absolute; inset-inline-end:16px; bottom:calc(var(--m-tab) + var(--m-safe-b) + 16px);
+  width:60px; height:60px; border-radius:50%; border:0; display:none; align-items:center; justify-content:center;
+  background:linear-gradient(140deg,var(--accent),var(--accent-2)); color:#fff; font-size:30px; font-weight:300;
+  box-shadow:0 8px 22px rgba(0,0,0,.4); z-index:32; cursor:pointer; touch-action:manipulation;
+}
+body.mobileui #mFab{ display:flex; }
+#mFab:active{ transform:scale(.92); }
+
+/* --------------------------------------------------------- bottom sheet */
+#mSheet{
+  position:fixed; left:0; right:0; bottom:0; height:62vh; z-index:60;
+  background:var(--bg-1); border-top:1px solid var(--line);
+  border-radius:20px 20px 0 0; box-shadow:0 -10px 34px rgba(0,0,0,.4);
+  display:flex; flex-direction:column; transform:translateY(102%);
+  transition:transform .26s cubic-bezier(.22,.61,.36,1); touch-action:none;
+}
+#mSheet.open{ transform:translateY(0); }
+#mSheet.dragging{ transition:none; }
+#mSheetScrim{
+  position:fixed; inset:0; background:linear-gradient(180deg,transparent 30%,rgba(0,0,0,.28));
+  z-index:59; opacity:0; pointer-events:none; transition:opacity .22s;
+}
+#mSheetScrim.show{ opacity:1; }
+.m-grip{ padding:10px 0 4px; display:flex; justify-content:center; flex:none; cursor:grab; touch-action:none; }
+.m-grip i{ display:block; width:46px; height:5px; border-radius:3px; background:var(--fg-2); opacity:.55; }
+.m-sheet-head{
+  display:flex; align-items:center; gap:10px; padding:2px 14px 10px; flex:none;
+  border-bottom:1px solid var(--line-soft);
+}
+.m-sheet-head h3{ margin:0; font-size:17px; flex:1; }
+.m-sheet-body{ flex:1; min-height:0; position:relative; display:flex; flex-direction:column; overflow:hidden; }
+.m-sheet-body > .panel-page{ position:absolute; inset:0; display:flex!important; }
+#mSheet .ptools{ padding:8px; gap:8px; }
+#mSheet .ibtn{ width:40px; height:40px; }
+#mSheet .tnode{ padding:13px 10px; font-size:15px; border-radius:10px; min-height:46px; }
+#mSheet .tnode .ico{ width:22px; font-size:16px; }
+#mSheet .row{ grid-template-columns:100px 1fr; min-height:40px; margin-bottom:9px; }
+#mSheet input[type=text],#mSheet input[type=number],#mSheet select,#mSheet textarea{ padding:9px 10px; font-size:15px; border-radius:9px; }
+#mSheet input[type=range]{ height:8px; }
+#mSheet input[type=range]::-webkit-slider-thumb{ width:22px; height:22px; }
+#mSheet input[type=checkbox]{ width:22px; height:22px; }
+#mSheet .comp-head{ padding:12px 10px; font-size:15px; }
+#mSheet .asset{ padding:10px 4px; }
+#mSheet .asset .th{ width:64px; height:64px; }
+#mSheet .chip{ padding:8px 14px; font-size:13px; border-radius:20px; }
+#mSheet .btn{ padding:11px 18px; font-size:15px; border-radius:11px; }
+#mSheet .console{ font-size:13px; }
+#mSheet .cinput input{ font-size:15px; padding:8px 0; }
+#mSheet .codearea pre,#mSheet .codearea textarea{ font-size:14px; line-height:22px; }
+#mSheet .gutter{ font-size:13px; line-height:22px; }
+
+/* ------------------------------------------------------- bottom tab bar */
+#mTabs{
+  position:fixed; left:0; right:0; bottom:0; height:calc(var(--m-tab) + var(--m-safe-b));
+  padding-bottom:var(--m-safe-b); background:var(--bg-2); border-top:1px solid var(--line);
+  display:none; z-index:62; box-shadow:0 -2px 12px rgba(0,0,0,.18);
+}
+body.mobileui #mTabs{ display:flex; }
+#mTabs .mt{
+  flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+  color:var(--fg-2); font-size:11px; font-weight:600; cursor:pointer; touch-action:manipulation;
+  border-top:3px solid transparent; -webkit-tap-highlight-color:transparent; min-width:0;
+}
+#mTabs .mt svg{ width:22px; height:22px; }
+#mTabs .mt span{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
+#mTabs .mt.on{ color:var(--accent); border-top-color:var(--accent); }
+#mTabs .mt:active{ background:var(--bg-3); }
+
+/* ------------------------------------------------------ action sheets */
+.m-actions{
+  position:fixed; left:0; right:0; bottom:0; z-index:9700; background:var(--bg-1);
+  border-radius:20px 20px 0 0; padding:8px 10px calc(14px + var(--m-safe-b));
+  transform:translateY(102%); transition:transform .24s cubic-bezier(.22,.61,.36,1);
+  max-height:80vh; overflow:auto; box-shadow:0 -10px 34px rgba(0,0,0,.45);
+}
+.m-actions.open{ transform:translateY(0); }
+.m-actions .m-title{ text-align:center; font-weight:700; padding:8px 0 12px; color:var(--fg-1); font-size:15px; }
+.m-actions .m-row{
+  display:flex; align-items:center; gap:14px; padding:15px 14px; border-radius:14px;
+  font-size:16px; cursor:pointer; touch-action:manipulation;
+}
+.m-actions .m-row:active{ background:var(--bg-3); }
+.m-actions .m-row .ico{ width:26px; text-align:center; font-size:20px; }
+.m-actions .m-row.danger{ color:var(--err); }
+.m-actions .m-sep{ height:1px; background:var(--line-soft); margin:6px 12px; }
+.m-actions .m-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:10px; padding:4px; }
+.m-actions .m-tile{
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px;
+  padding:16px 6px; border-radius:16px; background:var(--bg-2); border:1px solid var(--line);
+  font-size:12.5px; text-align:center; cursor:pointer; touch-action:manipulation;
+}
+.m-actions .m-tile:active{ background:var(--bg-4); transform:scale(.96); }
+.m-actions .m-tile .big{ font-size:26px; }
+
+/* full-screen modals on phones */
+body.mobileui .modal{ width:100%!important; max-width:100%; height:100%; max-height:100%; border-radius:0; }
+body.mobileui .modal-scrim{ padding:0; }
+body.mobileui .modal header{ padding:calc(14px + var(--m-safe-t)) 16px 14px; font-size:17px; }
+body.mobileui .modal header .x{ font-size:26px; padding:4px 12px; }
+body.mobileui .modal footer{ padding:12px 16px calc(12px + var(--m-safe-b)); }
+body.mobileui .modal .btn{ padding:13px 20px; font-size:15px; flex:1; }
+body.mobileui .card{ padding:16px; }
+body.mobileui .menu-pop{ font-size:16px; }
+body.mobileui .menu-pop .mi{ padding:14px 14px; }
+body.mobileui #toasts{ bottom:calc(var(--m-tab) + var(--m-safe-b) + 12px); right:10px; left:10px; max-width:none; }
+</style>
+<script data-nova="editor">
+/* ============================================================================
+ * NOVA ENGINE — 30 · MOBILE SHELL
+ *   Not a shrunken desktop: a dedicated touch layout driven by the same panels.
+ * ========================================================================= */
+const MobileUI = {
+  active: false, sheetPanel: null, sheetHeight: .62, forced: null,
+  tabs: [
+    { id: "scene", label: "المشهد", icon: ICON.cube },
+    { id: "hierarchy", label: "الكائنات", icon: ICON.layers },
+    { id: "inspector", label: "الخصائص", icon: ICON.settings },
+    { id: "assets", label: "الأصول", icon: ICON.image },
+    { id: "code", label: "الكود", icon: ICON.code },
+    { id: "__more", label: "المزيد", icon: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>' }
+  ],
+
+  shouldUse() {
+    if (this.forced !== null) return this.forced;
+    const w = window.innerWidth, h = window.innerHeight;
+    return Math.min(w, h) < 700 || (Platform.isTouch && w < 1000);
+  },
+
+  init() {
+    this.buildShell();
+    const apply = debounce(() => this.sync(), 120);
+    window.addEventListener("resize", apply);
+    window.addEventListener("orientationchange", () => setTimeout(() => this.sync(), 260));
+    this.sync();
+  },
+
+  sync() {
+    const want = this.shouldUse();
+    if (want === this.active) { if (want) this.layout(); return; }
+    this.active = want;
+    document.body.classList.toggle("mobileui", want);
+    if (want) this.enter(); else this.exit();
+  },
+
+  /* ------------------------------------------------------------- shell */
+  buildShell() {
+    const ws = $("#workspace");
+    this.stage = el("div", { id: "mStage" });
+    ws.appendChild(this.stage);
+
+    this.tools = el("div", { id: "mTools" });
+    ws.appendChild(this.tools);
+
+    this.fab = el("button", { id: "mFab", title: "إضافة" }, "＋");
+    this.fab.onclick = () => this.showAddSheet();
+    ws.appendChild(this.fab);
+
+    this.scrim = el("div", { id: "mSheetScrim" });   // visual only — the scene stays live
+    document.body.appendChild(this.scrim);
+
+    this.sheet = el("div", { id: "mSheet" });
+    const grip = el("div", { class: "m-grip" }, el("i"));
+    this.sheetTitle = el("h3", null, "");
+    const head = el("div", { class: "m-sheet-head" },
+      this.sheetTitle,
+      el("button", { class: "m-btn", title: "توسيع", onClick: () => this.toggleFull() }, "⤢"),
+      el("button", { class: "m-btn", title: "إغلاق", onClick: () => this.closeSheet() }, "✕"));
+    this.sheetBody = el("div", { class: "m-sheet-body" });
+    this.sheet.appendChild(grip); this.sheet.appendChild(head); this.sheet.appendChild(this.sheetBody);
+    document.body.appendChild(this.sheet);
+    this.bindSheetDrag(grip);
+
+    this.tabBar = el("div", { id: "mTabs" });
+    document.body.appendChild(this.tabBar);
+
+    this.topActions = el("div", { class: "m-top" });
+    $("#topbar").appendChild(this.topActions);
+
+    this.actionSheet = el("div", { class: "m-actions" });
+    document.body.appendChild(this.actionSheet);
+    this.actionScrim = el("div", { id: "mActScrim", class: "modal-scrim", style: "z-index:9650" });
+    this.actionScrim.onclick = () => this.hideActions();
+    document.body.appendChild(this.actionScrim);
+  },
+
+  enter() {
+    // the scene view takes over the whole stage
+    const scenePanel = Dock.panels.get("scene");
+    if (scenePanel && scenePanel.el) this.stage.appendChild(scenePanel.el);
+    else if (scenePanel && !scenePanel.built) {
+      const page = el("div", { class: "panel-page active", "data-panel": "scene" });
+      this.stage.appendChild(page);
+      scenePanel.build(page); scenePanel.built = true; scenePanel.el = page;
+    }
+    this.buildTabs();
+    this.buildTools();
+    this.buildTopActions();
+    this.closeSheet();
+    setTimeout(() => { Editor.resize(); window.dispatchEvent(new Event("nova-relayout")); }, 60);
+  },
+
+  exit() {
+    // hand the scene view back to the dock
+    this.closeSheet();
+    const scenePanel = Dock.panels.get("scene");
+    for (const g of Dock.groups) {
+      if (g.tabs.includes("scene") && scenePanel && scenePanel.el) { g.body.appendChild(scenePanel.el); Dock.setActiveTab(g, g.active || "scene"); break; }
+    }
+    if (this.sheetPanel) this.returnPanel(this.sheetPanel);
+    setTimeout(() => { Editor.resize(); window.dispatchEvent(new Event("nova-relayout")); }, 60);
+  },
+
+  layout() {
+    if (!this.active) return;
+    Editor.resize();
+  },
+
+  /* ------------------------------------------------------------- tabs */
+  buildTabs() {
+    this.tabBar.innerHTML = "";
+    for (const t of this.tabs) {
+      const b = el("div", { class: "mt", "data-tab": t.id },
+        el("span", { html: t.icon }), el("span", null, t.label));
+      b.onclick = () => {
+        if (t.id === "__more") { this.showMoreSheet(); return; }
+        if (t.id === "scene") { this.closeSheet(); this.markTab("scene"); return; }
+        this.openSheet(t.id);
+      };
+      this.tabBar.appendChild(b);
+    }
+    this.markTab("scene");
+  },
+  markTab(id) {
+    $$(".mt", this.tabBar).forEach(b => b.classList.toggle("on", b.dataset.tab === id));
+  },
+
+  /* --------------------------------------------------------- tool rail */
+  buildTools() {
+    this.tools.innerHTML = "";
+    const tool = (mode, icon, title) => {
+      const b = el("button", { class: "m-btn" + (Editor.gizmoMode === mode ? " on" : ""), title, html: icon, "data-mode": mode });
+      b.onclick = () => {
+        Editor.gizmoMode = mode;
+        $$(".m-btn[data-mode]", this.tools).forEach(x => x.classList.toggle("on", x.dataset.mode === mode));
+        Shortcuts.syncTool();
+        Platform.vibrate(10);
+      };
+      this.tools.appendChild(b);
+    };
+    tool("select", '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3l14 7-6 1.6L10 19z"/></svg>', "تحديد");
+    tool("move", ICON.move, "تحريك");
+    tool("rotate", ICON.rotate, "تدوير");
+    tool("scale", ICON.scale, "تحجيم");
+    const undo = el("button", { class: "m-btn", html: ICON.undo, title: "تراجع" });
+    undo.onclick = () => Editor.undo();
+    this.tools.appendChild(undo);
+    const focus = el("button", { class: "m-btn", html: "🎯", title: "تركيز" });
+    focus.onclick = () => Editor.selected ? Editor.focusSelection() : Editor.frameScene();
+    this.tools.appendChild(focus);
+  },
+
+  buildTopActions() {
+    this.topActions.innerHTML = "";
+    const menu = el("button", { class: "m-btn", title: "القائمة" }, "☰");
+    menu.onclick = () => this.showMainMenu();
+    this.topActions.appendChild(menu);
+    this.playBtn = el("button", { class: "m-btn play", title: "تشغيل", html: ICON.play });
+    this.playBtn.onclick = () => { if (Runtime.playing) Runtime.stop(); else Runtime.start(); };
+    this.topActions.appendChild(this.playBtn);
+  },
+
+  /* ------------------------------------------------------- bottom sheet */
+  openSheet(panelId) {
+    const def = Dock.panels.get(panelId);
+    if (!def) return;
+    if (this.sheetPanel && this.sheetPanel !== panelId) this.returnPanel(this.sheetPanel);
+    // build on demand, then move the page into the sheet
+    if (!def.built) {
+      const page = el("div", { class: "panel-page active", "data-panel": panelId });
+      this.sheetBody.appendChild(page);
+      try { def.build(page); def.built = true; def.el = page; }
+      catch (e) { NovaLog.err("فشل بناء اللوحة " + panelId + ": " + e.message, "editor"); }
+    } else {
+      def.el.classList.add("active");
+      this.sheetBody.appendChild(def.el);
+    }
+    this.sheetPanel = panelId;
+    this.sheetTitle.textContent = def.title;
+    this.sheet.classList.add("open");
+    this.scrim.classList.add("show");
+    this.markTab(panelId);
+    if (def.onShow) try { def.onShow(); } catch (e) { }
+    window.dispatchEvent(new Event("nova-relayout"));
+  },
+  returnPanel(panelId) {
+    const def = Dock.panels.get(panelId);
+    if (!def || !def.el) return;
+    // park it in a hidden pool so its state survives
+    if (!this.pool) { this.pool = el("div", { style: "display:none" }); document.body.appendChild(this.pool); }
+    this.pool.appendChild(def.el);
+  },
+  closeSheet() {
+    this.sheet.classList.remove("open");
+    this.scrim.classList.remove("show");
+    if (this.sheetPanel) { const p = this.sheetPanel; this.sheetPanel = null; setTimeout(() => { if (this.sheetPanel !== p) this.returnPanel(p); }, 300); }
+    this.markTab("scene");
+  },
+  setSheetHeight(frac) {
+    this.sheetHeight = M.clamp(frac, .28, .96);
+    this.sheet.style.height = (this.sheetHeight * 100) + "vh";
+    window.dispatchEvent(new Event("nova-relayout"));
+  },
+  toggleFull() { this.setSheetHeight(this.sheetHeight > .8 ? .55 : .94); },
+  bindSheetDrag(grip) {
+    let drag = null;
+    const start = e => {
+      drag = { y: e.clientY, h: this.sheet.getBoundingClientRect().height };
+      this.sheet.classList.add("dragging");
+      grip.setPointerCapture && grip.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    };
+    const move = e => {
+      if (!drag) return;
+      const dy = e.clientY - drag.y;
+      const h = Math.max(120, drag.h - dy);
+      this.sheet.style.height = h + "px";
+    };
+    const end = e => {
+      if (!drag) return;
+      const h = this.sheet.getBoundingClientRect().height;
+      const frac = h / window.innerHeight;
+      drag = null;
+      this.sheet.classList.remove("dragging");
+      if (frac < .22) { this.sheet.style.height = ""; this.setSheetHeight(.7); this.closeSheet(); return; }
+      this.setSheetHeight(frac > .8 ? .94 : frac > .45 ? .7 : .38);
+    };
+    grip.addEventListener("pointerdown", start);
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", end);
+    grip.addEventListener("pointercancel", end);
+  },
+
+  /* ----------------------------------------------------- action sheets */
+  showActions(title, items) {
+    this.actionSheet.innerHTML = "";
+    if (title) this.actionSheet.appendChild(el("div", { class: "m-title" }, title));
+    for (const it of items) {
+      if (it === "-") { this.actionSheet.appendChild(el("div", { class: "m-sep" })); continue; }
+      if (it.title) { this.actionSheet.appendChild(el("div", { class: "m-title" }, it.title)); continue; }
+      const row = el("div", { class: "m-row" + (it.danger ? " danger" : "") },
+        el("span", { class: "ico" }, it.icon || "▫"), el("span", { style: "flex:1" }, it.label),
+        it.value ? el("span", { class: "muted tiny" }, it.value) : null);
+      row.onclick = () => { this.hideActions(); if (it.action) setTimeout(it.action, 60); };
+      this.actionSheet.appendChild(row);
+    }
+    this.actionScrim.classList.add("show");
+    requestAnimationFrame(() => this.actionSheet.classList.add("open"));
+  },
+  showGrid(title, tiles) {
+    this.actionSheet.innerHTML = "";
+    this.actionSheet.appendChild(el("div", { class: "m-title" }, title));
+    const grid = el("div", { class: "m-grid" });
+    for (const t of tiles) {
+      const tile = el("div", { class: "m-tile" }, el("div", { class: "big" }, t.icon || "▫"), el("div", null, t.label));
+      tile.onclick = () => { this.hideActions(); setTimeout(() => t.action && t.action(), 60); };
+      grid.appendChild(tile);
+    }
+    this.actionSheet.appendChild(grid);
+    this.actionScrim.classList.add("show");
+    requestAnimationFrame(() => this.actionSheet.classList.add("open"));
+  },
+  hideActions() {
+    this.actionSheet.classList.remove("open");
+    this.actionScrim.classList.remove("show");
+  },
+
+  showAddSheet() {
+    const tiles = [];
+    for (const m of ADD_MENU) {
+      if (m === "-" || m.title) continue;
+      tiles.push({ icon: m.icon, label: m.label, action: m.action });
+    }
+    this.showGrid("إضافة إلى المشهد", tiles);
+  },
+  showMoreSheet() {
+    const tiles = [...Dock.panels.values()]
+      .filter(p => !this.tabs.some(t => t.id === p.id))
+      .map(p => ({ icon: p.shortIcon || "▫", label: p.title, action: () => this.openSheet(p.id) }));
+    const icons = { project: "📁", console: "▸", graph: "🕸️", material: "🎨", animation: "🎞️", particles: "✨", terrain: "⛰️", uiEditor: "🔲", shader: "🎛️", audio: "🔊", environment: "☀️", profiler: "📈", network: "🌐", touch: "👆", game: "🎮" };
+    for (const t of tiles) { const id = [...Dock.panels.values()].find(p => p.title === t.label); if (id && icons[id.id]) t.icon = icons[id.id]; }
+    this.showGrid("كل الأدوات", tiles);
+  },
+  showMainMenu() {
+    this.showActions("NOVA Engine", [
+      { icon: "📄", label: "مشروع جديد", action: () => ProjectManager.newProject() },
+      { icon: "📂", label: "فتح مشروع", action: () => ProjectManager.open() },
+      { icon: "💾", label: "حفظ", action: () => ProjectManager.save() },
+      "-",
+      { icon: "📥", label: "استيراد ملفات", action: () => FileManager.pickFiles() },
+      { icon: "🚀", label: "التصدير والنشر", action: () => Build.openDialog() },
+      "-",
+      { icon: "🎬", label: "مدير المشاهد", action: () => SceneManager.open() },
+      { icon: "🎮", label: "خرائط التحكم", action: () => InputMapper.open() },
+      { icon: "☀️", label: "البيئة", action: () => this.openSheet("environment") },
+      { icon: "👁", label: "خيارات العرض", action: () => this.showViewOptions() },
+      "-",
+      { icon: document.documentElement.dataset.theme === "dark" ? "☀️" : "🌙", label: "تبديل الوضع الليلي", action: () => toggleTheme() },
+      { icon: "🖥️", label: "واجهة الحاسوب", action: () => { this.forced = false; this.sync(); toast("تم التبديل لواجهة الحاسوب", "من قائمة عرض يمكن الرجوع"); } },
+      "-",
+      { icon: "📖", label: "الدليل السريع", action: () => Docs.showQuickStart() },
+      { icon: "🔤", label: "مرجع اللغة", action: () => Docs.showLanguage() }
+    ]);
+  },
+  showViewOptions() {
+    const tick = v => v ? "✅" : "⬜";
+    this.showActions("خيارات العرض", [
+      { icon: tick(Editor.showGrid), label: "الشبكة", action: () => { Editor.showGrid = !Editor.showGrid; this.showViewOptions(); } },
+      { icon: tick(Editor.showGizmos), label: "الأدلة المرئية", action: () => { Editor.showGizmos = !Editor.showGizmos; this.showViewOptions(); } },
+      { icon: tick(Editor.showColliders), label: "المصادمات", action: () => { Editor.showColliders = !Editor.showColliders; this.showViewOptions(); } },
+      { icon: tick(Editor.showNav), label: "شبكة التنقل", action: () => { Editor.showNav = !Editor.showNav; this.showViewOptions(); } },
+      { icon: tick(Editor.snap.enabled), label: "المحاذاة للشبكة", action: () => { Editor.snap.enabled = !Editor.snap.enabled; this.showViewOptions(); } },
+      "-",
+      { icon: "🔲", label: "تأطير المشهد كاملاً", action: () => Editor.frameScene() },
+      { icon: "🎯", label: "تركيز على المحدد", action: () => Editor.focusSelection() },
+      { icon: "🧊", label: "تدوير المنظور", action: () => Editor.cycleView() }
+    ]);
+  },
+  setPlayState(on) {
+    if (!this.playBtn) return;
+    this.playBtn.innerHTML = on ? ICON.stop : ICON.play;
+    this.playBtn.classList.toggle("play", !on);
+    this.playBtn.classList.toggle("danger", on);
+  }
+};
+
+/* --------------------------------------- route desktop chrome to mobile */
+const _origCtxShow = ContextMenu.show.bind(ContextMenu);
+ContextMenu.show = function (x, y, items) {
+  if (MobileUI.active) {
+    const title = items.find(i => i && i.title);
+    MobileUI.showActions(title ? title.title : "", items.filter(i => !(i && i.title)));
+    return;
+  }
+  _origCtxShow(x, y, items);
+};
+const _origSetPlayState = Editor.setPlayState.bind(Editor);
+Editor.setPlayState = function (on) { _origSetPlayState(on); MobileUI.setPlayState(on); };
+const _origDockApplyMobile = Dock.applyMobile.bind(Dock);
+Dock.applyMobile = function () { if (MobileUI.active) return; _origDockApplyMobile(); };
+/** Keep the mobile tool rail in sync with keyboard/menu tool changes. */
+const _origSyncTool = Shortcuts.syncTool.bind(Shortcuts);
+Shortcuts.syncTool = function () {
+  _origSyncTool();
+  if (MobileUI.tools) $$(".m-btn[data-mode]", MobileUI.tools).forEach(x => x.classList.toggle("on", x.dataset.mode === Editor.gizmoMode));
+};
+NOVA.MobileUI = MobileUI;
+</script>
+<script data-nova="editor">
+/* ============================================================================
+ * NOVA ENGINE — 31 · FILE MANAGER
+ *   One import path for every supported format: drag & drop anywhere, the file
+ *   picker, or a folder. Each file is recognised, converted to the right asset
+ *   type, and can be dropped straight into the scene.
+ * ========================================================================= */
+
+const FILE_KINDS = {
+  texture: { label: "صورة", icon: "🖼️", exts: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg", "ico", "avif", "tif", "tiff"] },
+  model: { label: "مجسم", icon: "🧊", exts: ["glb", "gltf", "obj", "fbx", "stl", "dae", "ply", "3ds", "nova"] },
+  audio: { label: "صوت", icon: "🔊", exts: ["mp3", "wav", "ogg", "aac", "flac", "m4a", "opus", "weba", "mid"] },
+  video: { label: "فيديو", icon: "🎞️", exts: ["mp4", "webm", "ogv", "mov", "m4v"] },
+  data: { label: "بيانات", icon: "📋", exts: ["json", "xml", "txt", "csv", "md", "yml", "yaml", "ini"] },
+  script: { label: "سكربت", icon: "📜", exts: ["nova", "ns"] },
+  font: { label: "خط", icon: "🔠", exts: ["ttf", "otf", "woff", "woff2"] },
+  project: { label: "مشروع", icon: "🗂️", exts: ["novaproj", "novascene"] }
+};
+
+const FileManager = {
+  importing: 0, lastFolder: "/",
+
+  extOf(name) { return String(name).split(".").pop().toLowerCase(); },
+  // Resolution order matters: `.nova` is both a script source and a legacy mesh
+  // container, and source files are by far the common case.
+  KIND_ORDER: ["project", "script", "texture", "audio", "video", "font", "model", "data"],
+  kindOf(name, mime) {
+    const ext = this.extOf(name);
+    for (const k of this.KIND_ORDER) if (FILE_KINDS[k] && FILE_KINDS[k].exts.includes(ext)) return k;
+    for (const k in FILE_KINDS) if (FILE_KINDS[k].exts.includes(ext)) return k;
+    if (mime) {
+      if (mime.startsWith("image/")) return "texture";
+      if (mime.startsWith("audio/")) return "audio";
+      if (mime.startsWith("video/")) return "video";
+      if (mime.startsWith("text/")) return "data";
+    }
+    return "data";
+  },
+  supportedList() {
+    return Object.values(FILE_KINDS).flatMap(k => k.exts).map(e => "." + e).join(",");
+  },
+
+  /* ---------------------------------------------------------- pickers */
+  pickFiles(kindFilter) {
+    const input = el("input", { type: "file", multiple: "", accept: kindFilter ? FILE_KINDS[kindFilter].exts.map(e => "." + e).join(",") : this.supportedList(), style: "display:none" });
+    document.body.appendChild(input);
+    input.onchange = async () => { if (input.files.length) await this.importFiles(input.files); input.remove(); };
+    input.click();
+  },
+  pickFolder() {
+    const input = el("input", { type: "file", multiple: "", webkitdirectory: "", directory: "", style: "display:none" });
+    document.body.appendChild(input);
+    input.onchange = async () => { if (input.files.length) await this.importFiles(input.files, { keepFolders: true }); input.remove(); };
+    input.click();
+  },
+
+  /* ---------------------------------------------------------- importing */
+  async importFiles(fileList, opts = {}) {
+    const files = [...fileList];
+    if (!files.length) return [];
+    const t = toast("جارٍ الاستيراد…", `${files.length} ملف`);
+    const results = [];
+    let done = 0;
+    for (const f of files) {
+      try {
+        const rec = await this.importOne(f, opts);
+        if (rec) results.push(rec);
+      } catch (e) { NovaLog.err(`فشل استيراد ${f.name}: ${e.message}`, "files"); }
+      done++;
+      if (t) t.querySelector("small") ? t.querySelector("small").textContent = `${done}/${files.length}` : null;
+    }
+    t.remove();
+    Editor.refreshProject();
+    if (Panels.assets && Panels.assets.refresh) Panels.assets.refresh();
+    const kinds = {};
+    for (const r of results) kinds[r.type] = (kinds[r.type] || 0) + 1;
+    const summary = Object.entries(kinds).map(([k, n]) => `${n} ${(FILE_KINDS[k] || {}).label || k}`).join(" · ");
+    if (results.length) toast("تم الاستيراد ✓", summary, "ok");
+    // a single dropped file lands in the scene right away when asked for
+    if (opts.dropAt && results.length === 1) this.placeInScene(results[0], opts.dropAt);
+    else if (opts.dropAt && results.length > 1) {
+      for (const r of results) if (r.type === "model") this.placeInScene(r, opts.dropAt);
+    }
+    if (results.length === 1 && results[0].type === "texture" && !opts.dropAt && opts.askUsage !== false) this.askTextureUsage(results[0]);
+    return results;
+  },
+
+  async importOne(file, opts = {}) {
+    const name = file.name || "asset";
+    const ext = this.extOf(name);
+    let kind = this.kindOf(name, file.type);
+    if (kind === "script" && opts.asModel) kind = "model";
+    const folderOf = k => opts.keepFolders && file.webkitRelativePath
+      ? "/" + file.webkitRelativePath.split("/").slice(0, -1).join("/")
+      : (opts.folder || this.defaultFolder(k));
+
+    // project / scene files are opened rather than stored as assets
+    if (kind === "project") {
+      const text = await file.text();
+      const json = JSON.parse(text);
+      if (ext === "novascene") {
+        const sc = Scene.fromJSON(json);
+        sc.id = uid("sc");
+        Project_.addScene(sc);
+        SceneManager.openScene(sc);
+        NovaLog.ok(`تم استيراد المشهد «${sc.name}»`, "files");
+      } else {
+        await Bootstrap.loadProjectData(json);
+      }
+      return null;
+    }
+    // .nova source files become scripts, not opaque assets. The same extension
+    // is also used by the engine's own mesh container, so sniff the payload.
+    let asScript = kind === "script" && !opts.asModel;
+    if (asScript && ext === "nova") {
+      const head = (await file.slice(0, 512).text()).trimStart();
+      if (head.startsWith("{") && /"(positions|vertices|indices)"/.test(head)) { asScript = false; kind = "model"; }
+    }
+    if (asScript) {
+      const code = await file.text();
+      const existing = Project_.scriptByName(name);
+      if (existing) { existing.code = code; existing.version = (existing.version || 0) + 1; ScriptRuntime.compiled.delete(existing.id); NovaLog.ok(`تم تحديث السكربت «${name}»`, "files"); return { type: "script", id: existing.id, name }; }
+      const s = { id: uid("s"), name, code, version: 0, type: "nova" };
+      Project_.scripts.set(s.id, s);
+      NovaLog.ok(`تم استيراد السكربت «${name}»`, "files");
+      return { type: "script", id: s.id, name };
+    }
+
+    const rec = await Assets.importFile(file, folderOf(kind));
+    if (!rec) return null;
+    rec.kind = kind;
+    // Audio is split into sound effects and music by length, so the mixer routes
+    // it to the right bus automatically.
+    if (rec.type === "audio") {
+      await Audio.decode(rec.id);
+      rec.meta.bus = (rec.duration || 0) > 20 ? "music" : "sfx";
+      rec.meta.isMusic = rec.meta.bus === "music";
+    }
+    return rec;
+  },
+  defaultFolder(kind) {
+    return { texture: "/Textures", model: "/Models", audio: "/Audio", video: "/Video", data: "/Data", font: "/Fonts" }[kind] || "/";
+  },
+
+  /* --------------------------------------------------- scene placement */
+  placeInScene(rec, ndc) {
+    if (!rec || !rec.id) return null;
+    const pos = ndc ? Editor.screenToGround(ndc) : Editor.orbit.target.clone();
+    switch (rec.type) {
+      case "model": return this.spawnModel(rec, pos);
+      case "texture": return this.spawnTexture(rec, pos, "sprite");
+      case "audio": return this.spawnAudio(rec, pos);
+      case "video": return this.spawnVideo(rec, pos);
+      default: return null;
+    }
+  },
+  spawnModel(rec, pos) {
+    const base = rec.name.replace(/\.[^.]+$/, "");
+    const e = Editor.addEntity(base, [
+      ["MeshRenderer", { source: "asset", model: rec.id }],
+      ["Collider", { shape: "box" }]
+    ]);
+    if (pos) { e.setWorldPos(pos); e.markDirty(); }
+    const col = e.getComponent("Collider");
+    if (col) Physics.autoFit(col, e);
+    // normalise absurd import scales so the model is always visible
+    const mesh = rec.mesh;
+    if (mesh && mesh.bounds.valid()) {
+      const size = mesh.bounds.size(new Vec3()).len();
+      if (size > 400) { const s = 40 / size; e.setScale(s, s, s); NovaLog.warn(`«${base}» كبير جدًا — تم تصغيره تلقائيًا`, "files"); }
+      else if (size > 0 && size < .05) { const s = 1 / size; e.setScale(s, s, s); NovaLog.warn(`«${base}» صغير جدًا — تم تكبيره تلقائيًا`, "files"); }
+    }
+    Editor.select(e);
+    Editor.focusSelection();
+    return e;
+  },
+  spawnTexture(rec, pos, as) {
+    const base = rec.name.replace(/\.[^.]+$/, "");
+    let e;
+    if (as === "quad") {
+      e = Editor.addEntity(base, [["MeshRenderer", { primitive: "quad", mainTexture: rec.id, blend: "cutout", doubleSided: true }]]);
+      const ar = (rec.meta.width || 1) / (rec.meta.height || 1);
+      e.setScale(2 * ar, 2, 1);
+    } else if (as === "ground") {
+      e = Editor.addEntity(base + "_Ground", [["MeshRenderer", { primitive: "ground", mainTexture: rec.id, tiling: [8, 8] }], ["Collider", { shape: "plane" }]]);
+    } else {
+      e = Editor.addEntity(base, [["Sprite", { texture: rec.id, width: 2, height: 2 * ((rec.meta.height || 1) / (rec.meta.width || 1)) }]]);
+    }
+    if (pos) { e.setWorldPos(pos); e.markDirty(); }
+    Editor.select(e);
+    return e;
+  },
+  spawnAudio(rec, pos) {
+    const base = rec.name.replace(/\.[^.]+$/, "");
+    const isMusic = rec.meta && rec.meta.isMusic;
+    const e = Editor.addEntity((isMusic ? "Music_" : "Sound_") + base, [
+      ["AudioSource", { clip: rec.id, spatial: !isMusic, loop: !!isMusic, bus: isMusic ? "music" : "sfx", playOnAwake: true }]
+    ]);
+    if (pos) { e.setWorldPos(pos); e.markDirty(); }
+    Editor.select(e);
+    return e;
+  },
+  spawnVideo(rec, pos) {
+    const base = rec.name.replace(/\.[^.]+$/, "");
+    const e = Editor.addEntity("Video_" + base, [["MeshRenderer", { primitive: "quad", mainTexture: rec.id, unlit: true, doubleSided: true }]]);
+    const ar = (rec.meta.width || 16) / (rec.meta.height || 9);
+    e.setScale(3 * ar / 2, 3 / 2, 1);
+    if (pos) { e.setWorldPos(pos); e.markDirty(); }
+    if (rec.video) rec.video.play().catch(() => { });
+    Editor.select(e);
+    return e;
+  },
+
+  /** Asks how an imported image should be used. */
+  askTextureUsage(rec) {
+    const use = (as) => { this.spawnTexture(rec, null, as); Modal.closeAll(); };
+    const body = el("div");
+    body.appendChild(el("div", { class: "hint", style: "margin-bottom:10px" }, `«${rec.name}» — ${rec.meta.width}×${rec.meta.height}`));
+    body.appendChild(el("img", { src: rec.dataURL, style: "max-width:100%;max-height:180px;display:block;margin:0 auto 12px;border-radius:8px" }));
+    const grid = el("div", { class: "grid2" });
+    const card = (icon, title, desc, fn) => {
+      const c = el("div", { class: "card" }, el("div", { class: "big" }, icon), el("h4", null, title), el("p", null, desc));
+      c.onclick = fn; grid.appendChild(c);
+    };
+    card("🖼️", "Sprite ثنائي الأبعاد", "لوح يواجه الكاميرا — مناسب للألعاب 2D.", () => use("sprite"));
+    card("🧾", "لوح ثلاثي الأبعاد", "مستطيل في المشهد بنفس نسبة الصورة.", () => use("quad"));
+    card("🟩", "أرضية", "أرضية بنسيج مكرر 8×8 مع تصادم.", () => use("ground"));
+    card("🎨", "نسيج فقط", "احتفظ بها في الأصول لاستخدامها في الخامات.", () => Modal.closeAll());
+    body.appendChild(grid);
+    if (Editor.selected && Editor.selected.getComponent("MeshRenderer")) {
+      const b = el("button", { class: "btn primary", style: "width:100%;margin-top:12px" }, `تطبيق كنسيج على «${Editor.selected.name}»`);
+      b.onclick = () => {
+        Editor.selected.getComponent("MeshRenderer").data.mainTexture = rec.id;
+        Editor.refreshInspector(); Editor.markDirty(); Modal.closeAll();
+        toast("تم تعيين النسيج", rec.name, "ok");
+      };
+      body.appendChild(b);
+    }
+    Modal.open({ title: "كيف تريد استخدام الصورة؟", icon: "🖼️", body, width: "560px", buttons: [{ label: "لاحقًا", class: "ghost" }] });
+  },
+
+  /* ------------------------------------------------- global drop target */
+  installGlobalDrop() {
+    const overlay = el("div", {
+      id: "gDrop",
+      style: `position:fixed;inset:0;z-index:9900;display:none;align-items:center;justify-content:center;flex-direction:column;gap:14px;
+              background:var(--scrim);border:4px dashed var(--accent);color:var(--accent);font-size:20px;font-weight:800;backdrop-filter:blur(3px)`
+    }, el("div", { style: "font-size:56px" }, "📥"), el("div", null, "أفلت الملفات في أي مكان للاستيراد"),
+      el("div", { class: "hint", style: "font-size:13px;max-width:70%;text-align:center" },
+        "صور · مجسمات · أصوات · فيديو · بيانات — يتم التعرّف على النوع تلقائيًا"));
+    document.body.appendChild(overlay);
+    let depth = 0;
+    window.addEventListener("dragenter", e => {
+      if (!e.dataTransfer || ![...e.dataTransfer.types].includes("Files")) return;
+      depth++; overlay.style.display = "flex";
+    });
+    window.addEventListener("dragover", e => { if (e.dataTransfer && [...e.dataTransfer.types].includes("Files")) e.preventDefault(); });
+    window.addEventListener("dragleave", () => { depth = Math.max(0, depth - 1); if (!depth) overlay.style.display = "none"; });
+    window.addEventListener("drop", async e => {
+      if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+      // the viewport handles its own drops so the asset lands where you dropped it
+      if (Editor.viewport && Editor.viewport.contains(e.target)) { depth = 0; overlay.style.display = "none"; return; }
+      e.preventDefault();
+      depth = 0; overlay.style.display = "none";
+      await this.importFiles(e.dataTransfer.files);
+    });
+  },
+
+  /* ------------------------------------------------------ browse dialog */
+  open() {
+    const body = el("div");
+    const tabs = el("div", { class: "tabs" });
+    const page = el("div");
+    let filter = "all", query = "";
+    const bar = el("div", { class: "flexrow wrap", style: "gap:8px;margin-bottom:10px" });
+    bar.appendChild(el("button", { class: "btn primary", onClick: () => this.pickFiles() }, "📥 استيراد ملفات"));
+    bar.appendChild(el("button", { class: "btn", onClick: () => this.pickFolder() }, "📁 استيراد مجلد"));
+    const search = el("input", { type: "search", placeholder: "بحث…", style: "flex:1;min-width:120px" });
+    search.oninput = () => { query = search.value.toLowerCase(); render(); };
+    bar.appendChild(search);
+    body.appendChild(bar);
+    const chips = el("div", { class: "flexrow wrap", style: "gap:6px;margin-bottom:10px" });
+    const mkChip = (id, label) => {
+      const c = el("span", { class: "chip" + (filter === id ? " on" : "") }, label);
+      c.onclick = () => { filter = id; $$(".chip", chips).forEach(x => x.classList.remove("on")); c.classList.add("on"); render(); };
+      chips.appendChild(c);
+    };
+    mkChip("all", "الكل");
+    for (const k in FILE_KINDS) if (k !== "project" && k !== "script") mkChip(k, FILE_KINDS[k].icon + " " + FILE_KINDS[k].label);
+    body.appendChild(chips);
+    const grid = el("div", { class: "assetgrid", style: "padding:0;max-height:52vh" });
+    body.appendChild(grid);
+    const render = () => {
+      grid.innerHTML = "";
+      const list = Assets.all().filter(a => (filter === "all" || a.type === filter) && (!query || a.name.toLowerCase().includes(query)));
+      if (!list.length) {
+        grid.appendChild(el("div", { class: "empty", style: "grid-column:1/-1" },
+          el("div", { style: "font-size:38px" }, "📂"), "لا توجد ملفات بعد.", el("br"),
+          "اسحب ملفات إلى النافذة أو اضغط استيراد."));
+        return;
+      }
+      for (const a of list) {
+        const card = el("div", { class: "asset", draggable: "true" });
+        const th = el("div", { class: "th" });
+        if (a.type === "texture" && a.dataURL) th.appendChild(el("img", { src: a.dataURL }));
+        else th.textContent = (FILE_KINDS[a.type] || {}).icon || "📄";
+        card.appendChild(th);
+        card.appendChild(el("div", { class: "nm", title: a.name }, a.name));
+        card.appendChild(el("div", { class: "tag" }, a.ext + " · " + fmtBytes(a.size || 0)));
+        card.onclick = () => AssetPreview.show(a);
+        card.ondblclick = () => { this.placeInScene(a, null); Modal.closeAll(); };
+        card.addEventListener("dragstart", ev => ev.dataTransfer.setData("nova/asset", a.id));
+        grid.appendChild(card);
+      }
+    };
+    render();
+    Modal.open({
+      title: "مدير الملفات", icon: "📂", body, width: "760px",
+      buttons: [{ label: "إغلاق", class: "ghost" }]
+    });
+  }
+};
+
+/* ---------------------------- route every existing import path through it */
+FileManager.installGlobalDrop();
+$("#fileInput").onchange = async e => { if (e.target.files.length) await FileManager.importFiles(e.target.files); e.target.value = ""; };
+$("#folderInput").onchange = async e => { if (e.target.files.length) await FileManager.importFiles(e.target.files, { keepFolders: true }); e.target.value = ""; };
+
+/* the assets panel drop zone reuses the same pipeline */
+if (Panels.assets) {
+  const _origAssetsBuild = Panels.assets.build.bind(Panels.assets);
+  Panels.assets.build = function (host) {
+    _origAssetsBuild(host);
+    const tools = host.querySelector(".ptools");
+    if (tools) {
+      const folderBtn = el("button", { class: "btn", style: "padding:4px 12px", onClick: () => FileManager.pickFolder() }, "📁 مجلد");
+      tools.insertBefore(folderBtn, tools.children[1]);
+      const mgr = el("button", { class: "ibtn", html: "🗂️", title: "مدير الملفات", onClick: () => FileManager.open() });
+      tools.appendChild(mgr);
+    }
+    host.addEventListener("drop", async e => {
+      if (!e.dataTransfer.files.length) return;
+      e.preventDefault(); e.stopPropagation();
+      await FileManager.importFiles(e.dataTransfer.files);
+    }, true);
+  };
+}
+NOVA.FileManager = FileManager; NOVA.FILE_KINDS = FILE_KINDS;
+</script>
 <script data-nova="editor">
 /* ============================================================================
  * NOVA ENGINE — 27 · DOCS · TEMPLATES · BOOTSTRAP · MAIN LOOP
@@ -17228,6 +19791,130 @@ heal(20)</pre>
       <p class="mono">self.position · self.x · self.rotation · self.scale · self.health · self.velocity · self.speed · self.grounded · self.name · self.tag · self.color · self.forward</p>
       <h3>مكتبة الدوال</h3>
       <p class="mono">${Object.keys(NovaAPI.builtins).join(" · ")}</p>
+      <h3>NOVA 2.0 — الأصناف والبنى والواجهات</h3>
+      <pre class="mono" style="background:var(--bg-2);padding:10px;border-radius:8px">interface Damageable:
+    function damage(n)
+
+class Actor:
+    name = "actor"
+    health = 100
+
+    function init(n, hp):
+        set this.name to n
+        set this.health to hp
+
+    function damage(amount):
+        change this.health by -amount
+        if this.health &lt;= 0:
+            this.die()
+
+    function die():
+        say this.name + " سقط"
+
+class Boss extends Actor implements Damageable:
+    armor = 5
+    static count = 0
+
+    function damage(amount):
+        super.damage(amount - this.armor)
+
+make b = new Boss("زعيم", 200)
+b.damage(30)
+say isA(b, "Actor")      # صح
+say typeOf(b)            # Boss</pre>
+      <p><b>struct</b> مثل <b>class</b> لكنه <b>نوع قيمة</b>: كل إسناد ينسخ نسخة مستقلة.</p>
+      <pre class="mono" style="background:var(--bg-2);padding:10px;border-radius:8px">struct Point:
+    x = 0
+    y = 0
+
+make p = new Point(3, 4)
+make q = p        # نسخة مستقلة
+set q.x to 99     # p.x يبقى 3</pre>
+      <h3>المكوّنات — component</h3>
+      <p>يسجَّل تلقائيًا في «إضافة مكوّن» وتظهر حقوله في لوحة الخصائص:</p>
+      <pre class="mono" style="background:var(--bg-2);padding:10px;border-radius:8px">component Spinner:
+    speed = 90
+    axis = "y"
+
+    function start():
+        say "بدأ على " + this.entity.name
+
+    function update(dt):
+        rotate by this.speed * dt around this.axis
+
+    function onCollide(other):
+        say "اصطدم بـ " + other.name</pre>
+      <h3>القوائم والقواميس</h3>
+      <pre class="mono" style="background:var(--bg-2);padding:10px;border-radius:8px">make arr = [3, 1, 2]
+arr.add(9)
+say arr.count · arr.first · arr.last · arr.contains(3)
+
+make d = Dict("a", 1, "b", 2)
+d.set("c", 3)
+say d["a"] + " " + d.count + " " + d.keys
+for each k in d:
+    say k + " => " + d.get(k)</pre>
+      <h3>الإجراءات (Coroutines) و async/await</h3>
+      <pre class="mono" style="background:var(--bg-2);padding:10px;border-radius:8px">coroutine patrol():
+    repeat 4 times:
+        move forward by 3
+        yield wait 1          # توقف مؤقت دون تجميد اللعبة
+    say "انتهت الدورية"
+
+async function loadThing(name):
+    yield wait 0.5
+    return name + "-ok"
+
+coroutine main():
+    make r = await loadThing("model")
+    say r
+
+when start:
+    start patrol()
+    start main()</pre>
+      <p class="hint">الإجراء يعيد كائن مهمة: <span class="mono">make t = start patrol()</span> ثم
+      <span class="mono">t.stop()</span> أو <span class="mono">t.done</span>.</p>
+      <h3>الوحدات والحزم</h3>
+      <pre class="mono" style="background:var(--bg-2);padding:10px;border-radius:8px"># ملف mathutils.nova
+export make PI2 = 6.28318
+export function double(n):
+    return n * 2
+
+# ملف آخر
+import "mathutils"
+import "mathutils" as MU
+say double(21)
+say MU.PI2</pre>
+      <h3>معالجة الأخطاء و switch</h3>
+      <pre class="mono" style="background:var(--bg-2);padding:10px;border-radius:8px">try:
+    throw "شيء ما فشل"
+catch e:
+    say "التقطت: " + e
+finally:
+    say "تنظيف"
+
+switch state:
+    case "idle", "wait":
+        say "ساكن"
+    case "run":
+        say "يجري"
+    default:
+        say "غير معروف"</pre>
+      <h3>مساحات الأسماء الجاهزة</h3>
+      <table class="data">
+        <tr><th>المساحة</th><th>أمثلة</th></tr>
+        <tr><td class="mono">Physics</td><td class="mono tiny">raycast · overlapSphere · addForce · setVelocity · groundHeight · isGrounded</td></tr>
+        <tr><td class="mono">AI</td><td class="mono tiny">pathTo · findPath · canSee · setState · learn · bakeNavMesh</td></tr>
+        <tr><td class="mono">Animation</td><td class="mono tiny">play · stop · setSpeed · tween · ik · buildSkeleton</td></tr>
+        <tr><td class="mono">Audio</td><td class="mono tiny">play · playMusic · setVolume · beep · stopAll</td></tr>
+        <tr><td class="mono">UI</td><td class="mono tiny">setText · setValue · show · hide · message · addScore</td></tr>
+        <tr><td class="mono">Net</td><td class="mono tiny">host · join · send · chat · players · isHost</td></tr>
+        <tr><td class="mono">Scene</td><td class="mono tiny">load · spawn · find · findByTag · setWeather · setTimeOfDay</td></tr>
+        <tr><td class="mono">Input</td><td class="mono tiny">key · axis · button · touch · mousePos · vibrate</td></tr>
+        <tr><td class="mono">Time</td><td class="mono tiny">delta · now · fps · scale · after</td></tr>
+        <tr><td class="mono">Storage</td><td class="mono tiny">save · load · has · remove</td></tr>
+        <tr><td class="mono">Math</td><td class="mono tiny">clamp · lerp · random · sin · cos · noise · round</td></tr>
+      </table>
       <h3>ملاحظات</h3>
       <ul style="padding-inline-start:22px">
         <li>الكتل تُحدَّد بالمسافة البادئة (4 مسافات) — تمامًا مثل Python.</li>
@@ -17366,6 +20053,7 @@ const Bootstrap = {
     const savedLayout = Storage.getMeta("layout", null);
     try { Dock.build(savedLayout || clone(DEFAULT_LAYOUT)); }
     catch (e) { NovaLog.warn("تعذّر استرجاع التخطيط — تم استخدام الافتراضي", "editor"); Dock.build(clone(DEFAULT_LAYOUT)); }
+    MobileUI.init();
     setLoad(72, "تهيئة الرسومات…");
     Runtime.init();
     Editor.setScene(Editor.scene);
@@ -17378,29 +20066,9 @@ const Bootstrap = {
     $("#stPlatform").onclick = () => Build.openDialog();
     $("#stProject").onclick = () => ProjectManager.open();
     $("#stSaved").onclick = () => ProjectManager.save();
-    // file inputs
-    $("#fileInput").onchange = async e => {
-      const files = [...e.target.files];
-      if (!files.length) return;
-      const t = toast("جارٍ الاستيراد…", files.length + " ملف");
-      for (const f of files) await Assets.importFile(f);
-      t.remove();
-      Editor.refreshProject();
-      toast("تم الاستيراد ✓", files.length + " ملف", "ok");
-      e.target.value = "";
-    };
-    $("#folderInput").onchange = async e => {
-      const files = [...e.target.files];
-      const t = toast("جارٍ استيراد المجلد…", files.length + " ملف");
-      for (const f of files) {
-        const path = f.webkitRelativePath || "";
-        const folder = "/" + path.split("/").slice(0, -1).join("/");
-        await Assets.importFile(f, folder);
-      }
-      t.remove();
-      Editor.refreshProject();
-      e.target.value = "";
-    };
+    // every import path goes through the file manager
+    $("#fileInput").onchange = async e => { if (e.target.files.length) await FileManager.importFiles(e.target.files); e.target.value = ""; };
+    $("#folderInput").onchange = async e => { if (e.target.files.length) await FileManager.importFiles(e.target.files, { keepFolders: true }); e.target.value = ""; };
     // autosave
     setInterval(() => {
       if (Project_ && !Runtime.playing) {

@@ -1,4 +1,4 @@
-# NOVA Engine
+# NOVA Engine 2.0
 
 **محرك ألعاب احترافي كامل داخل ملف HTML واحد — بدون أي مكتبة خارجية.**
 
@@ -43,6 +43,66 @@ when collide with "Enemy":
 خط الأنابيب: مُحلل لغوي ← مُحلل نحوي ← مترجم إلى إغلاقات JavaScript
 (أسرع بكثير من المفسّر الشجري)، مع رسائل خطأ عربية تحمل رقم السطر والعمود.
 
+### الجديد في 2.0 — لغة كاملة
+
+سهلة للمبتدئ كما هي، وقوية للمحترف: أصناف ووراثة وواجهات، وبنى تُنسخ
+بالقيمة، ومكوّنات تُربط بالكائنات مباشرة، ووحدات تُستورد بين الملفات،
+وبرمجة غير متزامنة عبر `async/await` و Coroutines حقيقية تتوقف وتستأنف
+عبر أي عمق من الاستدعاءات.
+
+```
+import "Utils"
+
+interface Damageable:
+    function takeHit(amount)
+
+class Actor:
+    make hp = 100
+    function takeHit(amount):
+        this.hp = this.hp - amount
+        if this.hp <= 0:
+            this.die()
+    function die():
+        say this.name + " سقط"
+
+class Enemy extends Actor implements Damageable:
+    make speed = 3
+    function chase(target):
+        AI.moveTo(self, target, this.speed)
+
+struct Point:
+    make x = 0
+    make y = 0
+
+component Patrol:
+    make speed = 2
+    make radius = 5
+    when start:
+        start this.loop()          # coroutine
+    coroutine loop():
+        repeat forever:
+            await this.goTo(this.radius)
+            await this.goTo(0 - this.radius)
+    coroutine goTo(x):
+        wait 1.5
+        Physics.setVelocity(self, x, 0, 0)
+    when collide with "Player":
+        Audio.play("hit")
+```
+
+| الميزة | الكلمات |
+|---|---|
+| **الأنواع** | `class` · `struct` · `interface` · `component` · `extends` · `implements` · `new` · `this` · `super` · `static` |
+| **البيانات** | مصفوفات `[]` · قواميس `Dict(...)` بواجهة `get/set/has/remove/keys/values` |
+| **التدفّق** | `try/catch/finally` · `throw` · `switch/case` · `repeat` · `for each` |
+| **التزامن** | `async` · `await` · `coroutine` · `yield` · `start` · `wait` |
+| **الوحدات** | `import` · `export` — مع فحص الأسماء المستوردة داخل المحرر |
+| **الأحداث** | `when start/update/collide/key/message` داخل الأصناف والمكوّنات |
+| **الفضاءات** | `Physics` · `AI` · `Animation` · `Audio` · `UI` · `Net` · `Scene` · `Input` · `Time` · `Storage` · `Math` · `Dict` · `List` |
+
+الـ Coroutines مبنية على مولّدات JavaScript، فتتوقف عند `wait` أو `await`
+داخل أي دالة متداخلة وتستأنف من نفس النقطة — وليست مجرد مؤقتات.
+
 ## ما بداخل المحرك
 
 | النظام | التفاصيل |
@@ -65,6 +125,55 @@ when collide with "Enemy":
 
 تراجع/إعادة بلا حدود، وضع ليلي وفاتح، اختصارات لوحة مفاتيح كاملة،
 ومحرر يعمل على الهاتف واللوحي والحاسوب.
+
+## واجهة الهاتف (2.0)
+
+ليست نسخة مصغّرة من واجهة الحاسوب، بل هيكل مستقل يُبنى تلقائيًا عند فتح
+المحرر على شاشة صغيرة أو جهاز لمس:
+
+- شريط تبويبات سفلي: المشهد · الكائنات · الخصائص · الأصول · الكود · المزيد.
+- ورقة سفلية (Bottom Sheet) قابلة للسحب لتغيير ارتفاعها أو ملء الشاشة،
+  تستضيف اللوحات نفسها بنقلها في شجرة DOM — فلا تفقد حالتها عند التبديل.
+- كل الأزرار بحد أدنى 44 بكسل، مع احترام مناطق الأمان (النوتش والشريط السفلي).
+- قوائم السياق تتحوّل إلى قوائم إجراءات كبيرة تُفتح من الأسفل.
+- زر إضافة عائم يفتح شبكة كائنات جاهزة، وشريط أدوات عمودي للتحديد/النقل/التدوير/التحجيم.
+- يمكن فرض وضع الهاتف أو الحاسوب يدويًا من قائمة العرض.
+
+## نظام اللمس (2.0)
+
+مُميِّز إيماءات واحد لكل سطح، يتخذ القرار **مرة واحدة** عند بدء السحب،
+فلا تتنازع الكاميرا والكائن على نفس اللمسة أبدًا:
+
+| الإيماءة | النتيجة |
+|---|---|
+| نقرة واحدة | تحديد الكائن |
+| نقرة مزدوجة | التركيز على الكائن (أو تأطير المشهد في الفراغ) |
+| ضغطة مطوّلة | قائمة سياق + اهتزاز خفيف |
+| سحب بإصبع | يحرّك الكاميرا، إلا إذا كانت أداة نقل/تدوير/تحجيم مفعّلة والكائن محدَّدًا |
+| إصبعان | تحريك جانبي (Pan) |
+| تقريب/تبعيد | تكبير (Zoom) |
+| تدوير بإصبعين | تدوير المنظور |
+| لمس متعدد | مدعوم كاملًا في المحرر واللعبة |
+
+**قاعدة المشهد:** لا يتحرك أي كائن ما لم تُختَر أداة التحريك صراحةً؛
+اللمس في الفراغ يحرّك الكاميرا فقط. الأداة الافتراضية هي «تحديد».
+
+## مدير الملفات (2.0)
+
+استيراد بالسحب والإفلات أو من مُنتقي ملفات الجهاز، مع تعرّف تلقائي على
+النوع من الامتداد ثم من نوع MIME:
+
+| النوع | الصيغ | السلوك |
+|---|---|---|
+| صورة | PNG · JPG · JPEG · WEBP · GIF · BMP · SVG · ICO · AVIF · TIFF | يسألك: Sprite أم لوح ثلاثي الأبعاد أم أرضية أم Texture فقط |
+| مجسم | GLB · GLTF · OBJ · FBX · STL · DAE · PLY · 3DS | يدخل المشهد مباشرةً مع Collider، ويُعاد تحجيمه تلقائيًا إن كان ضخمًا أو مجهريًا |
+| صوت | MP3 · WAV · OGG · AAC · FLAC · M4A · OPUS | أقصر من 20 ثانية ← Audio Asset على قناة المؤثرات، وأطول ← Music Asset على قناة الموسيقى |
+| فيديو | MP4 · WEBM · OGV · MOV | لوح فيديو في المشهد |
+| بيانات | JSON · XML · TXT · CSV · MD · YAML · INI | أصل بيانات يُقرأ من السكربتات |
+| سكربت | NOVA · NS | يُضاف إلى ملفات المشروع ويُترجَم فورًا |
+| مشروع | ‎.novaproj · .novascene‎ | يُفتح بدل أن يُخزَّن كأصل |
+
+كل ما يُستورد يظهر في متصفح الأصول ويمكن سحبه وإفلاته داخل المشهد.
 
 ## التحكم متعدد المنصات
 
@@ -95,14 +204,19 @@ when collide with "Enemy":
 
 ## البنية
 
-ملف واحد، ‎~17.7 ألف سطر، مقسّم إلى 25 وحدة مستقلة:
+ملف واحد، ‎~20.4 ألف سطر، مقسّم إلى 29 وحدة مستقلة:
 
 ```
 الرياضيات · ECS · الهندسة · الشيدرات · العارض · خط الأنابيب · المكوّنات ·
-الفيزياء · أنظمة العالم · لغة NovaScript · واجهة اللغة البرمجية · المدخلات ·
-الصوت/الحركة/الذكاء · الأصول · نواة المحرك · مشغّل اللعبة ·
-هيكل المحرر · نواة المحرر · اللوحات · المحررات المتخصصة · البناء · القوائم · التوثيق
+الفيزياء · أنظمة العالم · لغة NovaScript · NovaScript 2.0 · واجهة اللغة البرمجية ·
+المدخلات · الصوت/الحركة/الذكاء · الأصول · نواة المحرك · مشغّل اللعبة · الإيماءات ·
+هيكل المحرر · نواة المحرر · اللوحات · المحررات المتخصصة · واجهة الهاتف ·
+مدير الملفات · البناء · القوائم · التوثيق
 ```
+
+وحدات 2.0 مبنية فوق نواة 1.0 بالامتداد لا بإعادة الكتابة: تُوسِّع المُحلل
+والمترجم عبر تغليف دوالهما الأصلية، وتعيد استخدام لوحات المحرر نفسها
+بنقلها في شجرة DOM بدل بنائها من جديد.
 
 الوحدات الخاصة بالمحرر موسومة بـ `data-nova="editor"` ولا تُصدَّر مع اللعبة،
 فيخرج ملف اللعبة أصغر بنحو 30%.
@@ -125,5 +239,24 @@ Importers written from scratch for GLB/GLTF/OBJ/FBX/STL/DAE/PLY plus every
 common image, audio and video format. Exports to standalone HTML, installable
 PWA, or a buildable Android project. The editor itself is a dockable,
 themeable, touch-capable IDE that runs on phones, tablets and desktops.
+
+### 2.0
+
+- **Language**: classes, inheritance, interfaces, value-semantics structs,
+  attachable components, dictionaries, `try/catch/finally`, `switch`, modules
+  with `import`/`export`, `async`/`await`, and generator-backed coroutines that
+  suspend across arbitrary call depth. Namespaced APIs for `Physics`, `AI`,
+  `Animation`, `Audio`, `UI`, `Net`, `Scene`, `Input`, `Time` and `Storage`.
+- **Mobile shell**: a purpose-built phone UI — bottom tab bar, draggable bottom
+  sheet, 44 px touch targets, safe-area aware, action sheets in place of
+  context menus. Panels are re-parented rather than rebuilt, so state survives.
+- **Gestures**: one recognizer per surface emitting tap, double tap, long
+  press, drag, pan, pinch, rotate and multi-touch. The camera-versus-object
+  decision is made once at drag start, so the two can never fight. Nothing in
+  the scene moves unless a transform tool is active.
+- **File manager**: drag-and-drop or device picker, automatic type detection,
+  audio split into SFX and music by duration, models placed straight into the
+  scene with auto-rescaling, and a usage prompt for images (sprite, 3D quad,
+  ground, or texture only).
 
 Open `index.html` — that's it.
