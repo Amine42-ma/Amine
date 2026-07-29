@@ -19538,8 +19538,38 @@ const MobileUI = {
     for (const t of tiles) { const id = [...Dock.panels.values()].find(p => p.title === t.label); if (id && icons[id.id]) t.icon = icons[id.id]; }
     this.showGrid("كل الأدوات", tiles);
   },
+  /**
+   * Every desktop menu, rendered as touch action sheets. Built from MENUS
+   * itself rather than a hand-picked subset, so a tool added to the desktop
+   * menu bar can never go missing on the phone.
+   */
+  showAllMenus() {
+    const tiles = MENUS.map((m, i) => ({
+      icon: ["📄", "✏️", "➕", "🧩", "👁", "🛠️", "❓"][i] || "▫",
+      label: m.label,
+      action: () => this.showMenuItems(m)
+    }));
+    this.showGrid("كل القوائم", tiles);
+  },
+  showMenuItems(menu) {
+    const rows = [];
+    for (const it of menu.items) {
+      if (it === "-") { rows.push("-"); continue; }
+      if (!it || !it.action) continue;
+      rows.push({
+        icon: it.icon || "▫",
+        label: it.label + (it.key ? "  ·  " + it.key : ""),
+        action: () => { try { it.action(); } catch (e) { toast("تعذّر التنفيذ", e.message, "err"); } }
+      });
+    }
+    this.showActions(menu.label, rows);
+  },
+
   showMainMenu() {
     this.showActions("NOVA Engine", [
+      { icon: "🗂️", label: "كل القوائم (نفس قوائم الحاسوب)", action: () => this.showAllMenus() },
+      { icon: "🧰", label: "كل الأدوات واللوحات", action: () => this.showMoreSheet() },
+      "-",
       { icon: "📄", label: "مشروع جديد", action: () => ProjectManager.newProject() },
       { icon: "📂", label: "فتح مشروع", action: () => ProjectManager.open() },
       { icon: "💾", label: "حفظ", action: () => ProjectManager.save() },
