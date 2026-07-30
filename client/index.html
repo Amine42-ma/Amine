@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#0d1420" />
+  <title>Empire of Merchants — إمبراطورية التجار</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>⚖️</text></svg>" />
+</head>
+<body>
+  <canvas id="stage"></canvas>
+
+  <!-- ------------------------------------------------------------ login -->
+  <div id="gate" class="gate">
+    <div class="gate-card">
+      <div class="gate-brand">
+        <span class="gate-mark">⚖️</span>
+        <div>
+          <h1>إمبراطورية التجار</h1>
+          <p>Empire of Merchants</p>
+        </div>
+      </div>
+      <p class="gate-pitch" data-i18n="pitch"></p>
+      <form id="gate-form" autocomplete="off">
+        <label>
+          <span data-i18n="merchantName"></span>
+          <input id="gate-name" type="text" maxlength="18" required />
+        </label>
+        <label>
+          <span data-i18n="password"></span>
+          <input id="gate-pass" type="password" minlength="4" required />
+        </label>
+        <div class="gate-actions">
+          <button type="submit" class="btn btn-primary" id="gate-register" data-i18n="startEmpire"></button>
+          <button type="button" class="btn" id="gate-login" data-i18n="signIn"></button>
+        </div>
+        <p class="gate-error" id="gate-error"></p>
+      </form>
+      <button type="button" class="lang-toggle" id="gate-lang">EN / ع</button>
+    </div>
+  </div>
+
+  <!-- --------------------------------------------------------------- hud -->
+  <div id="hud" class="hud hidden">
+    <header class="topbar">
+      <div class="stat stat-gold">
+        <span class="stat-icon">🪙</span>
+        <div><b id="stat-gold">0</b><small data-i18n="gold"></small></div>
+      </div>
+      <div class="stat">
+        <span class="stat-icon">💼</span>
+        <div><b id="stat-worth">0</b><small data-i18n="netWorth"></small></div>
+      </div>
+      <div class="stat">
+        <span class="stat-icon">📦</span>
+        <div><b id="stat-cargo">0/0</b><small data-i18n="cargo"></small></div>
+      </div>
+      <div class="stat">
+        <span class="stat-icon">🏦</span>
+        <div><b id="stat-bank">0</b><small data-i18n="bank"></small></div>
+      </div>
+      <div class="stat stat-season">
+        <span class="stat-icon">🗓️</span>
+        <div><b id="stat-season">—</b><small data-i18n="season"></small></div>
+      </div>
+      <div class="topbar-spacer"></div>
+      <div class="price-ticker" id="ticker"></div>
+      <button class="icon-btn" id="btn-lang" title="Language">🌐</button>
+    </header>
+
+    <div class="events-strip" id="events-strip"></div>
+
+    <nav class="dock" id="dock"></nav>
+
+    <aside class="panel hidden" id="panel">
+      <header class="panel-head">
+        <h2 id="panel-title"></h2>
+        <button class="icon-btn" id="panel-close">✕</button>
+      </header>
+      <div class="panel-body" id="panel-body"></div>
+    </aside>
+
+    <div class="minimap-wrap">
+      <canvas id="minimap" width="200" height="200"></canvas>
+      <div class="minimap-label" id="minimap-label"></div>
+    </div>
+
+    <div class="nearby" id="nearby"></div>
+
+    <div class="chat">
+      <div class="chat-log" id="chat-log"></div>
+      <input id="chat-input" type="text" maxlength="240" data-i18n-ph="chatPlaceholder" />
+    </div>
+
+    <div class="toasts" id="toasts"></div>
+    <div class="hint" id="hint"></div>
+  </div>
+
+  <script type="module" src="/bundle.js"></script>
+</body>
+</html>

@@ -3,11 +3,12 @@ import {
 } from '../../shared/commodities.js';
 import {
   PRICE_ELASTICITY, MIN_PRICE_RATIO, MAX_PRICE_RATIO,
-  WORLD_TRADE_RATE, ANCHOR_MINUTES, BASE_SPREAD,
+  WORLD_TRADE_RATE, ANCHOR_MINUTES, MIN_MARKET_DEPTH, ECONOMY_SCALE, BASE_SPREAD,
 } from '../../shared/constants.js';
 import { SKILLS, skillFactor } from '../../shared/skills.js';
 import { staffBonus } from '../../shared/staff.js';
 import { clamp, dist } from '../../shared/util.js';
+import { curveExponent, priceFactor, slicesFor } from '../../shared/pricing.js';
 import type { GameState, Market, MarketStock, Player } from '../game/state.js';
 import type { Settlement } from '../world/generate.js';
 import { modifiersFor, type EventModifiers } from './events.js';
@@ -101,7 +102,9 @@ export function createMarket(state: GameState, s: Settlement): Market {
   const goods = {} as Record<CommodityId, MarketStock>;
   for (const id of COMMODITY_IDS) {
     const def = COMMODITIES[id];
-    const production = (native[id] ?? 0) * popScale;
+    // Production scales with the same factor as demand, so the price a region
+    // settles at depends only on its surplus ratio, not on the world's size.
+    const production = (native[id] ?? 0) * ECONOMY_SCALE * popScale;
     // Everyone eats; only wealthy places buy jewelry.
     const appetite =
       def.category === 'food' ? 6.5
@@ -110,13 +113,24 @@ export function createMarket(state: GameState, s: Settlement): Market {
       : def.category === 'industrial' ? 1.6
       : 0.22;
     const tierDamp = 1 / (1 + def.tier * 0.6);
-    const consumption = Math.max(0.05, appetite * tierDamp * popScale * (s.kind === 'city' ? 1.4 : 1));
-    const anchor = Math.max(20, consumption * ANCHOR_MINUTES);
+    const consumption = Math.max(
+      0.05,
+      appetite * ECONOMY_SCALE * tierDamp * popScale * (s.kind === 'city' ? 1.4 : 1),
+    );
+    const k = curveExponent(id);
+    const ratio = equilibriumRatio(production, consumption);
+    // Raise the anchor until the *equilibrium stock* clears the depth floor.
+    // Scarce goods sit far below their anchor, so flooring the anchor alone
+    // would leave them with almost nothing on the shelf.
+    const anchor = Math.max(
+      consumption * ANCHOR_MINUTES,
+      MIN_MARKET_DEPTH * Math.pow(ratio, 1 / k),
+    );
 
     goods[id] = {
       // Start each market already at its equilibrium so prices are dispersed
       // from the very first tick instead of converging out of a flat start.
-      stock: equilibriumStock(anchor, production, consumption, curveExponent(id)),
+      stock: equilibriumStock(anchor, production, consumption, k),
       anchor,
       consumption,
       production,
@@ -129,26 +143,29 @@ export function createMarket(state: GameState, s: Settlement): Market {
   return { settlementId: s.id, goods, tariff };
 }
 
-/** How sharply this good's price responds to scarcity. */
-function curveExponent(id: CommodityId): number {
-  return PRICE_ELASTICITY * COMMODITIES[id].volatility;
-}
-
 /** Price as a multiple of the world base price, from stock alone. */
 function priceRatio(g: MarketStock, id: CommodityId): number {
-  const raw = Math.pow(g.anchor / Math.max(1, g.stock), curveExponent(id));
-  return clamp(raw, MIN_PRICE_RATIO, MAX_PRICE_RATIO);
+  return priceFactor(g.anchor, g.stock, curveExponent(id));
 }
 
 /**
- * The stock level where local production, local consumption and world trade
- * balance out. Surplus regions settle below the anchor (cheap), deficit regions
- * above it (expensive) — that gap is the whole game.
+ * The price a settlement settles at once local production, local consumption and
+ * off-map trade balance. A place that produces twice what it eats lands well
+ * below the world base price; one that produces none lands well above. That gap
+ * between towns is the entire reason to move goods.
  */
+export function equilibriumRatio(production: number, consumption: number): number {
+  const throughput = Math.max(0.0001, consumption + production);
+  return clamp(
+    1 + (consumption - production) / (throughput * WORLD_TRADE_RATE),
+    MIN_PRICE_RATIO,
+    MAX_PRICE_RATIO,
+  );
+}
+
+/** The stock level corresponding to that equilibrium price. */
 function equilibriumStock(anchor: number, production: number, consumption: number, k: number): number {
-  const netDemand = consumption - production;
-  const ratio = clamp(1 + netDemand / Math.max(0.0001, anchor * WORLD_TRADE_RATE), MIN_PRICE_RATIO, MAX_PRICE_RATIO);
-  return Math.max(1, anchor * Math.pow(ratio, -1 / k));
+  return Math.max(1, anchor * Math.pow(equilibriumRatio(production, consumption), -1 / k));
 }
 
 /** The unmodified mid price of one unit at the market's current stock level. */
@@ -218,7 +235,9 @@ export function executeTrade(
   const spread = spreadFor(player);
   const tariff = side === 'buy' ? tariffFor(state, market, player, s) : 0;
 
-  const slices = clamp(Math.ceil(quantity / 5), 1, 24);
+  // Identical slicing to shared/pricing.ts, so the client's preview of this
+  // order and the server's execution of it cannot drift apart.
+  const slices = slicesFor(quantity);
   const per = quantity / slices;
   let total = 0;
   let filled = 0;
@@ -259,7 +278,10 @@ export function stepEconomy(state: GameState, dtMs: number) {
 
       // Caravans from off-map: they arrive where prices are high and leave where
       // they are low, which is what stops any single market running away forever.
-      const flow = g.anchor * WORLD_TRADE_RATE * (priceRatio(g, id) - 1) * minutes;
+      // Scaled by throughput rather than depth, so deep markets stay just as
+      // price-responsive as thin ones.
+      const throughput = g.consumption + g.production;
+      const flow = throughput * WORLD_TRADE_RATE * (priceRatio(g, id) - 1) * minutes;
 
       g.stock = clamp(g.stock + produced - consumed + flow, 1, g.anchor * 12);
     }

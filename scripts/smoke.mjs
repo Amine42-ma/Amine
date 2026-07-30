@@ -1,29 +1,31 @@
 /**
- * End-to-end smoke test: drives a real WebSocket client through the core loop —
- * register, travel, trade, build, hire, bank, incorporate — and asserts the
- * server's replies make sense. Run with: node scripts/smoke.mjs [url]
+ * End-to-end smoke test. Drives a real WebSocket client through the loop a new
+ * player actually plays: register, travel, find an arbitrage route, run it for
+ * profit, then build and staff a shop and check it earns.
+ *
+ *   node scripts/smoke.mjs [ws://host/ws]
  */
 import { WebSocket } from 'ws';
+import { COMMODITIES } from '../dist/shared/commodities.js';
+import { curveExponent, estimateTrade } from '../dist/shared/pricing.js';
 
 const url = process.argv[2] ?? 'ws://localhost:8099/ws';
-const ws = new WebSocket(url);
+const httpBase = url.replace(/^ws/, 'http').replace(/\/ws$/, '');
 
+const ws = new WebSocket(url);
 const inbox = [];
 let self = null;
 let world = null;
-let market = null;
+const markets = new Map();
 let failures = 0;
 
 const send = (msg) => ws.send(JSON.stringify(msg));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 function check(label, condition, detail = '') {
-  if (condition) {
-    console.log(`  ✓ ${label}`);
-  } else {
-    failures++;
-    console.log(`  ✗ ${label} ${detail}`);
-  }
+  if (condition) console.log(`  ✓ ${label}`);
+  else { failures++; console.log(`  ✗ ${label} ${detail}`); }
 }
 
 async function waitFor(predicate, timeoutMs = 8000) {
@@ -31,7 +33,7 @@ async function waitFor(predicate, timeoutMs = 8000) {
   while (Date.now() < deadline) {
     const hit = inbox.find(predicate);
     if (hit) return hit;
-    await sleep(50);
+    await sleep(40);
   }
   return null;
 }
@@ -39,11 +41,52 @@ async function waitFor(predicate, timeoutMs = 8000) {
 ws.on('message', (raw) => {
   const msg = JSON.parse(String(raw));
   inbox.push(msg);
+  if (inbox.length > 400) inbox.splice(0, 200);
   if (msg.t === 'self') self = msg.self;
   if (msg.t === 'authOk') world = msg.world;
-  if (msg.t === 'market') market = msg.market;
-  if (msg.t === 'toast') console.log(`    · toast[${msg.level}] ${msg.en}`);
+  if (msg.t === 'market') markets.set(msg.market.settlementId, msg.market);
+  if (msg.t === 'toast' && msg.level !== 'info') console.log(`    · ${msg.level}: ${msg.en}`);
 });
+
+/** Walks to a settlement the same way the browser client does: small steps. */
+async function travelTo(target) {
+  let guard = 0;
+  while (dist(self, target) > 4 && guard++ < 900) {
+    const dx = target.x - self.x;
+    const dy = target.y - self.y;
+    const d = Math.hypot(dx, dy) || 1;
+    // 2.8 tiles/s is the server's speed cap; stay under it.
+    const step = Math.min(0.24, d);
+    self.x += (dx / d) * step;
+    self.y += (dy / d) * step;
+    send({ t: 'move', x: self.x, y: self.y });
+    await sleep(80);
+  }
+  send({ t: 'requestMarket', settlementId: target.id });
+  await sleep(250);
+  return dist(self, target);
+}
+
+/** Achievements are granted on the next world tick, not synchronously. */
+async function waitForAchievement(id, timeoutMs = 4000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (inbox.some((m) => m.t === 'achievement' && m.id === id)) return true;
+    const latest = [...inbox].reverse().find((m) => m.t === 'self');
+    if (latest?.self.achievements.includes(id)) return true;
+    await sleep(150);
+  }
+  return false;
+}
+
+async function refreshSelf() {
+  inbox.length = 0;
+  send({ t: 'requestMarket', settlementId: world.settlements[0].id });
+  await waitFor((m) => m.t === 'self', 3000);
+  const latest = [...inbox].reverse().find((m) => m.t === 'self');
+  if (latest) self = latest.self;
+  return self;
+}
 
 ws.on('open', async () => {
   const name = `smoke${Math.floor(Math.random() * 1e6)}`;
@@ -52,63 +95,145 @@ ws.on('open', async () => {
   send({ t: 'auth', name, password: 'testing123', mode: 'register' });
   const ok = await waitFor((m) => m.t === 'authOk');
   check('registration succeeds', !!ok);
-  check('world metadata delivered', !!world && world.settlements.length > 10, `settlements=${world?.settlements?.length}`);
+  check('world metadata delivered', !!world && world.settlements.length > 10,
+    `settlements=${world?.settlements?.length}`);
   check('starting gold granted', self && self.gold > 0, `gold=${self?.gold}`);
+  if (!ok) { ws.close(); process.exit(1); }
 
-  // Walk to the nearest settlement in small steps, like the real client does.
-  const target = world.settlements
-    .map((s) => ({ s, d: Math.hypot(s.x - self.x, s.y - self.y) }))
-    .sort((a, b) => a.d - b.d)[0].s;
-  console.log(`\n  travelling to ${target.name_en} (${target.x},${target.y})\n`);
+  /* ------------------------------------------------------------- travel */
 
-  let guard = 0;
-  while (Math.hypot(target.x - self.x, target.y - self.y) > 3 && guard++ < 400) {
-    const dx = target.x - self.x;
-    const dy = target.y - self.y;
-    const d = Math.hypot(dx, dy) || 1;
-    const step = Math.min(2.5, d);
-    send({ t: 'move', x: self.x + (dx / d) * step, y: self.y + (dy / d) * step });
-    await sleep(60);
-    send({ t: 'ping', at: Date.now() });
-    await sleep(20);
-    const latest = [...inbox].reverse().find((m) => m.t === 'self');
-    if (latest) self = latest.self;
-    // The server only resends self on non-move commands, so nudge it.
-    if (guard % 5 === 0) send({ t: 'requestMarket', settlementId: target.id });
-    await sleep(20);
-    const s = [...inbox].reverse().find((m) => m.t === 'self');
-    if (s) self = s.self;
-  }
-  check('player reached the settlement', Math.hypot(target.x - self.x, target.y - self.y) <= 12,
-    `distance=${Math.hypot(target.x - self.x, target.y - self.y).toFixed(1)}`);
+  const byDistance = [...world.settlements].sort((a, b) => dist(self, a) - dist(self, b));
+  const home = byDistance[0];
+  console.log(`\n  travelling to ${home.name_en}…`);
+  const arrived = await travelTo(home);
+  check('player reached the first settlement', arrived <= 12, `distance=${arrived.toFixed(1)}`);
 
-  inbox.length = 0;
-  send({ t: 'requestMarket', settlementId: target.id });
-  await waitFor((m) => m.t === 'market');
+  const market = markets.get(home.id);
   check('market quotes returned', market && market.quotes.length > 15, `quotes=${market?.quotes?.length}`);
   const cheapest = [...market.quotes].sort((a, b) => a.buy - b.buy)[0];
   check('prices are positive', cheapest.buy > 0 && cheapest.sell > 0, JSON.stringify(cheapest));
   check('buy price exceeds sell price (spread)', cheapest.buy > cheapest.sell);
+  check('prices differ from the flat base price', market.quotes.some((q) => Math.abs(q.trend - 1) > 0.08),
+    `trends=${market.quotes.slice(0, 5).map((q) => q.trend).join(',')}`);
 
-  // Buy, then immediately sell back: the spread means we must end up poorer.
-  const goldBefore = self.gold;
-  inbox.length = 0;
-  send({ t: 'trade', settlementId: target.id, commodity: cheapest.id, quantity: 10, side: 'buy' });
-  await waitFor((m) => m.t === 'self');
-  self = [...inbox].reverse().find((m) => m.t === 'self').self;
-  check('goods arrived in cargo', (self.inventory.items[cheapest.id] ?? 0) > 0,
-    JSON.stringify(self.inventory.items));
-  check('gold was spent', self.gold < goldBefore, `${goldBefore} → ${self.gold}`);
+  /* -------------------------------------------------- find an arbitrage */
 
-  inbox.length = 0;
-  send({ t: 'trade', settlementId: target.id, commodity: cheapest.id, quantity: 10, side: 'sell' });
-  await waitFor((m) => m.t === 'self');
-  self = [...inbox].reverse().find((m) => m.t === 'self').self;
-  check('round trip loses money to the spread', self.gold < goldBefore, `${goldBefore} → ${self.gold}`);
-  check('first_trade achievement granted', self.achievements.includes('first_trade'),
-    JSON.stringify(self.achievements));
+  // Scout a realistic search radius — the Atlas panel lists every settlement
+  // with its distance, so a player would not stop at the nearest two.
+  const neighbours = byDistance.slice(1, 9);
+  for (const s of neighbours) send({ t: 'requestMarket', settlementId: s.id });
+  await sleep(900);
 
-  // Bank: deposit, borrow, repay.
+  // Score routes the way the in-game preview does: on the *executed* average
+  // price for a realistic cart-load, not the headline single-unit quote.
+  const budget = self.gold;
+  let best = null;
+  for (const s of neighbours) {
+    const away = markets.get(s.id);
+    if (!away) continue;
+    for (const here of market.quotes) {
+      const there = away.quotes.find((q) => q.id === here.id);
+      if (!there) continue;
+      const good = COMMODITIES[here.id];
+      const units = Math.min(
+        Math.floor(budget / Math.max(1, here.buy)),
+        Math.floor(self.inventory.capacity / good.weight),
+      );
+      // Skip goods a starting purse cannot buy even one of.
+      if (units < 1) continue;
+      const k = curveExponent(here.id);
+      const cost = estimateTrade(here.buy, here.stock, here.baseline, units, 'buy', k);
+      const revenue = estimateTrade(there.sell, there.stock, there.baseline, units, 'sell', k);
+      const profit = revenue.total - cost.total;
+      if (profit <= 0) continue;
+      const score = profit / Math.max(1, dist(home, s));
+      if (!best || score > best.score) {
+        best = {
+          to: s, id: here.id, units, profit, score,
+          buy: cost.average, sell: revenue.average,
+        };
+      }
+    }
+  }
+  check('a profitable route exists between nearby settlements', !!best,
+    'no positive-margin pair found among the eight nearest settlements');
+
+  if (best) {
+    console.log(
+      `\n  route: ${best.id} — buy ${best.buy.toFixed(1)} in ${home.name_en}, ` +
+      `sell ${best.sell.toFixed(1)} in ${best.to.name_en}\n`,
+    );
+
+    const startingGold = self.gold;
+    const margins = [];
+
+    // Run the route a few times, the way a player grinding their first shop
+    // would. Each pass should earn — and each pass should earn a little less,
+    // because buying here and selling there pushes the two prices together.
+    for (let trip = 1; trip <= 3; trip++) {
+      const goldBefore = self.gold;
+      // Always run the route in its profitable direction, walking back empty.
+      if (dist(self, home) > 5) await travelTo(home);
+
+      send({ t: 'requestMarket', settlementId: home.id });
+      await sleep(300);
+      const source = markets.get(home.id);
+      const quote = source.quotes.find((q) => q.id === best.id);
+      const affordable = Math.min(
+        Math.floor(self.gold / Math.max(1, quote.buy)),
+        Math.floor(self.inventory.capacity / COMMODITIES[best.id].weight),
+      );
+      if (affordable < 1) break;
+
+      // A real player reads the profit preview before committing. If our own
+      // earlier trades have already closed the gap, the route is done.
+      send({ t: 'requestMarket', settlementId: best.to.id });
+      await sleep(300);
+      const destQuote = markets.get(best.to.id).quotes.find((q) => q.id === best.id);
+      const k = curveExponent(best.id);
+      const projected =
+        estimateTrade(destQuote.sell, destQuote.stock, destQuote.baseline, affordable, 'sell', k).total -
+        estimateTrade(quote.buy, quote.stock, quote.baseline, affordable, 'buy', k).total;
+      if (projected <= 0) {
+        console.log(`    trip ${trip}: route exhausted (projected ${projected.toFixed(0)}), stopping`);
+        break;
+      }
+
+      inbox.length = 0;
+      send({ t: 'trade', settlementId: home.id, commodity: best.id, quantity: affordable, side: 'buy' });
+      await waitFor((m) => m.t === 'self');
+      self = [...inbox].reverse().find((m) => m.t === 'self').self;
+
+      if (trip === 1) {
+        check('goods loaded into the cart', (self.inventory.items[best.id] ?? 0) > 0,
+          JSON.stringify(self.inventory.items));
+        check('cargo never exceeds capacity', self.inventory.used <= self.inventory.capacity + 0.01,
+          `used=${self.inventory.used}/${self.inventory.capacity}`);
+        check('gold was spent', self.gold < goldBefore, `${goldBefore} → ${self.gold}`);
+      }
+
+      await travelTo(best.to);
+      inbox.length = 0;
+      send({ t: 'trade', settlementId: best.to.id, commodity: best.id, quantity: 1e6, side: 'sell' });
+      await waitFor((m) => m.t === 'self');
+      self = [...inbox].reverse().find((m) => m.t === 'self').self;
+
+      const profit = self.gold - goldBefore;
+      margins.push(profit);
+      console.log(`    trip ${trip}: ${goldBefore.toFixed(0)} → ${self.gold.toFixed(0)} (${profit >= 0 ? '+' : ''}${profit.toFixed(0)})`);
+    }
+
+    check('every committed run turned a profit', margins.length > 0 && margins.every((m) => m > 0),
+      `margins=${margins.map((m) => m.toFixed(0)).join(', ')}`);
+    check('trading a route erodes its own margin', margins.length < 2 || margins.at(-1) < margins[0],
+      `first=${margins[0]?.toFixed(0)} last=${margins.at(-1)?.toFixed(0)}`);
+    check('the player is meaningfully richer', self.gold > startingGold * 1.2,
+      `${startingGold.toFixed(0)} → ${self.gold.toFixed(0)}`);
+    check('first_trade achievement granted', self.achievements.includes('first_trade'));
+  }
+
+  /* --------------------------------------------------------------- bank */
+
   inbox.length = 0;
   send({ t: 'bankDeposit', amount: 100 });
   await waitFor((m) => m.t === 'self');
@@ -128,24 +253,34 @@ ws.on('open', async () => {
   check('loan repaid in full', self.loans.length === 0, JSON.stringify(self.loans));
   check('credit score improved', self.creditScore > 600, `score=${self.creditScore}`);
 
-  // Hire staff, then build something and staff it.
+  /* -------------------------------------------------------------- staff */
+
   inbox.length = 0;
   send({ t: 'staffHire', worker: 'laborer', count: 2 });
   await waitFor((m) => m.t === 'self');
   self = [...inbox].reverse().find((m) => m.t === 'self').self;
   check('staff hired', (self.staff.laborer ?? 0) === 2, JSON.stringify(self.staff));
 
-  inbox.length = 0;
-  send({ t: 'loanTake', amount: 9000 });
-  await waitFor((m) => m.t === 'self');
-  send({ t: 'buildingBuy', settlementId: target.id, defId: 'small_shop' });
-  await sleep(300);
-  self = [...inbox].reverse().find((m) => m.t === 'self').self;
-  check('shop purchased', self.buildings.some((b) => b.defId === 'small_shop'),
-    JSON.stringify(self.buildings.map((b) => b.defId)));
-  check('first_shop achievement granted', self.achievements.includes('first_shop'));
+  /* --------------------------------------------------------------- shop */
 
+  const at = best ? best.to : home;
+  const shopCost = 6000 + at.plotPrice;
+  if (self.gold < shopCost) {
+    // Borrow the shortfall the way a player would, up to the credit limit.
+    inbox.length = 0;
+    send({ t: 'loanTake', amount: Math.ceil(shopCost - self.gold) });
+    await waitFor((m) => m.t === 'self');
+    self = [...inbox].reverse().find((m) => m.t === 'self').self;
+  }
+
+  inbox.length = 0;
+  send({ t: 'buildingBuy', settlementId: at.id, defId: 'small_shop' });
+  await sleep(400);
+  self = [...inbox].reverse().find((m) => m.t === 'self')?.self ?? self;
   const shop = self.buildings.find((b) => b.defId === 'small_shop');
+  check('shop purchased', !!shop, `gold=${self.gold.toFixed(0)} needed=${shopCost} buildings=${self.buildings.length}`);
+  check('first_shop achievement granted', await waitForAchievement('first_shop'));
+
   if (shop) {
     inbox.length = 0;
     send({ t: 'buildingStaff', buildingId: shop.id, worker: 'laborer', delta: 2 });
@@ -154,52 +289,67 @@ ws.on('open', async () => {
     const staffed = self.buildings.find((b) => b.id === shop.id);
     check('workers assigned to the shop', (staffed?.workers.laborer ?? 0) === 2, JSON.stringify(staffed?.workers));
 
-    // Stock the shop and confirm it earns while we wait.
+    // Stock it with the cheapest local good, borrowing working capital first.
     inbox.length = 0;
-    send({ t: 'trade', settlementId: target.id, commodity: cheapest.id, quantity: 40, side: 'buy' });
+    send({ t: 'loanTake', amount: 4000 });
     await waitFor((m) => m.t === 'self');
-    send({ t: 'buildingTransfer', buildingId: shop.id, commodity: cheapest.id, quantity: 40, dir: 'in' });
-    await sleep(400);
+    self = [...inbox].reverse().find((m) => m.t === 'self').self;
+
+    send({ t: 'requestMarket', settlementId: at.id });
+    await sleep(300);
+    const local = markets.get(at.id);
+    const stockable = [...local.quotes].sort((a, b) => a.trend - b.trend)[0];
+    const units = Math.max(1, Math.floor((self.gold * 0.7) / Math.max(1, stockable.buy)));
+
+    inbox.length = 0;
+    send({ t: 'trade', settlementId: at.id, commodity: stockable.id, quantity: units, side: 'buy' });
+    await waitFor((m) => m.t === 'self');
+    self = [...inbox].reverse().find((m) => m.t === 'self').self;
+    const carried = Math.floor(self.inventory.items[stockable.id] ?? 0);
+    check('stock bought for the shop', carried > 0,
+      `gold=${self.gold.toFixed(0)} wanted=${units} of ${stockable.id} @${stockable.buy}`);
+
+    send({ t: 'buildingTransfer', buildingId: shop.id, commodity: stockable.id, quantity: carried, dir: 'in' });
+    await sleep(500);
     self = [...inbox].reverse().find((m) => m.t === 'self').self;
     const stocked = self.buildings.find((b) => b.id === shop.id);
-    check('goods transferred into the shop', (stocked?.storage[cheapest.id] ?? 0) > 0,
+    check('goods transferred into the shop', (stocked?.storage[stockable.id] ?? 0) > 0,
       JSON.stringify(stocked?.storage));
 
     const goldPreSales = self.gold;
-    console.log('\n  waiting 6s for retail sales to accrue...\n');
-    await sleep(6000);
-    inbox.length = 0;
-    send({ t: 'ping', at: Date.now() });
-    send({ t: 'requestMarket', settlementId: target.id });
-    await waitFor((m) => m.t === 'self', 4000);
-    const after = [...inbox].reverse().find((m) => m.t === 'self');
-    if (after) self = after.self;
-    check('shop generated retail revenue', self.gold > goldPreSales, `${goldPreSales} → ${self.gold}`);
+    console.log('\n  waiting 8s for retail sales to accrue…\n');
+    await sleep(8000);
+    await refreshSelf();
+    check('shop generated retail revenue', self.gold > goldPreSales,
+      `${goldPreSales.toFixed(0)} → ${self.gold.toFixed(0)}`);
   }
 
-  // Convoys need two visited settlements; visiting is proximity based, so use
-  // the route the player has actually seen.
+  /* ------------------------------------------------------------ convoys */
+
   if (self.visitedSettlements.length >= 2) {
     inbox.length = 0;
     const [a, b] = self.visitedSettlements;
     send({ t: 'convoyCreate', vehicleId: 'cart', fromId: a, toId: b, commodity: 'wheat', quantity: 20, autoRepeat: true });
     await waitFor((m) => m.t === 'self');
     self = [...inbox].reverse().find((m) => m.t === 'self').self;
-    check('convoy route created', self.convoys.length === 1, JSON.stringify(self.convoys.map((c) => c.phase)));
+    check('convoy route created', self.convoys.length === 1,
+      JSON.stringify(self.convoys.map((c) => c.phase)));
+    check('first_convoy achievement granted', await waitForAchievement('first_convoy'));
   } else {
-    console.log('  · only one settlement visited, skipping convoy check');
+    check('visited at least two settlements', false, `visited=${self.visitedSettlements.length}`);
   }
 
-  // Exchange.
+  /* ----------------------------------------------------------- exchange */
+
   inbox.length = 0;
   send({ t: 'requestExchange' });
   const exchange = await waitFor((m) => m.t === 'exchange');
-  check('exchange snapshot returned', !!exchange, JSON.stringify(exchange ?? {}).slice(0, 80));
+  check('exchange snapshot returned', !!exchange);
 
-  // World simulation is actually running.
-  const health = await fetch(url.replace('ws://', 'http://').replace('/ws', '/api/health')).then((r) => r.json());
+  const health = await fetch(`${httpBase}/api/health`).then((r) => r.json());
   check('server reports live NPC population', health.players > 40, `players=${health.players}`);
   check('price index is sane', health.priceIndex > 0.5 && health.priceIndex < 1.8, `index=${health.priceIndex}`);
+  check('world simulation is running buildings', health.buildings > 0, `buildings=${health.buildings}`);
 
   console.log(`\n${failures === 0 ? '✅ all smoke checks passed' : `❌ ${failures} check(s) failed`}\n`);
   ws.close();

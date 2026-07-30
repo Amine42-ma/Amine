@@ -35,12 +35,42 @@ export const MAX_PRICE_RATIO = 2.5;
  * price has drifted from the global base: expensive towns attract imports, glutted
  * ones export. This is what gives every settlement a *different* equilibrium price
  * instead of every market converging on the same number.
+ *
+ * It is expressed as a fraction of the good's local throughput per minute, per
+ * unit of price deviation — deliberately independent of market depth below, so
+ * that making markets deeper does not quietly flatten every price in the world.
  */
-export const WORLD_TRADE_RATE = 0.1;
-/** Stock at which a good sells for exactly its base price, as a multiple of demand. */
-export const ANCHOR_MINUTES = 30;
-/** Merchant spread: the gap between a city's buy and sell price, before negotiation. */
-export const BASE_SPREAD = 0.09;
+export const WORLD_TRADE_RATE = 1.8;
+
+/**
+ * Overall size of every settlement's trade, in units per minute. This is what
+ * makes a drained market refill in minutes rather than hours: restoring flow is
+ * proportional to throughput, so a world that trades briskly also heals briskly.
+ */
+export const ECONOMY_SCALE = 20;
+
+/**
+ * Stock at which a good sells for exactly its base price, expressed as minutes
+ * of local demand. Together with MIN_MARKET_DEPTH this sets only how hard a
+ * single order pushes the price, not where the price settles.
+ */
+export const ANCHOR_MINUTES = 20;
+/**
+ * Floor on how many units a settlement actually holds at equilibrium. Applied to
+ * *stock*, not to the anchor: an expensive town is expensive precisely because
+ * its stock sits far below its anchor, so flooring the anchor leaves the real
+ * inventory paper-thin and one cartload still swings the price by half.
+ *
+ * Cities exceed this floor through sheer demand, so a cart barely moves them
+ * while a hamlet feels every crate — which is the intended gradient.
+ */
+export const MIN_MARKET_DEPTH = 600;
+/**
+ * Merchant spread: the gap between a city's buy and sell price, before the
+ * negotiation skill narrows it. Doubled on a round trip, so this is the single
+ * biggest tax on trading — keep it low enough that ordinary routes clear it.
+ */
+export const BASE_SPREAD = 0.06;
 
 /** Bank tuning (annualised rates, applied per-tick pro rata). */
 export const DEPOSIT_APR = 0.04;
