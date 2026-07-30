@@ -10,11 +10,12 @@
   "scripts": {
     "build:server": "tsc -p tsconfig.server.json",
     "build:client": "node scripts/build-client.mjs",
-    "build": "npm run build:server && npm run build:client",
+    "build": "npm run build:server && npm run build:client && npm run build:standalone",
     "start": "node dist/server/index.js",
     "dev": "node scripts/dev.mjs",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit",
-    "test": "npm run build && node --test dist/tests/*.test.js"
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "build:standalone": "node scripts/build-standalone.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

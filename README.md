@@ -10,6 +10,10 @@ is a function of how far that stock sits from local demand. Production, convoys,
 NPC merchants, world events and your own trades all move stock — and prices
 follow.
 
+It ships in two forms.
+
+**As a server**, for real multiplayer — many players in one persistent world:
+
 ```
 npm install
 npm run build
@@ -18,11 +22,29 @@ npm start          # → http://localhost:8080
 
 The world runs 24/7, saves itself every 30 seconds, and survives restarts.
 
+**As a single HTML file**, for playing on your own with no setup at all:
+
+```
+npm install
+npm run build:standalone   # → dist/empire-of-merchants.html
+```
+
+Download that one file, double-click it, and the whole game runs in the browser
+— offline, no server, no network, nothing to install. It is the *same*
+simulation: identical world generation, economy, production chains, banking,
+exchange, world events and 48 rival NPC merchants, with the WebSocket replaced
+by a direct call into a world hosted in the page. Progress is kept in the
+browser's local storage; the ↻ button in the corner starts a new world.
+
+The only thing a single file cannot do is put other humans in your world, so
+direct contracts and alliances need the server build to be useful.
+
 ---
 
 ## Contents
 
 - [Playing](#playing)
+- [The two builds](#the-two-builds)
 - [How the economy works](#how-the-economy-works)
 - [Systems](#systems)
 - [Architecture](#architecture)
@@ -65,6 +87,24 @@ the top bar).
 6. From there: warehouses, convoy routes that run themselves, factories,
    a company on the stock exchange, ports, ships, and eventually a global
    corporation.
+
+---
+
+## The two builds
+
+| | Server build | Single-file build |
+| --- | --- | --- |
+| Run with | `npm start` | double-click the `.html` |
+| Other players | Yes — one shared persistent world | NPC merchants only |
+| Simulation | Identical | Identical |
+| Runs offline | No | Yes |
+| Saves to | `data/world.json` | browser local storage |
+| Contracts & alliances | Fully useful | Present but no humans to deal with |
+
+Both are compiled from the same `server/sim/*` and `client/*` sources — there is
+no second, simplified copy of the game to drift out of sync. `client/net.ts`
+exposes a `Transport` interface, and the single-file entry point plugs an
+in-page `LocalHost` into it in place of the socket.
 
 ---
 
@@ -170,6 +210,9 @@ server/     Authoritative simulation. Clients never compute game state.
   persistence.ts      atomic JSON snapshots
 
 client/     Canvas renderer + UI. No image assets: tiles are drawn procedurally.
+  boot.ts     shared entry: render loop, input, server messages → store
+  net.ts      transport: a WebSocket, or an in-page world
+  standalone/ the single-file build — hosts the whole simulation in the browser
   render/     tile atlas, camera, scene, minimap
   ui/panels/  market, build, empire, convoys, fleet, staff, bank,
               exchange, deals, skills, achievements, ranking, atlas
@@ -191,10 +234,11 @@ small.
 ## Development
 
 ```
-npm run dev          # rebuild client on change + run the server
-npm run build        # compile server and bundle client
-npm run typecheck    # both tsconfigs, no emit
-npm test             # build, then run the unit suite
+npm run dev              # rebuild client on change + run the server
+npm run build            # server, client and the single-file build
+npm run build:standalone # just dist/empire-of-merchants.html
+npm run typecheck        # both tsconfigs, no emit
+npm test                 # build, then run the unit suite
 ```
 
 Helper scripts:

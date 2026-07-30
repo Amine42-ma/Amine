@@ -1,4 +1,3 @@
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { STARTING_GOLD, STARTING_CAPACITY, PAYROLL_INTERVAL_MS } from '../../shared/constants.js';
 import { SKILL_IDS, type SkillId } from '../../shared/skills.js';
 import { VEHICLES } from '../../shared/vehicles.js';
@@ -44,24 +43,6 @@ export function makePlayer(id: string, name: string, x: number, y: number): Play
     lastPayrollCost: 0,
     tradeVolume: {},
   };
-}
-
-export function hashPassword(password: string): string {
-  const salt = randomBytes(16).toString('hex');
-  const hash = scryptSync(password, salt, 32).toString('hex');
-  return `${salt}:${hash}`;
-}
-
-export function verifyPassword(password: string, stored: string): boolean {
-  const [salt, hash] = stored.split(':');
-  if (!salt || !hash) return false;
-  const attempt = scryptSync(password, salt, 32);
-  const expected = Buffer.from(hash, 'hex');
-  return attempt.length === expected.length && timingSafeEqual(attempt, expected);
-}
-
-export function newToken(): string {
-  return randomBytes(24).toString('hex');
 }
 
 /** Cargo the player can carry: their vehicle plus every warehouse they own. */

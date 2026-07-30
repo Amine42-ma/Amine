@@ -3,7 +3,8 @@ import type { ClientMessage, ServerMessage } from '../shared/protocol.js';
 import { newId } from '../shared/util.js';
 import type { GameState, Player } from './game/state.js';
 import { findPlayerByName, findPlayerByToken } from './game/state.js';
-import { hashPassword, makePlayer, newToken, verifyPassword } from './game/player.js';
+import { makePlayer } from './game/player.js';
+import { hashPassword, newToken, verifyPassword } from './game/auth.js';
 import { handleCommand, type Session } from './game/commands.js';
 import { startingSettlement } from './game/rules.js';
 import {
