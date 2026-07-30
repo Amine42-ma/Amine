@@ -169,8 +169,11 @@ export const BUILDINGS: Record<string, BuildingDef> = {
 
   /* ---------------------------------------------------------------------- shops */
   small_shop: {
+    // The first rung of the ladder: cheap enough that a merchant who has run a
+    // few good routes can reach it, since it is what turns active trading into
+    // income that keeps arriving while you are offline.
     id: 'small_shop', ar: 'متجر صغير', en: 'Small Shop', icon: '🏪', kind: 'shop',
-    cost: 6_000, upkeep: 45, jobs: 2, markup: 0.35, salesRate: 6,
+    cost: 4_500, upkeep: 45, jobs: 2, markup: 0.35, salesRate: 6,
     description_ar: 'أول خطوة نحو الإمبراطورية.', description_en: 'The first step of an empire.',
   },
   medium_shop: {

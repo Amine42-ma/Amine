@@ -8,6 +8,9 @@
 import { WebSocket } from 'ws';
 import { COMMODITIES } from '../dist/shared/commodities.js';
 import { curveExponent, estimateTrade } from '../dist/shared/pricing.js';
+import { BUILDINGS } from '../dist/shared/buildings.js';
+
+const SMALL_SHOP_COST = BUILDINGS.small_shop.cost;
 
 const url = process.argv[2] ?? 'ws://localhost:8099/ws';
 const httpBase = url.replace(/^ws/, 'http').replace(/\/ws$/, '');
@@ -228,7 +231,19 @@ ws.on('open', async () => {
     for (let trip = 1; trip <= 10; trip++) {
       const result = await runRoute(route);
 
-      if (result.exhausted) {
+      // A good merchant leaves a route while it is still worth something rather
+      // than grinding it flat, so treat a collapsed margin as exhausted too.
+      const spent = sameRouteMargins.length > 0
+        && result.profit / Math.max(1, result.units) < sameRouteMargins[0] * 0.4;
+
+      if (result.exhausted || spent) {
+        if (spent && !result.exhausted) {
+          if (routesUsed === 0) sameRouteMargins.push(result.profit / result.units);
+          console.log(
+            `    trip ${trip} (${route.id}): ${result.goldBefore.toFixed(0)} → ${self.gold.toFixed(0)} ` +
+            `(+${result.profit.toFixed(0)}, margin spent)`,
+          );
+        }
         const next = scoutRoute(
           world.settlements.find((s) => dist(self, s) < 12) ?? route.to,
           neighbours,
@@ -302,11 +317,16 @@ ws.on('open', async () => {
 
   /* --------------------------------------------------------------- shop */
 
-  // Where the player currently stands — you can only build where you are.
-  const at = world.settlements
-    .filter((s) => dist(self, s) < 12)
-    .sort((a, b) => dist(self, a) - dist(self, b))[0] ?? home;
-  const shopCost = 6000 + at.plotPrice;
+  // Land is far cheaper in a village than in a capital, so a first shop goes up
+  // in the cheapest town the player has actually seen — then walk there.
+  const at = self.visitedSettlements
+    .map((id) => world.settlements.find((s) => s.id === id))
+    .filter((s) => s && s.kind !== 'island' && s.plotsUsed < s.plots)
+    .sort((a, b) => a.plotPrice - b.plotPrice)[0]
+    ?? home;
+  console.log(`\n  building in ${at.name_en} (plot ${at.plotPrice})…\n`);
+  await travelTo(at);
+  const shopCost = SMALL_SHOP_COST + at.plotPrice;
 
   // Borrow the shortfall, which is exactly what the bank is for. Several more
   // trading runs would also get there; a loan keeps the smoke test quick.
