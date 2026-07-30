@@ -7,7 +7,7 @@ import {
 } from '../../shared/constants.js';
 import { SKILLS, skillFactor } from '../../shared/skills.js';
 import { staffBonus } from '../../shared/staff.js';
-import { clamp, dist } from '../../shared/util.js';
+import { clamp } from '../../shared/util.js';
 import { curveExponent, priceFactor, slicesFor } from '../../shared/pricing.js';
 import type { GameState, Market, MarketStock, Player } from '../game/state.js';
 import type { Settlement } from '../world/generate.js';
@@ -184,13 +184,24 @@ export function spreadFor(player: Player | null): number {
   return BASE_SPREAD * clamp(1 - skill - staff, 0.25, 1);
 }
 
-/** Import duty after the international-trade skill discount. */
-export function tariffFor(market: Market, player: Player | null, s: Settlement): number {
+/**
+ * Import duty. Established merchants pay less: owning property in a town makes
+ * you a local rather than a visiting foreigner, and the international-trade
+ * skill buys down what is left.
+ *
+ * (Distance is deliberately *not* a factor — you have to stand in a settlement
+ * to trade there, so a distance term would always be zero.)
+ */
+export function tariffFor(
+  state: GameState,
+  market: Market,
+  player: Player | null,
+  s: Settlement,
+): number {
   if (!player) return market.tariff;
   const skill = skillFactor(player.skills.trade.level, SKILLS.trade.perLevel);
-  // Distance from a player's own territory is what tariffs really punish.
-  const far = clamp(dist(player.x, player.y, s.x, s.y) / 200, 0, 1);
-  return market.tariff * (1 + far * 0.6) * clamp(1 - skill, 0.2, 1);
+  const isLocal = player.buildings.some((id) => state.buildings.get(id)?.settlementId === s.id);
+  return market.tariff * (isLocal ? 0.4 : 1) * clamp(1 - skill, 0.2, 1);
 }
 
 export interface Quote {
@@ -209,7 +220,7 @@ export function quote(
   const mods = modifiersFor(state, s.region);
   const mid = midPrice(market.goods[id], id, mods, state.priceIndex);
   const spread = spreadFor(player);
-  const tariff = tariffFor(market, player, s);
+  const tariff = tariffFor(state, market, player, s);
   return {
     mid,
     buy: mid * (1 + spread + tariff),
@@ -233,7 +244,7 @@ export function executeTrade(
   const s = state.map.settlements.find((x) => x.id === market.settlementId)!;
   const mods = modifiersFor(state, s.region);
   const spread = spreadFor(player);
-  const tariff = side === 'buy' ? tariffFor(market, player, s) : 0;
+  const tariff = side === 'buy' ? tariffFor(state, market, player, s) : 0;
 
   // Identical slicing to shared/pricing.ts, so the client's preview of this
   // order and the server's execution of it cannot drift apart.
