@@ -20,3 +20,13 @@ rad.json
 *.flf
 #Test results file
 TestResults.xml
+### Empire of Merchants ###
+node_modules/
+dist/
+public/bundle.js
+public/bundle.js.map
+public/index.html
+public/style.css
+data/*.json
+data/*.json.tmp
+.run/

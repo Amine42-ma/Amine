@@ -1,0 +1,28 @@
+{
+  "name": "empire-of-merchants",
+  "version": "1.0.0",
+  "description": "Empire of Merchants - a persistent 2D top-down online trading MMO",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:server": "tsc -p tsconfig.server.json",
+    "build:client": "node scripts/build-client.mjs",
+    "build": "npm run build:server && npm run build:client",
+    "start": "node dist/server/index.js",
+    "dev": "node scripts/dev.mjs",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "test": "npm run build && node --test dist/tests/*.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
