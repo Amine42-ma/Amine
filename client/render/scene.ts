@@ -495,8 +495,3 @@ export function settlementAtScreen(camera: Camera, sx: number, sy: number): Sett
   return best;
 }
 
-export function localeDigits(n: number): string {
-  return getLang() === 'ar' ? n.toLocaleString('ar-EG') : n.toLocaleString('en-US');
-}
-
-export { clamp };

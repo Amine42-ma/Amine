@@ -160,6 +160,3 @@ function filterButton(key: typeof filter, label: string) {
   }, label);
 }
 
-export function cargoOf(id: CommodityId): number {
-  return store.self?.inventory.items[id] ?? 0;
-}

@@ -93,12 +93,6 @@ function moveToward(npc: Player, tx: number, ty: number, dtMs: number): boolean 
   return false;
 }
 
-function carriedUnits(npc: Player): number {
-  let n = 0;
-  for (const v of Object.values(npc.inventory)) n += v ?? 0;
-  return n;
-}
-
 function stepOne(state: GameState, npc: Player, dtMs: number, rng: () => number) {
   const brain = npc.npc;
   if (!brain) return;
@@ -251,4 +245,3 @@ export function stepAi(state: GameState, dtMs: number) {
   }
 }
 
-export { carriedUnits };

@@ -343,7 +343,7 @@ function handleConvoyCreate(
     return toast(ctx, 'warn', 'السفن تعمل بين الموانئ والجزر فقط.', 'Ships only sail between ports and islands.');
   }
 
-  const capacity = convoyCapacity(state, vehicleId, player);
+  const capacity = convoyCapacity(vehicleId, player);
   const maxUnits = Math.floor(capacity / COMMODITIES[commodity].weight);
   const qty = clamp(Math.floor(quantity), 1, Math.max(1, maxUnits));
 

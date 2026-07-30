@@ -140,6 +140,9 @@ export interface PlayerSelf {
   netWorth: number;
   prestige: number;
   creditScore: number;
+  /** Total borrowing capacity, and how much of it is already drawn. */
+  creditLimit: number;
+  debt: number;
   vehicle: VehicleId;
   fleet: Partial<Record<VehicleId, number>>;
   inventory: InventoryView;

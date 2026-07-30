@@ -13,10 +13,6 @@ import { startingSettlement } from '../game/rules.js';
  * the things a player earned by playing well, rather than by playing early.
  */
 
-export function seasonRemaining(state: GameState, now = Date.now()): number {
-  return Math.max(0, state.season.endsAt - now);
-}
-
 export function shouldRollSeason(state: GameState, now = Date.now()): boolean {
   return now >= state.season.endsAt;
 }

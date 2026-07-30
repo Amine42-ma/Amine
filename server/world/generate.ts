@@ -57,7 +57,8 @@ const PORT_NAMES: [string, string][] = [
 ];
 
 const ISLAND_NAMES: [string, string][] = [
-  ['جزيرة الزمرد', 'Emerald Isle'], ['جزيرة العاصفة', 'Storm Isle'], ['جزيرة الكنز', 'Treasure Isle'],
+  ['جزيرة الزمرد', 'Emerald Isle'], ['جزيرة العاصفة', 'Storm Isle'],
+  ['جزيرة الكنز', 'Treasure Isle'], ['جزيرة المرجان', 'Coral Isle'],
 ];
 
 /** Smooth value noise: a coarse random lattice, bilinearly interpolated, octaved. */
@@ -188,12 +189,14 @@ export function generateWorld(seed: number): WorldMap {
   // Islands are carved rather than discovered. Relying on the noise to throw up
   // isolated landmasses means some seeds have none at all, and sea trade is a
   // designed feature — it should exist in every world.
-  for (const centre of carveIslands(tiles, w, h, rng, 4)) {
-    const [ar, en] = ISLAND_NAMES[settlements.length % ISLAND_NAMES.length];
+  const islands = carveIslands(tiles, w, h, rng, 4);
+  islands.forEach((centre, index) => {
+    const [ar, en] = ISLAND_NAMES[index % ISLAND_NAMES.length];
+    const suffix = index >= ISLAND_NAMES.length ? ` ${Math.floor(index / ISLAND_NAMES.length) + 1}` : '';
     settlements.push({
       id: `s${settlements.length}`,
-      name_ar: ar,
-      name_en: en,
+      name_ar: ar + suffix,
+      name_en: en + suffix,
       kind: 'island',
       x: centre.x,
       y: centre.y,
@@ -202,13 +205,13 @@ export function generateWorld(seed: number): WorldMap {
       plots: 10,
       occupied: [],
     });
-  }
+  });
 
   place('city', CITY_NAMES, 12, 34, (x, y) => landAt(x, y) && !nearWater(x, y, 2));
   place('port', PORT_NAMES, 8, 24, (x, y) => landAt(x, y) && nearWater(x, y, 2));
   place('village', VILLAGE_NAMES, 16, 18, (x, y) => landAt(x, y));
 
-  carveRoads(tiles, w, h, settlements);
+  carveRoads(tiles, w, settlements);
 
   return { seed, width: w, height: h, tiles, settlements, regions: REGION_NAMES.slice() };
 }
@@ -270,7 +273,7 @@ function carveIslands(
 }
 
 /** Connects each settlement to its two nearest land neighbours with a road. */
-function carveRoads(tiles: Uint8Array, w: number, h: number, settlements: Settlement[]) {
+function carveRoads(tiles: Uint8Array, w: number, settlements: Settlement[]) {
   const land = settlements.filter((s) => s.kind !== 'island');
   const drawn = new Set<string>();
   for (const a of land) {
@@ -299,4 +302,3 @@ function carveRoads(tiles: Uint8Array, w: number, h: number, settlements: Settle
   }
 }
 
-export const TERRAIN_INDEX = T;

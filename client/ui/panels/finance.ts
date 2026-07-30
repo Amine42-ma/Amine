@@ -13,15 +13,25 @@ export function renderBank(body: HTMLElement) {
   const self = store.self;
   if (!self) return;
 
-  const debt = self.loans.reduce((sum, l) => sum + l.owed, 0);
+  const headroom = Math.max(0, self.creditLimit - self.debt);
 
   body.appendChild(el('div', { class: 'row' },
     el('div', { class: 'grow' },
       el('div', { class: 'name' }, `🏦 ${fmtGold(self.bank)}`),
       el('div', { class: 'sub' },
-        `${t('creditScore')}: ${self.creditScore}  ·  ${t('owed')}: ${fmtGold(debt)}`,
+        `${t('creditScore')}: ${self.creditScore}  ·  ${t('owed')}: ${fmtGold(self.debt)}`,
       ),
       bar(self.creditScore / 900, true),
+    ),
+  ));
+
+  // How much is actually borrowable right now — otherwise the only way to find
+  // out is to ask for too much and be refused.
+  body.appendChild(el('div', { class: 'row' },
+    el('div', { class: 'grow' },
+      el('div', { class: 'name' }, `${t('creditLimit')}: ${fmtGold(self.creditLimit)}`),
+      el('div', { class: 'sub' }, `${t('canBorrow')}: ${fmtGold(headroom)}`),
+      bar(self.creditLimit > 0 ? self.debt / self.creditLimit : 0),
     ),
   ));
 
@@ -38,11 +48,17 @@ export function renderBank(body: HTMLElement) {
   ));
 
   body.appendChild(sectionTitle(t('loan')));
-  body.appendChild(el('button', {
-    class: 'btn btn-primary',
-    style: 'width:100%;margin-bottom:10px',
-    onclick: () => send({ t: 'loanTake', amount: value() }),
-  }, `${t('takeLoan')} ${fmtGold(value())}`));
+  body.appendChild(el('div', { class: 'grid-2', style: 'margin-bottom:10px' },
+    el('button', {
+      class: 'btn btn-primary',
+      onclick: () => send({ t: 'loanTake', amount: value() }),
+    }, `${t('takeLoan')} ${fmtGold(value())}`),
+    el('button', {
+      class: 'btn',
+      ...(headroom < 1 ? { disabled: true } : {}),
+      onclick: () => send({ t: 'loanTake', amount: Math.floor(headroom) }),
+    }, `${t('borrowMax')} ${fmtGold(headroom)}`),
+  ));
 
   if (self.loans.length === 0) {
     body.appendChild(el('div', { class: 'sub', style: 'text-align:center' },

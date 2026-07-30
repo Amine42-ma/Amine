@@ -2,7 +2,7 @@ import {
   COMMODITIES, COMMODITY_IDS, type CommodityId,
 } from '../../shared/commodities.js';
 import {
-  PRICE_ELASTICITY, MIN_PRICE_RATIO, MAX_PRICE_RATIO,
+  MIN_PRICE_RATIO, MAX_PRICE_RATIO,
   WORLD_TRADE_RATE, ANCHOR_MINUTES, MIN_MARKET_DEPTH, ECONOMY_SCALE, BASE_SPREAD,
 } from '../../shared/constants.js';
 import { SKILLS, skillFactor } from '../../shared/skills.js';
@@ -185,7 +185,7 @@ export function spreadFor(player: Player | null): number {
 }
 
 /** Import duty after the international-trade skill discount. */
-export function tariffFor(state: GameState, market: Market, player: Player | null, s: Settlement): number {
+export function tariffFor(market: Market, player: Player | null, s: Settlement): number {
   if (!player) return market.tariff;
   const skill = skillFactor(player.skills.trade.level, SKILLS.trade.perLevel);
   // Distance from a player's own territory is what tariffs really punish.
@@ -209,7 +209,7 @@ export function quote(
   const mods = modifiersFor(state, s.region);
   const mid = midPrice(market.goods[id], id, mods, state.priceIndex);
   const spread = spreadFor(player);
-  const tariff = tariffFor(state, market, player, s);
+  const tariff = tariffFor(market, player, s);
   return {
     mid,
     buy: mid * (1 + spread + tariff),
@@ -233,7 +233,7 @@ export function executeTrade(
   const s = state.map.settlements.find((x) => x.id === market.settlementId)!;
   const mods = modifiersFor(state, s.region);
   const spread = spreadFor(player);
-  const tariff = side === 'buy' ? tariffFor(state, market, player, s) : 0;
+  const tariff = side === 'buy' ? tariffFor(market, player, s) : 0;
 
   // Identical slicing to shared/pricing.ts, so the client's preview of this
   // order and the server's execution of it cannot drift apart.

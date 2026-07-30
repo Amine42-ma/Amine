@@ -310,11 +310,16 @@ ws.on('open', async () => {
 
   // Borrow the shortfall, which is exactly what the bank is for. Several more
   // trading runs would also get there; a loan keeps the smoke test quick.
-  if (self.gold < shopCost) {
-    inbox.length = 0;
-    send({ t: 'loanTake', amount: Math.ceil(shopCost - self.gold) });
-    await waitFor((m) => m.t === 'self');
-    self = [...inbox].reverse().find((m) => m.t === 'self').self;
+  const RESERVE = 2500; // working capital to stock the shop with afterwards
+  if (self.gold < shopCost + RESERVE) {
+    const headroom = Math.max(0, self.creditLimit - self.debt);
+    const want = Math.min(Math.ceil(shopCost + RESERVE - self.gold), headroom);
+    if (want > 0) {
+      inbox.length = 0;
+      send({ t: 'loanTake', amount: want });
+      await waitFor((m) => m.t === 'self');
+      self = [...inbox].reverse().find((m) => m.t === 'self').self;
+    }
   }
   check('bank credit covers the first shop', self.gold >= shopCost,
     `gold=${self.gold.toFixed(0)} needed=${shopCost}`);
@@ -337,10 +342,13 @@ ws.on('open', async () => {
     check('workers assigned to the shop', (staffed?.workers.laborer ?? 0) === 2, JSON.stringify(staffed?.workers));
 
     // Stock it with the cheapest local good, borrowing working capital first.
-    inbox.length = 0;
-    send({ t: 'loanTake', amount: 4000 });
-    await waitFor((m) => m.t === 'self');
-    self = [...inbox].reverse().find((m) => m.t === 'self').self;
+    const headroom = Math.max(0, self.creditLimit - self.debt);
+    if (headroom > 0 && self.gold < 2000) {
+      inbox.length = 0;
+      send({ t: 'loanTake', amount: Math.min(4000, headroom) });
+      await waitFor((m) => m.t === 'self');
+      self = [...inbox].reverse().find((m) => m.t === 'self').self;
+    }
 
     send({ t: 'requestMarket', settlementId: at.id });
     await sleep(300);

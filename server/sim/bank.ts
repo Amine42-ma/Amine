@@ -3,7 +3,7 @@ import {
 } from '../../shared/constants.js';
 import { BUILDINGS } from '../../shared/buildings.js';
 import { VEHICLES } from '../../shared/vehicles.js';
-import { COMMODITIES, type CommodityId } from '../../shared/commodities.js';
+import type { CommodityId } from '../../shared/commodities.js';
 import { WORKERS, staffBonus, type WorkerId } from '../../shared/staff.js';
 import { SKILLS, skillFactor } from '../../shared/skills.js';
 import { clamp, newId } from '../../shared/util.js';
@@ -183,14 +183,4 @@ export function runPayroll(state: GameState, now: number): PayrollResult[] {
   return results;
 }
 
-/** Inventory value at world-average prices; used by the client's cargo panel. */
-export function inventoryValue(state: GameState, p: Player): number {
-  let total = 0;
-  for (const key of Object.keys(p.inventory)) {
-    const id = key as CommodityId;
-    total += (p.inventory[id] ?? 0) * worldAverage(state, id);
-  }
-  return total;
-}
 
-export { COMMODITIES };

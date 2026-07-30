@@ -12,7 +12,7 @@ import type {
 import type { GameState, Player } from './state.js';
 import { carryCapacity } from './player.js';
 import { quote } from '../sim/economy.js';
-import { netWorth } from '../sim/bank.js';
+import { creditLimit, netWorth, outstandingDebt } from '../sim/bank.js';
 import { plotPriceFor, totalAssigned } from './rules.js';
 
 export function buildSettlementViews(state: GameState): SettlementView[] {
@@ -153,6 +153,8 @@ export function buildSelf(state: GameState, p: Player): PlayerSelf {
     netWorth: Math.round(netWorth(state, p)),
     prestige: p.prestige,
     creditScore: Math.round(p.creditScore),
+    creditLimit: creditLimit(state, p),
+    debt: Math.ceil(outstandingDebt(p)),
     vehicle: p.vehicle,
     fleet: { ...p.fleet },
     inventory: {

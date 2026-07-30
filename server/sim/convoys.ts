@@ -29,7 +29,7 @@ export function convoySpeed(state: GameState, c: Convoy, owner: Player | undefin
   return (def.speed * (1 + skill + drivers)) / Math.max(0.5, mods.travelMul);
 }
 
-export function convoyCapacity(state: GameState, vehicleId: keyof typeof VEHICLES, owner: Player): number {
+export function convoyCapacity(vehicleId: keyof typeof VEHICLES, owner: Player): number {
   const skill = skillFactor(owner.skills.shipping.level, SKILLS.shipping.perLevel);
   return Math.floor(VEHICLES[vehicleId].capacity * (1 + skill * 0.8));
 }
@@ -62,7 +62,7 @@ function stepOne(state: GameState, c: Convoy, dtMs: number) {
 
   switch (c.phase) {
     case 'loading': {
-      const capacity = convoyCapacity(state, c.vehicleId, owner);
+      const capacity = convoyCapacity(c.vehicleId, owner);
       const perUnit = COMMODITIES[c.commodity].weight;
       const units = Math.min(c.quantity, Math.floor(capacity / perUnit));
       if (units <= 0) { stall(c, 'capacity'); c.active = false; return; }

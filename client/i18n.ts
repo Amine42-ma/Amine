@@ -103,6 +103,8 @@ const STRINGS: Dict = {
   repay: ['سداد', 'Repay'],
   creditScore: ['التقييم الائتماني', 'Credit score'],
   creditLimit: ['حد الائتمان', 'Credit limit'],
+  canBorrow: ['المتاح للاقتراض', 'Available to borrow'],
+  borrowMax: ['اقترض الحد الأقصى', 'Borrow max'],
   owed: ['المستحق', 'Owed'],
   interest: ['الفائدة', 'Interest'],
   takeLoan: ['اقتراض', 'Borrow'],

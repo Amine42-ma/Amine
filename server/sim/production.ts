@@ -21,7 +21,7 @@ function richness(state: GameState, building: OwnedBuilding, def: BuildingDef): 
   return clamp(0.25 + best * 2.6, 0.25, 1.6);
 }
 
-function speedMultiplier(state: GameState, b: OwnedBuilding, owner: Player | undefined): number {
+function speedMultiplier(b: OwnedBuilding, owner: Player | undefined): number {
   const labor = staffBonus(b.workers.laborer ?? 0, 0.08);
   const mgmt = owner ? skillFactor(owner.skills.management.level, SKILLS.management.perLevel) * 0.5 : 0;
   return 1 + labor + mgmt;
@@ -45,7 +45,7 @@ function stepProducer(
   const s = state.map.settlements.find((x) => x.id === b.settlementId);
   const mods = modifiersFor(state, s?.region ?? null);
 
-  const speed = speedMultiplier(state, b, owner);
+  const speed = speedMultiplier(b, owner);
   const rich = def.kind === 'extractor' ? richness(state, b, def) : 1;
   b.cycleMs += dtMs * speed * rich;
 
