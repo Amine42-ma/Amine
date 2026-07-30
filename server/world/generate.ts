@@ -185,23 +185,88 @@ export function generateWorld(seed: number): WorldMap {
     return t === T.grass || t === T.forest || t === T.desert;
   };
 
+  // Islands are carved rather than discovered. Relying on the noise to throw up
+  // isolated landmasses means some seeds have none at all, and sea trade is a
+  // designed feature — it should exist in every world.
+  for (const centre of carveIslands(tiles, w, h, rng, 4)) {
+    const [ar, en] = ISLAND_NAMES[settlements.length % ISLAND_NAMES.length];
+    settlements.push({
+      id: `s${settlements.length}`,
+      name_ar: ar,
+      name_en: en,
+      kind: 'island',
+      x: centre.x,
+      y: centre.y,
+      region: regionOf(centre.x, centre.y),
+      population: 1200 + Math.floor(rng() * 2500),
+      plots: 10,
+      occupied: [],
+    });
+  }
+
   place('city', CITY_NAMES, 12, 34, (x, y) => landAt(x, y) && !nearWater(x, y, 2));
   place('port', PORT_NAMES, 8, 24, (x, y) => landAt(x, y) && nearWater(x, y, 2));
   place('village', VILLAGE_NAMES, 16, 18, (x, y) => landAt(x, y));
-  // Islands must be small landmasses: land tile fully surrounded by sea at range 8.
-  place('island', ISLAND_NAMES, 4, 30, (x, y) => {
-    if (!landAt(x, y)) return false;
-    let water = 0;
-    for (let a = 0; a < 16; a++) {
-      const ang = (a / 16) * Math.PI * 2;
-      if (isWater(Math.round(x + Math.cos(ang) * 8), Math.round(y + Math.sin(ang) * 8))) water++;
-    }
-    return water >= 12;
-  });
 
   carveRoads(tiles, w, h, settlements);
 
   return { seed, width: w, height: h, tiles, settlements, regions: REGION_NAMES.slice() };
+}
+
+/**
+ * Stamps small landmasses into open ocean and returns their centres. The
+ * clearance requirement relaxes on each pass so that even a seed whose ocean is
+ * cramped still gets its islands.
+ */
+function carveIslands(
+  tiles: Uint8Array,
+  w: number,
+  h: number,
+  rng: () => number,
+  count: number,
+): { x: number; y: number }[] {
+  const centres: { x: number; y: number }[] = [];
+
+  const openSea = (x: number, y: number, clearance: number) => {
+    for (let dy = -clearance; dy <= clearance; dy += 2) {
+      for (let dx = -clearance; dx <= clearance; dx += 2) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) return false;
+        if (tiles[ny * w + nx] !== T.water) return false;
+      }
+    }
+    return true;
+  };
+
+  // On land-heavy seeds the only open water is the ocean ringing the map, so the
+  // search must reach the border — and settle for tighter and tighter clearance.
+  for (const clearance of [12, 10, 8, 6, 5, 4]) {
+    const spacing = Math.max(22, clearance * 3);
+    let guard = 0;
+    while (centres.length < count && guard++ < 20000) {
+      const x = 7 + Math.floor(rng() * (w - 14));
+      const y = 7 + Math.floor(rng() * (h - 14));
+      if (!openSea(x, y, clearance)) continue;
+      if (centres.some((c) => dist(c.x, c.y, x, y) < spacing)) continue;
+
+      // Never stamp more land than the clearance we verified.
+      const radius = Math.min(4 + Math.floor(rng() * 2), clearance - 1);
+      for (let dy = -radius - 1; dy <= radius + 1; dy++) {
+        for (let dx = -radius - 1; dx <= radius + 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const d = Math.hypot(dx, dy);
+          if (d <= radius - 1) tiles[ny * w + nx] = rng() > 0.6 ? T.forest : T.grass;
+          else if (d <= radius + 0.5) tiles[ny * w + nx] = T.sand;
+        }
+      }
+      centres.push({ x, y });
+    }
+    if (centres.length >= count) break;
+  }
+  return centres;
 }
 
 /** Connects each settlement to its two nearest land neighbours with a road. */

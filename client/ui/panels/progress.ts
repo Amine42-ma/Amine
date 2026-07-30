@@ -143,11 +143,16 @@ export function renderAtlas(body: HTMLElement) {
     const kindIcon = s.kind === 'city' ? '🏛️' : s.kind === 'port' ? '⚓' : s.kind === 'island' ? '🏝️' : '🏘️';
     const owned = self.buildings.filter((b) => b.settlementId === s.id).length;
 
+    // Islands are unreachable without a ship; say so before someone walks there.
+    const hasSeaVehicle = (self.fleet.ship ?? 0) > 0 || (self.fleet.plane ?? 0) > 0;
+    const seaOnly = s.kind === 'island' && !hasSeaVehicle;
+
     body.appendChild(row({
       icon: kindIcon,
       title: [
         el('span', { style: seen ? '' : 'opacity:.5' }, settlementName(s)),
         here?.id === s.id ? pill(t('current'), 'good') : null,
+        seaOnly ? pill(`🚢 ${t('seaOnly')}`, 'warn') : null,
         owned > 0 ? pill(`🏭${owned}`, 'good') : null,
       ],
       sub: [

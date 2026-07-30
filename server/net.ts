@@ -5,6 +5,7 @@ import type { GameState, Player } from './game/state.js';
 import { findPlayerByName, findPlayerByToken } from './game/state.js';
 import { hashPassword, makePlayer, newToken, verifyPassword } from './game/player.js';
 import { handleCommand, type Session } from './game/commands.js';
+import { startingSettlement } from './game/rules.js';
 import {
   buildCompanies, buildEvents, buildLeaderboard, buildOrders, buildPresence,
   buildSeason, buildSelf, buildSettlementViews, buildWorldMeta,
@@ -117,9 +118,7 @@ export class Hub {
 
     if (mode === 'register') {
       if (existing) return this.send(client, { t: 'authError', reason: 'name_taken' });
-      const start = this.state.map.settlements[
-        Math.floor(Math.random() * this.state.map.settlements.length)
-      ];
+      const start = startingSettlement(this.state);
       const player = makePlayer(newId('p'), name, start.x, start.y);
       player.auth = hashPassword(pass);
       player.token = newToken();

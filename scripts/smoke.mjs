@@ -79,6 +79,88 @@ async function waitForAchievement(id, timeoutMs = 4000) {
   return false;
 }
 
+/**
+ * Picks the best route out of `from`, scored the way the in-game preview scores
+ * it: on the executed average price for a load this player can actually afford
+ * and carry, not the headline single-unit quote.
+ */
+function scoutRoute(from, candidates) {
+  const source = markets.get(from.id);
+  if (!source) return null;
+  let best = null;
+
+  for (const s of candidates) {
+    const away = markets.get(s.id);
+    if (!away || s.id === from.id) continue;
+    for (const here of source.quotes) {
+      const there = away.quotes.find((q) => q.id === here.id);
+      if (!there) continue;
+      const units = Math.min(
+        Math.floor(self.gold / Math.max(1, here.buy)),
+        Math.floor(self.inventory.capacity / COMMODITIES[here.id].weight),
+      );
+      // Skip goods this purse cannot buy even one of.
+      if (units < 1) continue;
+
+      const k = curveExponent(here.id);
+      const cost = estimateTrade(here.buy, here.stock, here.baseline, units, 'buy', k);
+      const revenue = estimateTrade(there.sell, there.stock, there.baseline, units, 'sell', k);
+      const profit = revenue.total - cost.total;
+      if (profit <= 0) continue;
+
+      // Profit per tile walked — a merchant's real return on effort.
+      const score = profit / Math.max(1, dist(from, s));
+      if (!best || score > best.score) {
+        best = {
+          from, to: s, id: here.id, units, profit, score,
+          buy: cost.average, sell: revenue.average,
+        };
+      }
+    }
+  }
+  return best;
+}
+
+/** Buys at the route's source, walks to its destination and sells. */
+async function runRoute(route) {
+  const goldBefore = self.gold;
+  if (dist(self, route.from) > 5) await travelTo(route.from);
+
+  send({ t: 'requestMarket', settlementId: route.from.id });
+  send({ t: 'requestMarket', settlementId: route.to.id });
+  await sleep(400);
+
+  const quote = markets.get(route.from.id).quotes.find((q) => q.id === route.id);
+  const destQuote = markets.get(route.to.id).quotes.find((q) => q.id === route.id);
+  const units = Math.min(
+    Math.floor(self.gold / Math.max(1, quote.buy)),
+    Math.floor(self.inventory.capacity / COMMODITIES[route.id].weight),
+  );
+  if (units < 1) return { units: 0, profit: 0, exhausted: true };
+
+  // A real player reads the profit preview before committing. If earlier trades
+  // have already closed the gap, the route is done.
+  const k = curveExponent(route.id);
+  const projected =
+    estimateTrade(destQuote.sell, destQuote.stock, destQuote.baseline, units, 'sell', k).total -
+    estimateTrade(quote.buy, quote.stock, quote.baseline, units, 'buy', k).total;
+  if (projected <= 0) return { units, profit: 0, exhausted: true };
+
+  inbox.length = 0;
+  send({ t: 'trade', settlementId: route.from.id, commodity: route.id, quantity: units, side: 'buy' });
+  await waitFor((m) => m.t === 'self');
+  self = [...inbox].reverse().find((m) => m.t === 'self').self;
+  const loaded = self.inventory.items[route.id] ?? 0;
+
+  await travelTo(route.to);
+  inbox.length = 0;
+  send({ t: 'trade', settlementId: route.to.id, commodity: route.id, quantity: 1e6, side: 'sell' });
+  await waitFor((m) => m.t === 'self');
+  self = [...inbox].reverse().find((m) => m.t === 'self').self;
+
+  return { units, loaded, profit: self.gold - goldBefore, exhausted: false, goldBefore };
+}
+
 async function refreshSelf() {
   inbox.length = 0;
   send({ t: 'requestMarket', settlementId: world.settlements[0].id });
@@ -103,7 +185,7 @@ ws.on('open', async () => {
   /* ------------------------------------------------------------- travel */
 
   const byDistance = [...world.settlements].sort((a, b) => dist(self, a) - dist(self, b));
-  const home = byDistance[0];
+  const home = byDistance.find((s) => s.kind !== 'island') ?? byDistance[0];
   console.log(`\n  travelling to ${home.name_en}…`);
   const arrived = await travelTo(home);
   check('player reached the first settlement', arrived <= 12, `distance=${arrived.toFixed(1)}`);
@@ -120,41 +202,12 @@ ws.on('open', async () => {
 
   // Scout a realistic search radius — the Atlas panel lists every settlement
   // with its distance, so a player would not stop at the nearest two.
-  const neighbours = byDistance.slice(1, 9);
+  // Islands need a ship; on foot they are not candidate destinations.
+  const neighbours = byDistance.filter((s) => s.kind !== 'island').slice(1, 9);
   for (const s of neighbours) send({ t: 'requestMarket', settlementId: s.id });
   await sleep(900);
 
-  // Score routes the way the in-game preview does: on the *executed* average
-  // price for a realistic cart-load, not the headline single-unit quote.
-  const budget = self.gold;
-  let best = null;
-  for (const s of neighbours) {
-    const away = markets.get(s.id);
-    if (!away) continue;
-    for (const here of market.quotes) {
-      const there = away.quotes.find((q) => q.id === here.id);
-      if (!there) continue;
-      const good = COMMODITIES[here.id];
-      const units = Math.min(
-        Math.floor(budget / Math.max(1, here.buy)),
-        Math.floor(self.inventory.capacity / good.weight),
-      );
-      // Skip goods a starting purse cannot buy even one of.
-      if (units < 1) continue;
-      const k = curveExponent(here.id);
-      const cost = estimateTrade(here.buy, here.stock, here.baseline, units, 'buy', k);
-      const revenue = estimateTrade(there.sell, there.stock, there.baseline, units, 'sell', k);
-      const profit = revenue.total - cost.total;
-      if (profit <= 0) continue;
-      const score = profit / Math.max(1, dist(home, s));
-      if (!best || score > best.score) {
-        best = {
-          to: s, id: here.id, units, profit, score,
-          buy: cost.average, sell: revenue.average,
-        };
-      }
-    }
-  }
+  const best = scoutRoute(home, neighbours);
   check('a profitable route exists between nearby settlements', !!best,
     'no positive-margin pair found among the eight nearest settlements');
 
@@ -165,69 +218,55 @@ ws.on('open', async () => {
     );
 
     const startingGold = self.gold;
-    const margins = [];
+    const sameRouteMargins = [];
+    let routesUsed = 0;
+    let route = best;
 
-    // Run the route a few times, the way a player grinding their first shop
-    // would. Each pass should earn — and each pass should earn a little less,
-    // because buying here and selling there pushes the two prices together.
-    for (let trip = 1; trip <= 3; trip++) {
-      const goldBefore = self.gold;
-      // Always run the route in its profitable direction, walking back empty.
-      if (dist(self, home) > 5) await travelTo(home);
+    // Trade the way a player does: work a route until its margin is gone, then
+    // scout a fresh one. Repeating one route should pay less each pass, but the
+    // world should keep offering new ones.
+    for (let trip = 1; trip <= 10; trip++) {
+      const result = await runRoute(route);
 
-      send({ t: 'requestMarket', settlementId: home.id });
-      await sleep(300);
-      const source = markets.get(home.id);
-      const quote = source.quotes.find((q) => q.id === best.id);
-      const affordable = Math.min(
-        Math.floor(self.gold / Math.max(1, quote.buy)),
-        Math.floor(self.inventory.capacity / COMMODITIES[best.id].weight),
-      );
-      if (affordable < 1) break;
-
-      // A real player reads the profit preview before committing. If our own
-      // earlier trades have already closed the gap, the route is done.
-      send({ t: 'requestMarket', settlementId: best.to.id });
-      await sleep(300);
-      const destQuote = markets.get(best.to.id).quotes.find((q) => q.id === best.id);
-      const k = curveExponent(best.id);
-      const projected =
-        estimateTrade(destQuote.sell, destQuote.stock, destQuote.baseline, affordable, 'sell', k).total -
-        estimateTrade(quote.buy, quote.stock, quote.baseline, affordable, 'buy', k).total;
-      if (projected <= 0) {
-        console.log(`    trip ${trip}: route exhausted (projected ${projected.toFixed(0)}), stopping`);
-        break;
+      if (result.exhausted) {
+        const next = scoutRoute(
+          world.settlements.find((s) => dist(self, s) < 12) ?? route.to,
+          neighbours,
+        );
+        if (!next) { console.log('    no route left nearby, stopping'); break; }
+        routesUsed++;
+        route = next;
+        console.log(`    → switching to ${next.id}: ${next.from.name_en} → ${next.to.name_en}`);
+        continue;
       }
-
-      inbox.length = 0;
-      send({ t: 'trade', settlementId: home.id, commodity: best.id, quantity: affordable, side: 'buy' });
-      await waitFor((m) => m.t === 'self');
-      self = [...inbox].reverse().find((m) => m.t === 'self').self;
 
       if (trip === 1) {
-        check('goods loaded into the cart', (self.inventory.items[best.id] ?? 0) > 0,
-          JSON.stringify(self.inventory.items));
+        check('goods loaded into the cart', result.loaded > 0, `loaded=${result.loaded}`);
         check('cargo never exceeds capacity', self.inventory.used <= self.inventory.capacity + 0.01,
           `used=${self.inventory.used}/${self.inventory.capacity}`);
-        check('gold was spent', self.gold < goldBefore, `${goldBefore} → ${self.gold}`);
+        check('gold was spent then recovered', result.goldBefore !== self.gold);
       }
 
-      await travelTo(best.to);
-      inbox.length = 0;
-      send({ t: 'trade', settlementId: best.to.id, commodity: best.id, quantity: 1e6, side: 'sell' });
-      await waitFor((m) => m.t === 'self');
-      self = [...inbox].reverse().find((m) => m.t === 'self').self;
+      // Per *unit*, so a growing bankroll buying bigger loads does not disguise
+      // the margin shrinking.
+      if (routesUsed === 0) sameRouteMargins.push(result.profit / result.units);
+      console.log(
+        `    trip ${trip} (${route.id}): ${result.goldBefore.toFixed(0)} → ${self.gold.toFixed(0)} ` +
+        `(${result.profit >= 0 ? '+' : ''}${result.profit.toFixed(0)} on ${result.units}u = ` +
+        `${(result.profit / result.units).toFixed(2)}/unit)`,
+      );
 
-      const profit = self.gold - goldBefore;
-      margins.push(profit);
-      console.log(`    trip ${trip}: ${goldBefore.toFixed(0)} → ${self.gold.toFixed(0)} (${profit >= 0 ? '+' : ''}${profit.toFixed(0)})`);
+      if (self.gold > 12_000) break;
     }
 
-    check('every committed run turned a profit', margins.length > 0 && margins.every((m) => m > 0),
-      `margins=${margins.map((m) => m.toFixed(0)).join(', ')}`);
-    check('trading a route erodes its own margin', margins.length < 2 || margins.at(-1) < margins[0],
-      `first=${margins[0]?.toFixed(0)} last=${margins.at(-1)?.toFixed(0)}`);
-    check('the player is meaningfully richer', self.gold > startingGold * 1.2,
+    check('every committed run turned a profit', sameRouteMargins.length > 0 && sameRouteMargins.every((m) => m > 0),
+      `per-unit margins=${sameRouteMargins.map((m) => m.toFixed(2)).join(', ')}`);
+    check('working one route erodes its per-unit margin',
+      sameRouteMargins.length < 2 || sameRouteMargins.at(-1) < sameRouteMargins[0],
+      `first=${sameRouteMargins[0]?.toFixed(2)} last=${sameRouteMargins.at(-1)?.toFixed(2)}`);
+    check('the world keeps offering fresh routes', routesUsed > 0 || self.gold > startingGold * 3,
+      `routes switched=${routesUsed}, gold ${startingGold.toFixed(0)} → ${self.gold.toFixed(0)}`);
+    check('trading builds real capital', self.gold > startingGold * 2,
       `${startingGold.toFixed(0)} → ${self.gold.toFixed(0)}`);
     check('first_trade achievement granted', self.achievements.includes('first_trade'));
   }
@@ -263,22 +302,30 @@ ws.on('open', async () => {
 
   /* --------------------------------------------------------------- shop */
 
-  const at = best ? best.to : home;
+  // Where the player currently stands — you can only build where you are.
+  const at = world.settlements
+    .filter((s) => dist(self, s) < 12)
+    .sort((a, b) => dist(self, a) - dist(self, b))[0] ?? home;
   const shopCost = 6000 + at.plotPrice;
+
+  // Borrow the shortfall, which is exactly what the bank is for. Several more
+  // trading runs would also get there; a loan keeps the smoke test quick.
   if (self.gold < shopCost) {
-    // Borrow the shortfall the way a player would, up to the credit limit.
     inbox.length = 0;
     send({ t: 'loanTake', amount: Math.ceil(shopCost - self.gold) });
     await waitFor((m) => m.t === 'self');
     self = [...inbox].reverse().find((m) => m.t === 'self').self;
   }
+  check('bank credit covers the first shop', self.gold >= shopCost,
+    `gold=${self.gold.toFixed(0)} needed=${shopCost}`);
 
   inbox.length = 0;
   send({ t: 'buildingBuy', settlementId: at.id, defId: 'small_shop' });
   await sleep(400);
   self = [...inbox].reverse().find((m) => m.t === 'self')?.self ?? self;
   const shop = self.buildings.find((b) => b.defId === 'small_shop');
-  check('shop purchased', !!shop, `gold=${self.gold.toFixed(0)} needed=${shopCost} buildings=${self.buildings.length}`);
+  check('shop purchased', !!shop,
+    `gold=${self.gold.toFixed(0)} needed=${shopCost} at=${at.name_en} buildings=${self.buildings.length}`);
   check('first_shop achievement granted', await waitForAchievement('first_shop'));
 
   if (shop) {

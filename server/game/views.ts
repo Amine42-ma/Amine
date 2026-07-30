@@ -146,8 +146,10 @@ export function buildSelf(state: GameState, p: Player): PlayerSelf {
     name: p.name,
     x: round2(p.x),
     y: round2(p.y),
-    gold: Math.round(p.gold),
-    bank: Math.round(p.bank),
+    // Floored, never rounded: rounding up by half a gold makes the UI show
+    // exactly enough for a purchase the server then refuses.
+    gold: Math.floor(p.gold),
+    bank: Math.floor(p.bank),
     netWorth: Math.round(netWorth(state, p)),
     prestige: p.prestige,
     creditScore: Math.round(p.creditScore),

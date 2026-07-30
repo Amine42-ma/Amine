@@ -10,6 +10,16 @@ export function plotPriceFor(plots: number, used: number, kind: string): number 
   return Math.round(base * scarcity);
 }
 
+/**
+ * Where a new (or newly reset) merchant starts. Never an island: a starting cart
+ * cannot cross water, so an island spawn would strand the player permanently.
+ */
+export function startingSettlement(state: GameState) {
+  const mainland = state.map.settlements.filter((s) => s.kind !== 'island');
+  const pool = mainland.length > 0 ? mainland : state.map.settlements;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 /** How many of a worker type the player has already posted to buildings. */
 export function totalAssigned(state: GameState, player: Player, worker: WorkerId): number {
   let n = 0;

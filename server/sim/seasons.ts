@@ -5,6 +5,7 @@ import { createMarket } from './economy.js';
 import { netWorth } from './bank.js';
 import { grant } from '../game/achievements.js';
 import { spawnNpcs, NPC_COUNT } from './ai.js';
+import { startingSettlement } from '../game/rules.js';
 
 /**
  * A season is a full economic reset. Gold, property and companies are wiped so
@@ -56,7 +57,7 @@ export function rollSeason(state: GameState, now = Date.now()) {
   }
 
   for (const p of state.players.values()) {
-    const start = state.map.settlements[Math.floor(Math.random() * state.map.settlements.length)];
+    const start = startingSettlement(state);
     p.gold = STARTING_GOLD;
     p.bank = 0;
     p.creditScore = 600;

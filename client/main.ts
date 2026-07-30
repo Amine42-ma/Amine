@@ -70,11 +70,38 @@ canvas.addEventListener('pointermove', (ev) => {
 });
 
 canvas.addEventListener('pointerdown', (ev) => {
-  if (!store.self) return;
+  const self = store.self;
+  if (!self) return;
   const target = settlementAtScreen(camera, ev.clientX, ev.clientY);
   const [wx, wy] = camera.screenToWorld(ev.clientX, ev.clientY);
-  travelTarget = target ? { x: target.x, y: target.y } : { x: wx, y: wy };
+  const destination = target ? { x: target.x, y: target.y } : { x: wx, y: wy };
+
+  // Walking into the sea just stalls you against the shoreline. Say so instead.
+  if (!canSail(self.vehicle) && pathCrossesWater(self.x, self.y, destination.x, destination.y)) {
+    hint(t('needsShip'));
+    return;
+  }
+  travelTarget = destination;
 });
+
+function canSail(vehicle: string): boolean {
+  return vehicle === 'ship' || vehicle === 'plane';
+}
+
+/** Samples the straight line to a destination for open water. */
+function pathCrossesWater(x0: number, y0: number, x1: number, y1: number): boolean {
+  const { tiles, world } = store;
+  if (!tiles || !world) return false;
+  const steps = Math.ceil(Math.hypot(x1 - x0, y1 - y0));
+  if (steps <= 0) return false;
+  for (let i = 1; i <= steps; i++) {
+    const x = Math.round(x0 + ((x1 - x0) * i) / steps);
+    const y = Math.round(y0 + ((y1 - y0) * i) / steps);
+    if (x < 0 || y < 0 || x >= world.width || y >= world.height) continue;
+    if (tiles[y * world.width + x] === 0) return true;
+  }
+  return false;
+}
 
 canvas.addEventListener('wheel', (ev) => {
   ev.preventDefault();

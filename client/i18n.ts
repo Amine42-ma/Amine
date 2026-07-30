@@ -53,6 +53,11 @@ const STRINGS: Dict = {
     'انقر على الخريطة للتحرك، أو استخدم WASD / الأسهم.',
     'Click the map to travel, or use WASD / arrow keys.',
   ],
+  needsShip: [
+    'الماء يقطع الطريق — تحتاج سفينة للوصول إلى هناك.',
+    'Water blocks the way — you need a ship to reach that.',
+  ],
+  seaOnly: ['بحري', 'By sea'],
   tariff: ['الرسوم الجمركية', 'Tariff'],
   youCarry: ['تحمل', 'You carry'],
 
