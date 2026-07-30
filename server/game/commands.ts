@@ -13,6 +13,8 @@ import { addXp, convoySlots, BUILDING_STORAGE } from '../sim/production.js';
 import { convoyCapacity } from '../sim/convoys.js';
 import { creditLimit, netWorth, repayLoan, takeLoan } from '../sim/bank.js';
 import { cancelOrder, createCompany, placeOrder } from '../sim/stocks.js';
+import { acceptContract, cancelContract, createContract } from '../sim/contracts.js';
+import { createAlliance, joinAlliance, leaveAlliance } from '../sim/alliances.js';
 import { grant } from './achievements.js';
 import { plotPriceFor, totalAssigned } from './rules.js';
 import { buildMarketView } from './views.js';
@@ -459,6 +461,86 @@ function handleOrderPlace(ctx: CommandCtx, companyId: string, side: 'buy' | 'sel
   }
 }
 
+/* ----------------------------------------------------------------- contracts */
+
+function handleContractCreate(
+  ctx: CommandCtx,
+  side: 'sell' | 'buy',
+  commodity: CommodityId,
+  quantity: number,
+  price: number,
+) {
+  const result = createContract(ctx.state, ctx.player, side, commodity, quantity, price);
+  if (result.ok) {
+    const good = COMMODITIES[commodity];
+    return toast(ctx, 'good',
+      `تم نشر عقد ${side === 'sell' ? 'بيع' : 'شراء'} ${quantity} ${good.ar} مقابل ${price}.`,
+      `Posted a contract to ${side} ${quantity} ${good.en} for ${price}.`);
+  }
+  const reasons: Record<string, [string, string]> = {
+    goods: ['لا تملك هذه البضاعة.', 'You do not hold those goods.'],
+    funds: ['لا تملك ذهباً كافياً للضمان.', 'Not enough gold to escrow.'],
+    limit: ['وصلت إلى الحد الأقصى من العقود.', 'You have too many open contracts.'],
+    quantity: ['كمية غير صالحة.', 'Invalid quantity.'],
+    price: ['سعر غير صالح.', 'Invalid price.'],
+    commodity: ['سلعة غير معروفة.', 'Unknown commodity.'],
+  };
+  const [ar, en] = reasons[result.reason ?? 'quantity'] ?? reasons.quantity;
+  toast(ctx, 'warn', ar, en);
+}
+
+function handleContractAccept(ctx: CommandCtx, contractId: string) {
+  const contract = ctx.state.contracts.get(contractId);
+  const result = acceptContract(ctx.state, ctx.player, contractId);
+  if (result.ok && contract) {
+    const good = COMMODITIES[contract.commodity];
+    const counterparty = ctx.state.players.get(contract.ownerId);
+    toast(ctx, 'good',
+      `تمت الصفقة: ${contract.quantity} ${good.ar} مع ${counterparty?.name ?? '—'}.`,
+      `Deal closed: ${contract.quantity} ${good.en} with ${counterparty?.name ?? '—'}.`);
+    return;
+  }
+  const reasons: Record<string, [string, string]> = {
+    missing: ['لم يعد العقد متاحاً.', 'That contract is gone.'],
+    own: ['لا يمكنك قبول عقدك.', 'You cannot accept your own contract.'],
+    funds: ['لا تملك ذهباً كافياً.', 'Not enough gold.'],
+    goods: ['لا تملك البضاعة المطلوبة.', 'You do not have the goods.'],
+    capacity: ['لا توجد مساحة كافية في العربة.', 'Not enough cargo space.'],
+  };
+  const [ar, en] = reasons[result.reason ?? 'missing'] ?? reasons.missing;
+  toast(ctx, 'warn', ar, en);
+}
+
+/* ----------------------------------------------------------------- alliances */
+
+function handleAllianceCreate(ctx: CommandCtx, name: string) {
+  const result = createAlliance(ctx.state, ctx.player, name);
+  if (result.ok) {
+    return toast(ctx, 'good', `تأسّس تحالف «${result.alliance!.name}».`, `Alliance "${result.alliance!.name}" founded.`);
+  }
+  const reasons: Record<string, [string, string]> = {
+    already: ['أنت في تحالف بالفعل.', 'You are already in an alliance.'],
+    name: ['الاسم قصير جداً.', 'That name is too short.'],
+    taken: ['الاسم مستخدم.', 'That name is taken.'],
+  };
+  const [ar, en] = reasons[result.reason ?? 'name'] ?? reasons.name;
+  toast(ctx, 'warn', ar, en);
+}
+
+function handleAllianceJoin(ctx: CommandCtx, allianceId: string) {
+  const result = joinAlliance(ctx.state, ctx.player, allianceId);
+  if (result.ok) {
+    return toast(ctx, 'good', `انضممت إلى «${result.alliance!.name}».`, `You joined "${result.alliance!.name}".`);
+  }
+  const reasons: Record<string, [string, string]> = {
+    already: ['أنت في تحالف بالفعل.', 'You are already in an alliance.'],
+    missing: ['التحالف غير موجود.', 'No such alliance.'],
+    full: ['التحالف ممتلئ.', 'That alliance is full.'],
+  };
+  const [ar, en] = reasons[result.reason ?? 'missing'] ?? reasons.missing;
+  toast(ctx, 'warn', ar, en);
+}
+
 /* ---------------------------------------------------------------------- chat */
 
 function handleChat(ctx: CommandCtx, text: string) {
@@ -527,6 +609,14 @@ export function handleCommand(ctx: CommandCtx, msg: ClientMessage) {
     case 'orderPlace': handleOrderPlace(ctx, msg.companyId, msg.side, msg.price, msg.quantity); break;
     case 'orderCancel': cancelOrder(state, player, msg.orderId); break;
     case 'chat': handleChat(ctx, msg.text); break;
+    case 'contractCreate':
+      handleContractCreate(ctx, msg.side, msg.commodity, msg.quantity, msg.price);
+      break;
+    case 'contractAccept': handleContractAccept(ctx, msg.contractId); break;
+    case 'contractCancel': cancelContract(state, player, msg.contractId); break;
+    case 'allianceCreate': handleAllianceCreate(ctx, msg.name); break;
+    case 'allianceJoin': handleAllianceJoin(ctx, msg.allianceId); break;
+    case 'allianceLeave': leaveAlliance(state, player); break;
     case 'requestMarket':
       ctx.reply({ t: 'market', market: buildMarketView(state, msg.settlementId, player) });
       break;

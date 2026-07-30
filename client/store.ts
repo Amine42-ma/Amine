@@ -1,5 +1,5 @@
 import type {
-  ActiveEventView, ChatMessage, CompanyView, ConvoyView, LeaderboardRow,
+  ActiveEventView, AllianceView, ChatMessage, CompanyView, ContractView, ConvoyView, LeaderboardRow,
   MarketView, OrderView, PlayerSelf, PresencePlayer, SeasonView, SettlementView, WorldMeta,
 } from '../shared/protocol.js';
 import type { CommodityId } from '../shared/commodities.js';
@@ -21,6 +21,8 @@ export interface Store {
   market: MarketView | null;
   companies: CompanyView[];
   orders: OrderView[];
+  contracts: ContractView[];
+  alliances: AllianceView[];
   events: ActiveEventView[];
   leaderboard: LeaderboardRow[];
   chat: ChatMessage[];
@@ -45,6 +47,8 @@ export const store: Store = {
   market: null,
   companies: [],
   orders: [],
+  contracts: [],
+  alliances: [],
   events: [],
   leaderboard: [],
   chat: [],

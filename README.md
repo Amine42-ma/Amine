@@ -60,7 +60,8 @@ the top bar).
    the same good shows ▲.
 4. Repeat. Each run erodes that route's margin, so rotate between routes.
 5. Around 8,000–10,000 gold, buy your first **small shop**, stock it, and it
-   starts earning while you are away.
+   starts earning while you are away. The bank will lend you part of it — the
+   Bank panel shows exactly how much you can borrow.
 6. From there: warehouses, convoy routes that run themselves, factories,
    a company on the stock exchange, ports, ships, and eventually a global
    corporation.
@@ -133,6 +134,8 @@ city to absorb it.
 | **Workers** | Labourers, drivers, managers, accountants, guards and junior traders. Each draws a salary every minute and boosts one axis. Miss payroll and half of them walk out. |
 | **Bank** | Deposits earn interest, loans accrue it, and a credit score built from clean repayment sets your borrowing limit. |
 | **Exchange** | Take a company public, float a percentage, and trade shares through a real limit-order book. Share prices track company earnings; shareholders receive dividends. |
+| **Direct deals** | Post a contract to sell goods for gold, or to buy goods you need. Whatever you put up is held in escrow, so the counterparty can accept from anywhere in the world and neither side can renege. No house spread — dealing direct is how two merchants split the margin the city would have taken. |
+| **Alliances** | Found or join a trading bloc. Members are tagged on the leaderboard and in the contract board, and blocs are ranked by their combined net worth. |
 | **World events** | Storms, droughts, fires, earthquakes, plagues, festivals, oil shocks, trade wars, crashes and booms — each reshapes supply, demand and travel in a region or worldwide, visibly (rain, embers, confetti, screen tint). |
 | **Skills** | Negotiation, management, marketing, investment, shipping and international trade, levelled by doing the thing they govern. Effects saturate rather than running away. |
 | **Achievements** | 17 permanent badges, from *First Deal* to *Economy Emperor*, each worth prestige that survives season resets. |
@@ -157,6 +160,8 @@ server/     Authoritative simulation. Clients never compute game state.
   sim/ai.ts           NPC arbitrage merchants
   sim/bank.ts         loans, interest, payroll, net worth
   sim/stocks.ts       order book and company valuation
+  sim/contracts.ts    escrowed player-to-player deals
+  sim/alliances.ts    trading blocs
   sim/events.ts       world events
   sim/seasons.ts      the 90-day reset
   game/commands.ts    every action a player can take, validated
@@ -167,7 +172,7 @@ server/     Authoritative simulation. Clients never compute game state.
 client/     Canvas renderer + UI. No image assets: tiles are drawn procedurally.
   render/     tile atlas, camera, scene, minimap
   ui/panels/  market, build, empire, convoys, fleet, staff, bank,
-              exchange, skills, achievements, ranking, atlas
+              exchange, deals, skills, achievements, ranking, atlas
 ```
 
 **Server-authoritative.** Movement is predicted on the client and reconciled
@@ -197,14 +202,17 @@ Helper scripts:
 ```
 node scripts/devserver.mjs start|stop|restart|status   # pidfile-managed server
 node scripts/smoke.mjs                                 # full end-to-end play-through
+node scripts/multiplayer.mjs                           # two clients: deals, alliances, chat
 node scripts/balance.mjs                               # economy dispersion report
 node scripts/impact.mjs                                # price impact + recovery probe
+node scripts/load.mjs 30 20                            # 30 clients for 20s
 ```
 
 `scripts/smoke.mjs` drives a real WebSocket client through the loop a new player
 actually plays — register, travel, scout an arbitrage route, work it until the
 margin is gone, rotate to a fresh one, then build, staff and stock a shop and
-verify it earns.
+verify it earns. `scripts/multiplayer.mjs` runs two connections against each
+other to check contracts, alliances, presence and chat actually cross the wire.
 
 ---
 

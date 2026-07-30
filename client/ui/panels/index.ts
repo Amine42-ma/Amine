@@ -5,6 +5,7 @@ import { renderMarket } from './market.js';
 import { renderBuild } from './build.js';
 import { renderEmpire, renderConvoys, renderFleet, renderStaff } from './empire.js';
 import { renderBank, renderExchange } from './finance.js';
+import { renderDeals } from './deals.js';
 import { renderSkills, renderAchievements, renderRanking, renderAtlas } from './progress.js';
 
 /** The dock's panel registry: one entry per screen the player can open. */
@@ -25,6 +26,7 @@ export const PANELS: PanelDef[] = [
   { id: 'staff', icon: '🧑‍💼', labelKey: 'staff', render: renderStaff },
   { id: 'bank', icon: '🏦', labelKey: 'bankPanel', render: renderBank },
   { id: 'exchange', icon: '📈', labelKey: 'exchange', render: renderExchange },
+  { id: 'deals', icon: '🤝', labelKey: 'deals', render: renderDeals },
   { id: 'skills', icon: '🎯', labelKey: 'skills', render: renderSkills },
   { id: 'achievements', icon: '🏆', labelKey: 'achievements', render: renderAchievements },
   { id: 'ranking', icon: '👑', labelKey: 'ranking', render: renderRanking },
@@ -77,7 +79,7 @@ export function initPanels() {
   });
 
   // Any state the panels read can trigger a re-render.
-  for (const key of ['self', 'market', 'exchange', 'leaderboard', 'settlements', 'events', 'lang']) {
+  for (const key of ['self', 'market', 'exchange', 'contracts', 'leaderboard', 'settlements', 'events', 'lang']) {
     on(key, () => {
       if (!store.self) return;
       renderActive();

@@ -123,6 +123,27 @@ export interface ActiveEventView {
   endsAt: number;
 }
 
+export interface ContractView {
+  id: string;
+  side: 'sell' | 'buy';
+  commodity: CommodityId;
+  quantity: number;
+  /** Total gold for the whole lot, not per unit. */
+  price: number;
+  ownerId: string;
+  ownerName: string;
+  ownerAlliance: string | null;
+  createdAt: number;
+}
+
+export interface AllianceView {
+  id: string;
+  name: string;
+  founderName: string;
+  members: number;
+  netWorth: number;
+}
+
 export interface SkillView {
   id: SkillId;
   level: number;
@@ -156,6 +177,8 @@ export interface PlayerSelf {
   shares: Record<string, number>;
   companyId: string | null;
   visitedSettlements: string[];
+  allianceId: string | null;
+  allianceName: string | null;
   payrollDue: number;
   lastPayrollCost: number;
 }
@@ -176,6 +199,7 @@ export interface LeaderboardRow {
   netWorth: number;
   isNpc: boolean;
   companyName?: string;
+  allianceName?: string;
 }
 
 export interface ChatMessage {
@@ -227,6 +251,13 @@ export type ClientMessage =
   | { t: 'orderPlace'; companyId: string; side: 'buy' | 'sell'; price: number; quantity: number }
   | { t: 'orderCancel'; orderId: string }
   | { t: 'chat'; text: string }
+  | { t: 'contractCreate'; side: 'sell' | 'buy'; commodity: CommodityId; quantity: number; price: number }
+  | { t: 'contractAccept'; contractId: string }
+  | { t: 'contractCancel'; contractId: string }
+  | { t: 'allianceCreate'; name: string }
+  | { t: 'allianceJoin'; allianceId: string }
+  | { t: 'allianceLeave' }
+  | { t: 'requestContracts' }
   | { t: 'requestMarket'; settlementId: string }
   | { t: 'requestExchange' }
   | { t: 'ping'; at: number };
@@ -248,4 +279,5 @@ export type ServerMessage =
   | { t: 'achievement'; id: string }
   | { t: 'season'; season: SeasonView; reset: boolean }
   | { t: 'settlements'; settlements: SettlementView[] }
+  | { t: 'contracts'; contracts: ContractView[]; alliances: AllianceView[] }
   | { t: 'pong'; at: number; now: number };

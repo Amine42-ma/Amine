@@ -41,6 +41,7 @@ export function rollSeason(state: GameState, now = Date.now()) {
   state.convoys.clear();
   state.companies.clear();
   state.orders.clear();
+  state.contracts.clear();
   state.events.length = 0;
   state.priceIndex = 1;
   state.worldVolume = {};

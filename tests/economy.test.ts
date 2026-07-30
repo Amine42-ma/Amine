@@ -13,6 +13,8 @@ import { createCompany, placeOrder } from '../server/sim/stocks.js';
 import { makePlayer } from '../server/game/player.js';
 import { rollSeason } from '../server/sim/seasons.js';
 import { grant } from '../server/game/achievements.js';
+import { acceptContract, cancelContract, createContract, expireContracts, CONTRACT_TTL_MS } from '../server/sim/contracts.js';
+import { createAlliance, joinAlliance, leaveAlliance } from '../server/sim/alliances.js';
 import type { GameState } from '../server/game/state.js';
 
 const SEED = 12345;
@@ -336,5 +338,136 @@ describe('seasons', () => {
         assert.ok(market.goods[id].stock > 0, `${id} has no stock after reset`);
       }
     }
+  });
+});
+
+describe('player-to-player contracts', () => {
+  test('a sale escrows the goods and settles against a buyer', () => {
+    const state = freshWorld();
+    const seller = addHuman(state, 'seller');
+    const buyer = addHuman(state, 'buyer');
+    seller.inventory.cloth = 40;
+    buyer.gold = 5000;
+
+    const created = createContract(state, seller, 'sell', 'cloth', 30, 1800);
+    assert.ok(created.ok, `create failed: ${created.reason}`);
+    assert.equal(seller.inventory.cloth, 10, 'sold goods are escrowed immediately');
+    assert.equal(state.contracts.size, 1);
+
+    const contractId = [...state.contracts.keys()][0];
+    const sellerGoldBefore = seller.gold;
+    const accepted = acceptContract(state, buyer, contractId);
+    assert.ok(accepted.ok, `accept failed: ${accepted.reason}`);
+
+    assert.equal(buyer.inventory.cloth, 30, 'the buyer receives the goods');
+    assert.equal(buyer.gold, 5000 - 1800, 'the buyer pays');
+    assert.equal(seller.gold, sellerGoldBefore + 1800, 'the seller is paid');
+    assert.equal(state.contracts.size, 0, 'the contract is consumed');
+  });
+
+  test('a purchase escrows gold and pays the deliverer', () => {
+    const state = freshWorld();
+    const buyer = addHuman(state, 'buyer');
+    const supplier = addHuman(state, 'supplier');
+    buyer.gold = 5000;
+    supplier.inventory.iron = 50;
+
+    const created = createContract(state, buyer, 'buy', 'iron', 40, 900);
+    assert.ok(created.ok, `create failed: ${created.reason}`);
+    assert.equal(buyer.gold, 5000 - 900, 'the offered gold is escrowed');
+
+    const contractId = [...state.contracts.keys()][0];
+    const supplierGoldBefore = supplier.gold;
+    assert.ok(acceptContract(state, supplier, contractId).ok);
+
+    assert.equal(supplier.gold, supplierGoldBefore + 900, 'the supplier is paid from escrow');
+    assert.equal(supplier.inventory.iron, 10, 'the supplier hands over the goods');
+    assert.equal(buyer.inventory.iron, 40, 'the buyer receives them');
+  });
+
+  test('you cannot escrow goods or gold you do not have', () => {
+    const state = freshWorld();
+    const player = addHuman(state);
+    assert.equal(createContract(state, player, 'sell', 'cloth', 10, 500).reason, 'goods');
+    assert.equal(createContract(state, player, 'buy', 'cloth', 10, 999_999).reason, 'funds');
+    assert.equal(state.contracts.size, 0, 'no escrow means no contract');
+  });
+
+  test('cancelling returns the escrow intact', () => {
+    const state = freshWorld();
+    const seller = addHuman(state);
+    seller.inventory.wheat = 25;
+
+    assert.ok(createContract(state, seller, 'sell', 'wheat', 25, 300).ok);
+    assert.equal(seller.inventory.wheat, undefined);
+
+    const contractId = [...state.contracts.keys()][0];
+    assert.ok(cancelContract(state, seller, contractId));
+    assert.equal(seller.inventory.wheat, 25, 'the goods come back');
+    assert.equal(state.contracts.size, 0);
+  });
+
+  test('expired contracts refund rather than vanish', () => {
+    const state = freshWorld();
+    const seller = addHuman(state);
+    seller.inventory.wheat = 25;
+    assert.ok(createContract(state, seller, 'sell', 'wheat', 25, 300).ok);
+
+    expireContracts(state, Date.now() + CONTRACT_TTL_MS + 1);
+    assert.equal(state.contracts.size, 0, 'the stale contract is dropped');
+    assert.equal(seller.inventory.wheat, 25, 'and the escrow is returned');
+  });
+
+  test('a contract cannot be accepted twice', () => {
+    const state = freshWorld();
+    const seller = addHuman(state, 'seller');
+    const first = addHuman(state, 'first');
+    const second = addHuman(state, 'second');
+    seller.inventory.coal = 20;
+    first.gold = 5000;
+    second.gold = 5000;
+
+    assert.ok(createContract(state, seller, 'sell', 'coal', 20, 400).ok);
+    const contractId = [...state.contracts.keys()][0];
+    assert.ok(acceptContract(state, first, contractId).ok);
+    assert.equal(acceptContract(state, second, contractId).reason, 'missing');
+    assert.equal(second.inventory.coal, undefined, 'the second taker gets nothing');
+  });
+});
+
+describe('alliances', () => {
+  test('founding, joining and leaving keep membership consistent', () => {
+    const state = freshWorld();
+    const founder = addHuman(state, 'founder');
+    const joiner = addHuman(state, 'joiner');
+
+    const created = createAlliance(state, founder, 'Silk Road');
+    assert.ok(created.ok);
+    assert.equal(founder.allianceId, created.alliance!.id);
+
+    assert.ok(joinAlliance(state, joiner, created.alliance!.id).ok);
+    assert.equal(created.alliance!.members.length, 2);
+
+    assert.ok(leaveAlliance(state, joiner).ok);
+    assert.equal(joiner.allianceId, null);
+    assert.equal(created.alliance!.members.length, 1);
+  });
+
+  test('names are unique and you can only be in one', () => {
+    const state = freshWorld();
+    const a = addHuman(state, 'a');
+    const b = addHuman(state, 'b');
+    assert.ok(createAlliance(state, a, 'Hanseatic League').ok);
+    assert.equal(createAlliance(state, b, 'hanseatic league').reason, 'taken');
+    assert.equal(createAlliance(state, a, 'Another Bloc').reason, 'already');
+  });
+
+  test('the last member leaving dissolves the alliance', () => {
+    const state = freshWorld();
+    const solo = addHuman(state);
+    const created = createAlliance(state, solo, 'Solo Bloc');
+    assert.ok(created.ok);
+    assert.ok(leaveAlliance(state, solo).ok);
+    assert.equal(state.alliances.size, 0);
   });
 });

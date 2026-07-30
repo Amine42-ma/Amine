@@ -5,7 +5,7 @@ import { SKILL_IDS, xpForLevel } from '../../shared/skills.js';
 import { AOI_RADIUS } from '../../shared/constants.js';
 import { dist, round2 } from '../../shared/util.js';
 import type {
-  ActiveEventView, CompanyView, ConvoyView, LeaderboardRow, MarketView,
+  ActiveEventView, AllianceView, CompanyView, ContractView, ConvoyView, LeaderboardRow, MarketView,
   OrderView, OwnedBuildingView, PlayerSelf, PresencePlayer, SeasonView,
   SettlementView, SkillView, WorldMeta,
 } from '../../shared/protocol.js';
@@ -178,6 +178,8 @@ export function buildSelf(state: GameState, p: Player): PlayerSelf {
     shares: { ...p.shares },
     companyId: p.companyId,
     visitedSettlements: p.visited.slice(),
+    allianceId: p.allianceId,
+    allianceName: p.allianceId ? state.alliances.get(p.allianceId)?.name ?? null : null,
     payrollDue: p.nextPayrollAt,
     lastPayrollCost: Math.round(p.lastPayrollCost),
   };
@@ -252,15 +254,57 @@ export function buildLeaderboard(state: GameState, limit = 20): LeaderboardRow[]
   const rows: LeaderboardRow[] = [];
   for (const p of state.players.values()) {
     const company = p.companyId ? state.companies.get(p.companyId) : null;
+    const alliance = p.allianceId ? state.alliances.get(p.allianceId) : null;
     rows.push({
       id: p.id,
       name: p.name,
       netWorth: Math.round(netWorth(state, p)),
       isNpc: p.isNpc,
       companyName: company?.name,
+      allianceName: alliance?.name,
     });
   }
   return rows.sort((a, b) => b.netWorth - a.netWorth).slice(0, limit);
+}
+
+export function buildContracts(state: GameState): ContractView[] {
+  const out: ContractView[] = [];
+  for (const c of state.contracts.values()) {
+    const owner = state.players.get(c.ownerId);
+    const alliance = owner?.allianceId ? state.alliances.get(owner.allianceId) : null;
+    out.push({
+      id: c.id,
+      side: c.side,
+      commodity: c.commodity,
+      quantity: c.quantity,
+      price: Math.round(c.price),
+      ownerId: c.ownerId,
+      ownerName: owner?.name ?? '—',
+      ownerAlliance: alliance?.name ?? null,
+      createdAt: c.createdAt,
+    });
+  }
+  return out.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/** Alliances ranked by the combined net worth of their members. */
+export function buildAlliances(state: GameState): AllianceView[] {
+  const out: AllianceView[] = [];
+  for (const a of state.alliances.values()) {
+    let worth = 0;
+    for (const memberId of a.members) {
+      const member = state.players.get(memberId);
+      if (member) worth += netWorth(state, member);
+    }
+    out.push({
+      id: a.id,
+      name: a.name,
+      founderName: state.players.get(a.founderId)?.name ?? '—',
+      members: a.members.length,
+      netWorth: Math.round(worth),
+    });
+  }
+  return out.sort((x, y) => y.netWorth - x.netWorth);
 }
 
 export function buildEvents(state: GameState): ActiveEventView[] {

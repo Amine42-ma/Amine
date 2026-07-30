@@ -13,6 +13,8 @@ import { stepEvents } from './sim/events.js';
 import { runPayroll, stepBank } from './sim/bank.js';
 import { payDividends, stepExchange } from './sim/stocks.js';
 import { rollSeason, shouldRollSeason } from './sim/seasons.js';
+import { expireContracts } from './sim/contracts.js';
+import { pruneAlliances } from './sim/alliances.js';
 import { checkAchievements } from './game/achievements.js';
 import {
   buildCompanies, buildEvents, buildLeaderboard, buildOrders, buildSeason,
@@ -58,6 +60,9 @@ export function startLoop(state: GameState, hub: Hub, onSave: () => void): LoopH
     if (started.length > 0 || ended.length > 0) {
       hub.broadcast({ t: 'events', active: buildEvents(state) });
     }
+
+    expireContracts(state, now);
+    pruneAlliances(state);
 
     const payroll = runPayroll(state, now);
     for (const result of payroll) {

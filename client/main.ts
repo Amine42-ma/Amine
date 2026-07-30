@@ -286,6 +286,11 @@ onMessage((msg: ServerMessage) => {
       store.orders = msg.orders;
       bump('exchange');
       break;
+    case 'contracts':
+      store.contracts = msg.contracts;
+      store.alliances = msg.alliances;
+      bump('contracts');
+      break;
     case 'events': store.events = msg.active ?? []; bump('events'); break;
     case 'leaderboard': store.leaderboard = msg.rows; bump('leaderboard'); break;
     case 'chat': store.chat = msg.messages; bump('chat'); break;

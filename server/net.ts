@@ -7,8 +7,8 @@ import { hashPassword, makePlayer, newToken, verifyPassword } from './game/playe
 import { handleCommand, type Session } from './game/commands.js';
 import { startingSettlement } from './game/rules.js';
 import {
-  buildCompanies, buildEvents, buildLeaderboard, buildOrders, buildPresence,
-  buildSeason, buildSelf, buildSettlementViews, buildWorldMeta,
+  buildAlliances, buildCompanies, buildContracts, buildEvents, buildLeaderboard,
+  buildOrders, buildPresence, buildSeason, buildSelf, buildSettlementViews, buildWorldMeta,
 } from './game/views.js';
 
 export interface Client {
@@ -82,6 +82,15 @@ export class Hub {
     const player = this.state.players.get(client.playerId);
     if (!player) return;
 
+    if (msg.t === 'requestContracts') {
+      this.send(client, {
+        t: 'contracts',
+        contracts: buildContracts(this.state),
+        alliances: buildAlliances(this.state),
+      });
+      return;
+    }
+
     if (msg.t === 'requestExchange') {
       this.send(client, { t: 'exchange', companies: buildCompanies(this.state), orders: buildOrders(this.state) });
       return;
@@ -102,6 +111,13 @@ export class Hub {
     if (msg.t !== 'move' && msg.t !== 'ping') this.send(client, { t: 'self', self: buildSelf(this.state, player) });
     if (isExchangeAction(msg)) {
       this.broadcast({ t: 'exchange', companies: buildCompanies(this.state), orders: buildOrders(this.state) });
+    }
+    if (isDealAction(msg)) {
+      this.broadcast({
+        t: 'contracts',
+        contracts: buildContracts(this.state),
+        alliances: buildAlliances(this.state),
+      });
     }
     if (isWorldAction(msg)) {
       this.broadcast({ t: 'settlements', settlements: buildSettlementViews(this.state) });
@@ -169,6 +185,11 @@ export class Hub {
     this.send(client, { t: 'leaderboard', rows: buildLeaderboard(this.state) });
     this.send(client, { t: 'chat', messages: this.state.chat.slice(-40) });
     this.send(client, { t: 'exchange', companies: buildCompanies(this.state), orders: buildOrders(this.state) });
+    this.send(client, {
+      t: 'contracts',
+      contracts: buildContracts(this.state),
+      alliances: buildAlliances(this.state),
+    });
   }
 
   send(client: Client, msg: ServerMessage) {
@@ -228,6 +249,11 @@ export class Hub {
 
 function isExchangeAction(msg: ClientMessage): boolean {
   return msg.t === 'orderPlace' || msg.t === 'orderCancel' || msg.t === 'companyCreate';
+}
+
+function isDealAction(msg: ClientMessage): boolean {
+  return msg.t === 'contractCreate' || msg.t === 'contractAccept' || msg.t === 'contractCancel'
+    || msg.t === 'allianceCreate' || msg.t === 'allianceJoin' || msg.t === 'allianceLeave';
 }
 
 function isWorldAction(msg: ClientMessage): boolean {

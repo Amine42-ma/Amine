@@ -47,6 +47,8 @@ function serialize(state: GameState) {
     }),
     companies: [...state.companies.values()],
     orders: [...state.orders.values()],
+    contracts: [...state.contracts.values()],
+    alliances: [...state.alliances.values()],
     markets: [...state.markets.values()].map((m) => ({
       settlementId: m.settlementId,
       tariff: m.tariff,
@@ -80,6 +82,8 @@ export function createFreshState(seed: number): GameState {
     markets: new Map(),
     companies: new Map(),
     orders: new Map(),
+    contracts: new Map(),
+    alliances: new Map(),
     events: [],
     season: { index: 1, startedAt: now, endsAt: now + SEASON_MS },
     chat: [],
@@ -125,6 +129,8 @@ export async function loadState(opts: SaveOptions): Promise<GameState> {
   for (const c of data.convoys ?? []) state.convoys.set(c.id, c);
   for (const co of data.companies ?? []) state.companies.set(co.id, co);
   for (const o of data.orders ?? []) state.orders.set(o.id, o);
+  for (const c of data.contracts ?? []) state.contracts.set(c.id, c);
+  for (const a of data.alliances ?? []) state.alliances.set(a.id, a);
 
   for (const [id, occupied] of data.occupancy ?? []) {
     const s = state.map.settlements.find((x) => x.id === id);

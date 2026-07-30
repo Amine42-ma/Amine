@@ -112,6 +112,7 @@ export interface Player {
   loans: Loan[];
 
   companyId: string | null;
+  allianceId: string | null;
   shares: Record<string, number>;
 
   achievements: string[];
@@ -167,6 +168,25 @@ export interface Order {
   placedAt: number;
 }
 
+export interface Contract {
+  id: string;
+  ownerId: string;
+  side: 'sell' | 'buy';
+  commodity: CommodityId;
+  quantity: number;
+  /** Total gold for the whole lot. */
+  price: number;
+  createdAt: number;
+}
+
+export interface Alliance {
+  id: string;
+  name: string;
+  founderId: string;
+  members: string[];
+  createdAt: number;
+}
+
 export interface ActiveEvent {
   id: string;
   defId: string;
@@ -199,6 +219,8 @@ export interface GameState {
   markets: Map<string, Market>;
   companies: Map<string, Company>;
   orders: Map<string, Order>;
+  contracts: Map<string, Contract>;
+  alliances: Map<string, Alliance>;
   events: ActiveEvent[];
   season: Season;
   chat: ChatEntry[];

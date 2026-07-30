@@ -31,6 +31,7 @@ export function makePlayer(id: string, name: string, x: number, y: number): Play
     convoys: [],
     loans: [],
     companyId: null,
+    allianceId: null,
     shares: {},
     achievements: [],
     visited: [],

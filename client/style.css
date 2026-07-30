@@ -186,21 +186,27 @@ button { font-family: inherit; cursor: pointer; }
 
 /* ------------------------------------------------------------------- dock */
 
+/* The dock grows with the feature set, so it must never rely on there being
+   room beside it — it caps at the viewport and scrolls instead. */
 .dock {
   position: absolute; bottom: 16px; inset-inline-start: 50%;
   transform: translateX(50%);
-  display: flex; gap: 6px;
+  display: flex; gap: 4px;
   background: rgba(13, 19, 31, 0.92);
   border: 1px solid var(--edge);
   border-radius: 16px;
   padding: 7px;
   box-shadow: var(--shadow);
+  max-width: calc(100vw - 28px);
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.dock::-webkit-scrollbar { height: 0; }
 [dir="ltr"] .dock { transform: translateX(-50%); }
 
 .dock button {
   display: grid; place-items: center; gap: 2px;
-  width: 62px; padding: 7px 4px;
+  width: 58px; flex: 0 0 auto; padding: 7px 3px;
   border: none; background: none; color: var(--ink-dim);
   border-radius: 11px; font-size: 10px;
   transition: background 0.15s, color 0.15s;
@@ -331,8 +337,8 @@ select {
 /* ------------------------------------------------------------------ chat */
 
 .chat {
-  position: absolute; bottom: 16px; inset-inline-start: 14px;
-  width: 300px;
+  position: absolute; bottom: 104px; inset-inline-start: 14px;
+  width: 290px;
 }
 .chat-log {
   max-height: 168px; overflow-y: auto;
@@ -406,7 +412,7 @@ select {
 
 @media (max-width: 900px) {
   .minimap-wrap, .nearby { display: none; }
-  .chat { width: 200px; bottom: 92px; }
+  .chat { width: 190px; bottom: 104px; }
   .panel { inset-inline: 8px; width: auto; bottom: 88px; }
   .price-ticker { display: none; }
   .stat { min-width: auto; padding: 5px 9px; }
