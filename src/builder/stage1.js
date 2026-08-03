@@ -52,8 +52,14 @@ export function mountStage1(view, side, ctx) {
   }
 
   function makeNode(c, isStat) {
+    const isStick = !isStat && CONTROL_DEFS[c.id]?.kind === 'stick';
     const body = el('div', { class: 'body' },
-      isStat ? el('span', { class: 'txt' }, statPreview(c)) : iconOf(c));
+      isStat ? el('span', { class: 'txt' }, statPreview(c))
+        : isStick && !c.icon
+          ? el('div', { style: { width: '42%', height: '42%', borderRadius: '50%',
+              background: 'radial-gradient(circle at 35% 30%,#fff,#9c8fd0)',
+              boxShadow: '0 3px 10px rgba(0,0,0,.6)' } })
+          : iconOf(c));
     const hnd = el('div', { class: 'hnd' });
     const tag = el('div', { class: 'tag' }, (isStat ? STAT_DEFS[c.id] : CONTROL_DEFS[c.id])?.label || c.id);
     const n = el('div', { class: 'hw' + (c.shape === 'sq' || isStat ? ' sq' : '') }, body, hnd, tag);

@@ -33,6 +33,7 @@ const html = `<!doctype html>
 <meta name="theme-color" content="#120b2e">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%91%91%3C/text%3E%3C/svg%3E">
 <title>بطل رويال — Royal Builder</title>
 </head>
 <body>
