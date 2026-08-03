@@ -195,7 +195,12 @@ export function defaultProject() {
 
     match: {
       view: 'tps',            // tps | fps
-      mode: 'solo',           // solo | duo | squad
+      mode: 'solo',           // solo | duo | squad (الديو والسكواد للأون لاين فقط)
+      online: false,          // true = ضد لاعبين حقيقيين، false = تدريب ضد الروبوتات
+      netTransport: 'auto',   // auto | p2p | local
+      netBroker: '',          // وسيط مخصّص (اتركه فارغاً للوسيط العام)
+      netWait: 25,            // ثوانٍ انتظار اللاعبين قبل البدء
+      netMinPlayers: 2,
       lookSens: 1.0,          // حساسية تحريك الكاميرا
       aimAssist: 0.7,         // قوة تسهيل التصويب على الهاتف
       autoFire: false,        // إطلاق تلقائي عند وجود عدو في المرمى

@@ -14,8 +14,10 @@ import {
 import { currentHero, MODES } from '../core/store.js';
 import { Inventory, buildWeaponMesh, autoOrientWeapon, crateLoot, AMMO_KINDS,
          makeWeaponThumb } from './weapons.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Character, buildChute, nameTag } from './character.js';
 import { HUD, Minimap } from './hud.js';
+import { Net } from './net.js';
 
 const BOT_NAMES = ['Ya™Zide', '水||Sw4th', 'Amine', 'Nova', 'Kito', 'Ryu', 'Zara', 'Milo', 'Ghost', 'Blaze',
   'Sora', 'Rex', 'Neo', 'Vex', 'Juno', 'Kai', 'Lynx', 'Ozz', 'Pixel', 'Quin', 'Raze', 'Sage', 'Tank',
@@ -23,9 +25,11 @@ const BOT_NAMES = ['Ya™Zide', '水||Sw4th', 'Amine', 'Nova', 'Kito', 'Ryu', 'Z
 const BOT_COLORS = ['#ff4d5e', '#25d3ff', '#39e07b', '#c56bff', '#ff8a1e', '#f5f5f5', '#8b5cf6', '#14b8a6'];
 
 export class Game {
-  constructor(root, project, { onExit, onRestart, preview = false } = {}) {
+  constructor(root, project, { onExit, onRestart, preview = false, net = null } = {}) {
     this.root = root;
     this.P = project;
+    this.net = net;                       // جلسة أون لاين إن وُجدت
+    this.remote = new Map();              // id -> {ch, pos, ...}
     this.onExit = onExit;
     this.onRestart = onRestart;
     this.preview = preview;
@@ -60,6 +64,15 @@ export class Game {
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.35, 4200);
+
+    // بيئة انعكاس (PMREM) — بدونها تبدو خامات PBR مسطّحة بلا لمعان
+    try {
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      pmrem.compileEquirectangularShader();
+      this.envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
+      this.scene.environment = this.envRT.texture;
+      pmrem.dispose();
+    } catch (e) { console.warn('env', e); }
 
     // ---- تحميل النماذج ----
     onProgress(0.03, 'تحميل الخريطة…');
@@ -148,8 +161,8 @@ export class Game {
     });
     this.node.append(this.bigmap);
 
-    this.stats = { kills: 0, alive: P.match.bots + 1, rank: P.match.bots + 1, hp: 100, maxHp: 100,
-                   shield: 0 };
+    const nAlive = this.net ? Math.max(2, this.net.count()) : P.match.bots + 1;
+    this.stats = { kills: 0, alive: nAlive, rank: nAlive, hp: 100, maxHp: 100, shield: 0 };
     this.hud.setThumbs(this.wthumbs);
     this.refreshGunModel();
     this.hud.setHP(100, 100, 0);
@@ -309,8 +322,9 @@ export class Game {
   buildBots() {
     this.bots = [];
     const mode = MODES[this.P.match.mode] || MODES.solo;
-    this.teamSize = mode.size;
-    const n = this.P.match.bots;
+    this.teamSize = this.net ? mode.size : 1;      // الفرق للأون لاين فقط
+    // في الأون لاين لا وجود للروبوتات إطلاقاً — الخصوم لاعبون حقيقيون
+    const n = this.net ? 0 : this.P.match.bots;
     const spawns = spawnPoints(this.an, n + 6);
     for (let i = 0; i < n; i++) {
       const col = i < (MODES[this.P.match.mode] || MODES.solo).size - 1 ? '#39e07b' : pick(BOT_COLORS);
@@ -462,13 +476,8 @@ export class Game {
         if (url) {
           try {
             const g = await loadGLB(url);
-            g.scene.traverse((o) => {
-              if (o.isMesh) {
-                o.castShadow = true;
-                const ms = Array.isArray(o.material) ? o.material : [o.material];
-                for (const m of ms) if (m) { m.side = THREE.FrontSide; }
-              }
-            });
+            // لا نلمس خامات النموذج إطلاقاً — كلها doubleSided وتفقد أجزاءها إن غيّرناها
+            g.scene.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
             mesh = autoOrientWeapon(g.scene, def.len || 1);
           } catch (e) { console.warn('weapon glb', def.name, e); }
         }
@@ -480,7 +489,7 @@ export class Game {
     this.wthumbs = {};
     for (const def of this.wdefs) {
       const m = this.wmeshCache.get(def.id);
-      if (m) this.wthumbs[def.id] = makeWeaponThumb(m);
+      if (m) this.wthumbs[def.id] = makeWeaponThumb(m, 512, 210, this.envRT?.texture || null);
     }
 
     this.__assetURL = assetURL;      // للتشخيص من الاختبارات
@@ -544,7 +553,7 @@ export class Game {
     const sp = Math.hypot(this.vel.x, this.vel.z);
     this._gunT = (this._gunT || 0) + dt * (4 + sp * 1.3);
     this._kick = Math.max(0, (this._kick || 0) - dt * 9);
-    const ads = this.hud.input.aiming || this.hud.input.scope;
+    const ads = this.hud.input.aiming || this.hud.input.scopeOn;
     const bob = sp > 0.5 ? 0.011 * Math.min(sp / 8, 1) : 0;
     const tx = (ads ? 0 : d.fps.px) + Math.cos(this._gunT) * bob;
     const ty = (ads ? -0.10 : d.fps.py) + Math.abs(Math.sin(this._gunT)) * bob;
@@ -583,6 +592,112 @@ export class Game {
       d.el.style.top = (-v.y * 0.5 + 0.5) * 100 + '%';
       d.el.style.opacity = String(Math.max(0, 1 - d.t / 1.05));
       d.el.style.transform = `translate(-50%,-50%) scale(${1 + (d.kill ? 0.35 : 0.15) * Math.min(d.t * 4, 1)})`;
+    }
+  }
+
+  // =========================================================
+  //  اللاعبون عن بُعد (أون لاين)
+  // =========================================================
+  ensureRemote(id, info) {
+    let r = this.remote.get(id);
+    if (r) return r;
+    const hero = info?.hero || {};
+    const ch = new Character({
+      body: hero.body || '#25d3ff', belly: hero.belly || '#ffffff',
+      eye: hero.eye || '#101018', outline: hero.outline || '#0b1a24',
+      height: hero.height || 1, width: hero.width || 1, eyeSize: hero.eyeSize || 1,
+      outlineOn: false,
+    });
+    const tag = nameTag(info?.name || 'لاعب', '#25d3ff');
+    tag.position.y = ch.totalH + 0.55;
+    ch.group.add(tag);
+    this.scene.add(ch.group);
+    r = { id, ch, tag, pos: new THREE.Vector3(), tgt: new THREE.Vector3(),
+          yaw: 0, tyaw: 0, speed: 0, hp: 100, alive: true, ally: false,
+          name: info?.name || 'لاعب', landed: true, last: performance.now() };
+    this.remote.set(id, r);
+    return r;
+  }
+
+  removeRemote(id) {
+    const r = this.remote.get(id);
+    if (!r) return;
+    this.scene.remove(r.ch.group);
+    r.ch.dispose();
+    this.remote.delete(id);
+  }
+
+  updRemote(dt) {
+    if (!this.net) return;
+    // أرسل حالتك ~15 مرة في الثانية
+    this._netT = (this._netT || 0) + dt;
+    if (this._netT > 1 / 15) {
+      this._netT = 0;
+      this.net.sendState({
+        x: +this.pos.x.toFixed(2), y: +this.pos.y.toFixed(2), z: +this.pos.z.toFixed(2),
+        r: +this.player.st.yaw.toFixed(2),
+        s: +Math.hypot(this.vel.x, this.vel.z).toFixed(1),
+        h: Math.round(this.stats.hp), ph: this.phase,
+        w: this.inv?.gun?.def?.id || null,
+      });
+    }
+    // طبّق حالات الآخرين
+    for (const p of this.net.players.values()) {
+      if (p.self || !p.state) continue;
+      const r = this.ensureRemote(p.id, p);
+      const st = p.state;
+      r.tgt.set(st.x, st.y, st.z);
+      r.tyaw = st.r; r.speed = st.s; r.hp = st.h;
+      r.alive = st.h > 0;
+      r.landed = st.ph === 'ground';
+      r.last = p.last || performance.now();
+    }
+    // احذف من غادر
+    for (const id of [...this.remote.keys()]) {
+      if (!this.net.players.has(id)) this.removeRemote(id);
+    }
+    // حرّك بسلاسة
+    for (const r of this.remote.values()) {
+      r.pos.lerp(r.tgt, 1 - Math.exp(-14 * dt));
+      let d = r.tyaw - r.yaw;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      r.yaw += d * Math.min(1, 16 * dt);
+      r.ch.group.position.copy(r.pos);
+      r.ch.group.visible = r.alive && r.landed;
+      r.ch.update(dt, { speed: r.speed, grounded: true, groundY: r.pos.y, yaw: r.yaw, turnSnap: true });
+      r.tag.visible = r.pos.distanceTo(this.pos) < 90;
+    }
+  }
+
+  /** أحداث الشبكة الواردة */
+  netEvent(from, e) {
+    if (!e || from === this.net?.self) {
+      if (e?.k === 'hit' && e.to === this.net?.self) { /* تجاهل صدى نفسك */ }
+      return;
+    }
+    if (e.k === 'shot') {
+      const a = new THREE.Vector3(e.a[0], e.a[1], e.a[2]);
+      const b = new THREE.Vector3(e.b[0], e.b[1], e.b[2]);
+      this.addTracer(a, b);
+      const d = a.distanceTo(this.pos);
+      if (d < 120) A.sfx.gun(e.w || 'ar');
+    } else if (e.k === 'hit' && e.to === this.net.self) {
+      this._lastHitBy = from;
+      this.damage(e.d, e.from || 'لاعب');
+    } else if (e.k === 'die') {
+      const r = this.remote.get(from);
+      if (r) { r.alive = false; r.ch.group.visible = false; }
+      this.stats.alive = Math.max(1, this.stats.alive - 1);
+      this.stats.rank = this.stats.alive;
+      this.hud.setStat('alive', this.stats.alive);
+      this.hud.setStat('rank', '#' + this.stats.rank);
+      this.hud.feed(`☠️ ${e.n || 'لاعب'} خرج`);
+      if (e.by === this.net.self) {
+        this.stats.kills++;
+        this.hud.setStat('kills', this.stats.kills);
+        A.sfx.kill();
+      }
     }
   }
 
@@ -799,6 +914,7 @@ export class Game {
     }
 
     this.updZone(dt);
+    this.updRemote(dt);
     this.updDamageNumbers(dt);
     this.updFpsGun(dt);
     this.updGunVisibility();
@@ -999,6 +1115,7 @@ export class Game {
     // إخفاء جسم اللاعب في المنظور الأول (يبقى الظل)
     this.player.tilt.visible = this.view !== 'fps';
 
+    this.hud.setCrosshair(!!this.inv?.hasGun, inp.scopeOn || inp.aiming);
     // الحدود
     this.checkBounds(dt);
     // إطلاق النار
@@ -1009,9 +1126,9 @@ export class Game {
     if (this.view === 'fps') this.updCameraFPS(dt);
     else this.updCamera(dt, this.camDist * (inp.aiming ? 0.72 : 1) * (run ? 1.12 : 1), inp.aiming ? 1.7 : 2.1);
 
-    // تقريب احترافي مختلف لكل سلاح
+    // تقريب احترافي مختلف لكل سلاح — يبقى مثبّتاً حتى تُلغيه
     const gunDef = this.inv?.gun?.def;
-    const scoped = inp.scope || inp.aiming;
+    const scoped = inp.scopeOn || inp.aiming;
     const baseFov = this.view === 'fps' ? 74 : 62;
     const adsFov = gunDef ? (gunDef.adsFov || 42) : 46;
     const wantFov = scoped ? adsFov : baseFov + (run ? 7 : 0);
@@ -1174,6 +1291,8 @@ export class Game {
     // إطلاق: زر الضرب، أو نقرة سريعة على الشاشة، أو تلقائي
     const tap = this.hud.consume('tapFire');
     const wantFire = inp.shoot || tap || (this.P.match.autoFire && this.enemyInSight());
+    // بمجرد بدء الإطلاق يدخل وضع التصويب تلقائياً ويبقى فيه
+    if (wantFire && !inp.scopeOn && !inp.aiming) { inp.scopeOn = true; this.hud.setScopeBtn(true); }
     if (!wantFire || this.fireCd > 0) { this.hud.setAmmo(inv.hud()); return; }
     if (g.mag <= 0) { A.sfx.dryfire(); this.fireCd = 0.35; return; }
 
@@ -1186,7 +1305,7 @@ export class Game {
     from.y += this.player.totalH * (this.view === 'fps' ? 0.92 : 0.72);
     const base = new THREE.Vector3();
     this.camera.getWorldDirection(base);
-    const ads = inp.aiming || inp.scope;
+    const ads = inp.aiming || inp.scopeOn;
     const spread = ads ? (d.adsSpread ?? 0.006) : (d.spread ?? 0.03);
     const pellets = d.pellets || 1;
 
@@ -1222,7 +1341,7 @@ export class Game {
   }
 
   shootRay(from, dir, d) {
-    let hit = null, hd = d.range;
+    let hit = null, hd = d.range, remoteHit = null;
     const v = new THREE.Vector3();
     for (const b of this.bots) {
       if (!b.alive || !b.landed || b.ally) continue;
@@ -1233,8 +1352,32 @@ export class Game {
       const perp = v.clone().addScaledVector(dir, -along).length();
       if (perp < 1.05) { hit = b; hd = along; }
     }
-    const end = from.clone().addScaledVector(dir, hit ? hd : d.range);
+    for (const r of this.remote.values()) {
+      if (!r.alive || !r.landed) continue;
+      v.copy(r.pos).sub(from);
+      v.y += r.ch.totalH * 0.55;
+      const along = v.dot(dir);
+      if (along < 0.6 || along > hd) continue;
+      const perp = v.clone().addScaledVector(dir, -along).length();
+      if (perp < 1.05) { remoteHit = r; hit = null; hd = along; }
+    }
+    const end = from.clone().addScaledVector(dir, (hit || remoteHit) ? hd : d.range);
     this.addTracer(from.clone().addScaledVector(dir, 1.4), end);
+    if (this.net) {
+      const a = from.clone().addScaledVector(dir, 1.4);
+      this.net.sendEvent({ k: 'shot', a: [+a.x.toFixed(1), +a.y.toFixed(1), +a.z.toFixed(1)],
+                           b: [+end.x.toFixed(1), +end.y.toFixed(1), +end.z.toFixed(1)],
+                           w: d.kind });
+    }
+    if (remoteHit) {
+      A.sfx.hit();
+      this.hud.hitMark();
+      const wp = remoteHit.pos.clone();
+      wp.y += remoteHit.ch.totalH * (0.6 + Math.random() * 0.25);
+      this.damageNumbers.push({ pos: wp, v: Math.round(d.damage), t: 0, kill: false, el: null });
+      this.net?.sendEvent({ k: 'hit', to: remoteHit.id, d: d.damage, from: this.P.player.name });
+      return;
+    }
     if (hit) {
       A.sfx.hit();
       const dmg = d.damage;
@@ -1299,7 +1442,7 @@ export class Game {
     this.stats.rank = this.stats.alive;
     this.hud.setStat('alive', this.stats.alive);
     this.hud.setStat('rank', '#' + this.stats.rank);
-    if (this.stats.alive <= 1) this.endMatch(true);
+    if (this.stats.alive <= 1 && !this.net) this.endMatch(true);
   }
 
   damage(v, src) {
@@ -1312,7 +1455,11 @@ export class Game {
     this.stats.hp -= v;
     this.hud.setHP(this.stats.hp, this.stats.maxHp, this.stats.shield);
     if (v > 2) { this.hud.damage(); A.sfx.hurt(); }
-    if (this.stats.hp <= 0) { this.stats.hp = 0; this.endMatch(false); }
+    if (this.stats.hp <= 0) {
+      this.stats.hp = 0;
+      this.net?.sendEvent({ k: 'die', n: this.P.player.name, by: this._lastHitBy || null });
+      this.endMatch(false);
+    }
   }
 
   // ---------------- الصناديق والتفاعل ----------------
@@ -1785,7 +1932,7 @@ export class Game {
     const box = el('div', { class: 'box' },
       el('div', { class: 'big' }, win ? '👑 النصر!' : '☠️ نهاية اللعبة'),
       el('div', { style: { fontSize: '16px', color: 'var(--ink-2)', marginBottom: '4px' } },
-        `الترتيب #${this.stats.rank} من ${this.P.match.bots + 1}`),
+        `الترتيب #${this.stats.rank} من ${this.net ? this.net.count() : this.P.match.bots + 1}`),
       el('div', { style: { fontSize: '15px', marginBottom: '18px' } },
         `عدد الإسقاطات: ${this.stats.kills} 💀`),
       el('div', { class: 'row', style: { justifyContent: 'center', gap: '10px' } },
@@ -1805,6 +1952,7 @@ export class Game {
   // ---------------- تنظيف ----------------
   dispose() {
     this.disposed = true;
+    for (const id of [...this.remote.keys()]) this.removeRemote(id);
     cancelAnimationFrame(this._raf);
     removeEventListener('resize', this._rs);
     A.engineSound.stop(); A.windSound.stop();

@@ -160,7 +160,11 @@ export class HUD {
       if (c.id === 'shoot') this.input.shoot = v;
       else if (c.id === 'run') this.input.run = v;
       else if (c.id === 'crouch') this.input.crouch = v;
-      else if (c.id === 'scope') this.input.scope = v;
+      else if (c.id === 'scope') {
+        // زر التصويب مثبّت: ضغطة تشغّل وضغطة تُطفئ
+        if (v) { this.input.scopeOn = !this.input.scopeOn; node.classList.toggle('locked', this.input.scopeOn); }
+        return;
+      }
       if (v) this.input.pressed[c.id] = true;
     };
     node.addEventListener('pointerdown', (e) => { e.preventDefault(); node.setPointerCapture(e.pointerId); set(true); });
@@ -261,6 +265,9 @@ export class HUD {
       case 'KeyF': if (down) this.input.pressed.open = true; break;
       case 'KeyE': if (down) this.input.pressed.pickup = true; break;
       case 'KeyR': if (down) this.input.pressed.reload = true; break;
+      case 'KeyZ': case 'ShiftRight2':
+        if (down) { this.input.scopeOn = !this.input.scopeOn; this.setScopeBtn(this.input.scopeOn); }
+        break;
       case 'KeyM': if (down) this.onBigMap && this.onBigMap(); break;
       case 'KeyV': if (down) this.input.pressed.view = true; break;
       case 'KeyQ': if (down) this.input.pressed.swap = true; break;
@@ -330,6 +337,16 @@ export class HUD {
   }
 
   /** منظار القنص: 0 = مغلق، غير ذلك = قوّة التقريب */
+  /** يُظهر علامة التصويب ما دام السلاح في اليد */
+  setCrosshair(hasGun, ads) {
+    this.cross.classList.toggle('on', !!hasGun);
+    this.cross.classList.toggle('ads', !!ads);
+  }
+  /** يعكس حالة زرّ التصويب المثبّت */
+  setScopeBtn(on) {
+    this.widgets.scope?.node.classList.toggle('locked', !!on);
+  }
+
   setScope(zoom) {
     const on = zoom > 0;
     if (on === this._scopeOn) return;

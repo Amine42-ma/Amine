@@ -320,29 +320,34 @@ export class Inventory {
  * يولّد صورة مصغّرة لنموذج السلاح الحقيقي (لشريط الأسلحة كما في ببجي).
  * يستخدم عارضاً صغيراً منفصلاً ويعيد dataURL.
  */
-export function makeWeaponThumb(mesh, w = 220, h = 90) {
+export function makeWeaponThumb(mesh, w = 512, h = 210, envTex = null) {
   try {
-    const rnd2 = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const rnd2 = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    rnd2.setPixelRatio(1);
     rnd2.setSize(w, h, false);
     rnd2.outputColorSpace = THREE.SRGBColorSpace;
     rnd2.toneMapping = THREE.ACESFilmicToneMapping;
+    rnd2.toneMappingExposure = 1.15;
     const sc = new THREE.Scene();
+    if (envTex) sc.environment = envTex;
     const obj = mesh.clone(true);
     obj.position.set(0, 0, 0);
     obj.rotation.set(0, 0, 0);
     sc.add(obj);
-    sc.add(new THREE.HemisphereLight(0xffffff, 0x445066, 2.4));
-    const d1 = new THREE.DirectionalLight(0xffffff, 2.2); d1.position.set(2, 3, 4); sc.add(d1);
-    const d2 = new THREE.DirectionalLight(0x9fc4ff, 1.1); d2.position.set(-3, 1, -2); sc.add(d2);
+    sc.add(new THREE.HemisphereLight(0xffffff, 0x3a4257, 2.0));
+    const d1 = new THREE.DirectionalLight(0xffffff, 3.0); d1.position.set(3, 4, 5); sc.add(d1);
+    const d2 = new THREE.DirectionalLight(0xaecbff, 1.6); d2.position.set(-4, 2, -3); sc.add(d2);
+    const d3 = new THREE.DirectionalLight(0xffd9a0, 1.2); d3.position.set(0, -2, 3); sc.add(d3);
 
     const bb = new THREE.Box3().setFromObject(obj);
     const c = bb.getCenter(new THREE.Vector3());
     const sz = bb.getSize(new THREE.Vector3());
     const span = Math.max(sz.x, sz.y, sz.z) || 1;
-    const cam = new THREE.OrthographicCamera(-span * 0.62, span * 0.62,
-      span * 0.28, -span * 0.28, 0.01, span * 12);
+    const ar = w / h;
+    const half = span * 0.60;
+    const cam = new THREE.OrthographicCamera(-half, half, half / ar, -half / ar, 0.01, span * 12);
     // زاوية ثلاثة أرباع لتبدو مجسّمة
-    cam.position.set(c.x + span * 1.1, c.y + span * 0.55, c.z + span * 1.6);
+    cam.position.set(c.x + span * 0.9, c.y + span * 0.45, c.z + span * 1.7);
     cam.lookAt(c);
     cam.updateProjectionMatrix();
     rnd2.render(sc, cam);

@@ -248,8 +248,25 @@ export class Lobby {
       bar.style.left = play.x * 100 + '%';
       bar.style.top = `calc(${play.y * 100}% - 4.6em)`;
     } else { bar.style.left = '85%'; bar.style.top = '72%'; }
+
+    const online = !!P.match.online;
+    // مفتاح: لاعبون حقيقيون أم تدريب ضد الروبوتات
+    const netChip = el('div', { class: 'mode-chip net' + (online ? ' on' : '') },
+      el('span', {}, online ? '🌐' : '🤖'),
+      el('b', {}, online ? 'أون لاين' : 'ضد الروبوتات'));
+    netChip.onclick = () => {
+      P.match.online = !P.match.online;
+      if (!P.match.online) P.match.mode = 'solo';    // الروبوتات: فردي فقط
+      A.sfx.click();
+      this.onChange && this.onChange();
+      this.node.replaceChild(this.modeBar(), bar);
+    };
+    bar.append(netChip);
+
+    // الديو والسكواد لا معنى لهما إلا مع لاعبين حقيقيين
     for (const k in MODES) {
       const m = MODES[k];
+      if (!online && k !== 'solo') continue;
       const b = el('div', { class: 'mode-chip' + (P.match.mode === k ? ' on' : '') },
         el('span', {}, m.emo), el('b', {}, m.label));
       b.onclick = () => {
