@@ -69,6 +69,32 @@ function noise({ a = 0.005, d = 0.15, gain = 0.3, hp = 300, lp = 6000, at = 0, q
   s.start(t); s.stop(t + a + d + 0.05);
 }
 
+// ---------- صدى (Convolver) لإحساس أوسع ----------
+let _rev = null;
+function reverb() {
+  if (_rev || !ctx) return _rev;
+  const len = Math.floor(ctx.sampleRate * 1.1);
+  const b = ctx.createBuffer(2, len, ctx.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const d = b.getChannelData(c);
+    for (let i = 0; i < len; i++) {
+      const t = i / len;
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 2.6) * 0.5;
+    }
+  }
+  const cv = ctx.createConvolver(); cv.buffer = b;
+  const g = ctx.createGain(); g.gain.value = 0.26;
+  cv.connect(g); g.connect(master);
+  _rev = cv;
+  return _rev;
+}
+function sendRev(node, amt = 0.3) {
+  const r = reverb();
+  if (!r) return;
+  const g = ctx.createGain(); g.gain.value = amt;
+  node.connect(g); g.connect(r);
+}
+
 // ---------- مكتبة الأصوات ----------
 export const sfx = {
   click()   { tone({ freq: 660, type: 'square', a: .004, d: .06, gain: .12 });
@@ -77,8 +103,43 @@ export const sfx = {
   ui_ok()   { tone({ freq: 620, type: 'triangle', a: .01, d: .12, gain: .18 });
               tone({ freq: 930, type: 'triangle', a: .01, d: .16, gain: .14, at: .08 }); },
   ui_err()  { tone({ freq: 200, type: 'sawtooth', a: .01, d: .22, gain: .16, slideTo: 120 }); },
-  shoot()   { noise({ a: .002, d: .07, gain: .32, hp: 700, lp: 9000 });
-              tone({ freq: 190, type: 'square', a: .002, d: .1, gain: .28, slideTo: 60 }); },
+  shoot()   { sfx.gun('ar'); },
+  /** صوت مميّز لكل نوع سلاح مع صدى بعيد */
+  gun(kind = 'ar') {
+    if (!ensure() || !state.sfx) return;
+    const t = ctx.currentTime;
+    const P = {
+      ar:      { body: 165, crack: 2600, d: .12, g: .34, sub: 62 },
+      smg:     { body: 210, crack: 3100, d: .08, g: .26, sub: 80 },
+      sniper:  { body: 95,  crack: 1700, d: .32, g: .5,  sub: 42 },
+      shotgun: { body: 120, crack: 1500, d: .26, g: .46, sub: 48 },
+      pistol:  { body: 240, crack: 2900, d: .10, g: .28, sub: 95 },
+    }[kind] || {};
+    const { body = 165, crack = 2600, d = .12, g = .34, sub = 62 } = P;
+    // الطقّة الحادة
+    const s1 = ctx.createBufferSource(); s1.buffer = NOISE(); s1.loop = true;
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = crack;
+    const g1 = ctx.createGain(); env(g1, t, .001, d * .55, g);
+    s1.connect(hp); hp.connect(g1); g1.connect(sfxBus); sendRev(g1, .35);
+    s1.start(t); s1.stop(t + d + .1);
+    // جسم الصوت
+    const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(body, t);
+    o.frequency.exponentialRampToValueAtTime(sub, t + d);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1600;
+    const g2 = ctx.createGain(); env(g2, t, .002, d, g * .9);
+    o.connect(lp); lp.connect(g2); g2.connect(sfxBus); sendRev(g2, .45);
+    o.start(t); o.stop(t + d + .1);
+    // ارتداد ميكانيكي
+    noise({ a: .002, d: .05, gain: .07, hp: 1800, lp: 9000, at: .03 });
+  },
+  reload()     { noise({ a: .003, d: .07, gain: .16, hp: 900, lp: 5200 });
+                 tone({ freq: 320, type: 'square', a: .004, d: .06, gain: .1, at: .12 });
+                 noise({ a: .003, d: .09, gain: .14, hp: 700, lp: 4200, at: .3 }); },
+  reloadDone() { tone({ freq: 520, type: 'square', a: .003, d: .07, gain: .16 });
+                 noise({ a: .002, d: .05, gain: .13, hp: 1500, lp: 8000, at: .04 }); },
+  dryfire()    { noise({ a: .001, d: .04, gain: .12, hp: 2200, lp: 9000 });
+                 tone({ freq: 900, type: 'square', a: .001, d: .03, gain: .07 }); },
+  whiz()       { tone({ freq: 1800, type: 'sine', a: .004, d: .09, gain: .07, slideTo: 500 }); },
   hit()     { noise({ a: .001, d: .05, gain: .25, hp: 1600, lp: 12000 });
               tone({ freq: 1400, type: 'sine', a: .002, d: .06, gain: .12 }); },
   hurt()    { tone({ freq: 260, type: 'sawtooth', a: .005, d: .3, gain: .22, slideTo: 90 });

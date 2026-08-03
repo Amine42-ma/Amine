@@ -283,7 +283,7 @@ input[type=color]{width:44px;height:34px;padding:2px;border:1px solid var(--line
 #oob.on{display:block;animation:pulseW 1s infinite}
 @keyframes pulseW{0%,100%{transform:translateX(-50%) scale(1)}50%{transform:translateX(-50%) scale(1.05)}}
 
-#prompt{position:absolute;left:50%;bottom:26%;transform:translateX(-50%);pointer-events:none;
+#prompt{position:absolute;left:50%;bottom:26%;transform:translateX(-50%);pointer-events:none;z-index:5;
   background:rgba(10,6,32,.9);border:2px solid var(--acc);border-radius:12px;padding:7px 16px;
   font-weight:900;font-size:15px;display:none;white-space:nowrap}
 #prompt.on{display:block}
@@ -305,7 +305,7 @@ input[type=color]{width:44px;height:34px;padding:2px;border:1px solid var(--line
   font-weight:900;font-size:15px;display:none;text-align:center}
 .dropinfo.on{display:block}
 
-#endcard{position:absolute;inset:0;z-index:80;display:none;place-items:center;
+#endcard{position:absolute;inset:0;z-index:80;display:none;place-items:center;pointer-events:auto;
   background:rgba(4,2,14,.86);backdrop-filter:blur(8px)}
 #endcard.on{display:grid}
 #endcard .box{text-align:center;padding:28px 34px;border-radius:24px;
@@ -450,3 +450,97 @@ input[type=color]{width:44px;height:34px;padding:2px;border:1px solid var(--line
   .panel-sheet{width:100%}
   .hero-grid{grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
 }
+
+
+/* طبقة تدوير الكاميرا — تحت كل الأزرار، تلتقط السحب في الفراغ */
+#lookpad{position:absolute;inset:0;pointer-events:auto;touch-action:none;z-index:0;cursor:grab}
+#lookpad:active{cursor:grabbing}
+
+/* سلاح المنظور الأول */
+#fpsoverlay{position:absolute;inset:0;pointer-events:none;z-index:1}
+
+
+/* ============================================================
+   بطاقة السلاح والذخيرة
+   ============================================================ */
+#ammobox{position:absolute;right:12px;bottom:12px;display:none;flex-direction:column;
+  align-items:flex-end;gap:5px;pointer-events:auto;direction:ltr;
+  background:linear-gradient(180deg,rgba(10,6,32,.86),rgba(10,6,32,.62));
+  border:1.5px solid rgba(255,255,255,.22);border-radius:14px;padding:8px 12px;min-width:150px}
+#ammobox.on{display:flex}
+#ammobox .slots{display:flex;gap:6px}
+#ammobox .slot{width:36px;height:26px;border-radius:8px;display:grid;place-items:center;
+  font-size:12px;font-weight:900;background:rgba(255,255,255,.08);
+  border:1.5px solid rgba(255,255,255,.2);cursor:pointer;color:var(--ink-3)}
+#ammobox .slot.has{color:#fff}
+#ammobox .slot.on{background:linear-gradient(180deg,var(--acc),var(--acc-d));color:#3a2400;border-color:transparent}
+#ammobox .wname{font-size:12.5px;font-weight:800;direction:rtl;white-space:nowrap}
+#ammobox .wammo{font-size:24px;font-weight:900;line-height:1;letter-spacing:.5px}
+#ammobox .wammo .mag{color:var(--acc)}
+#ammobox .wammo .res{font-size:15px;color:var(--ink-3)}
+#ammobox.empty .wammo .mag{color:var(--rd);animation:blink .5s infinite}
+@keyframes blink{50%{opacity:.35}}
+
+#hpbar>u{position:absolute;left:0;top:0;height:5px;border-radius:5px;
+  background:linear-gradient(90deg,#7fe7ff,#25d3ff);transition:width .2s}
+
+/* علامة الإصابة */
+#hitmark{position:absolute;left:50%;top:50%;width:26px;height:26px;margin:-13px 0 0 -13px;
+  pointer-events:none;opacity:0;transition:opacity .08s}
+#hitmark.on{opacity:1}
+#hitmark i{position:absolute;width:2px;height:8px;background:#fff;box-shadow:0 0 3px #000}
+#hitmark i:nth-child(1){left:3px;top:3px;transform:rotate(45deg)}
+#hitmark i:nth-child(2){right:3px;top:3px;transform:rotate(-45deg)}
+#hitmark i:nth-child(3){left:3px;bottom:3px;transform:rotate(-45deg)}
+#hitmark i:nth-child(4){right:3px;bottom:3px;transform:rotate(45deg)}
+
+/* ============================================================
+   الحقيبة
+   ============================================================ */
+#bagpanel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) scale(.94);
+  width:min(560px,94vw);max-height:88vh;overflow-y:auto;display:none;pointer-events:auto;
+  background:linear-gradient(180deg,var(--bg-2),var(--bg-1));border:2px solid var(--line);
+  border-radius:20px;box-shadow:var(--sh);padding:16px;z-index:70;opacity:0;
+  transition:opacity .15s,transform .15s}
+#bagpanel.on{display:block;opacity:1;transform:translate(-50%,-50%) scale(1)}
+.bag-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.bag-head h3{margin:0;font-size:18px;flex:1}
+.bag-sec{margin-bottom:14px}
+.bag-sec>h4{margin:0 0 7px;font-size:13px;font-weight:900;color:var(--acc)}
+.bag-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:11px;
+  background:rgba(255,255,255,.06);border:1px solid var(--line);margin-bottom:6px;font-size:13px}
+.bag-row.on{border-color:var(--acc);background:rgba(255,194,26,.14)}
+.bag-row b{min-width:74px;font-size:12.5px;color:var(--ink-2)}
+.bag-row .f{flex:1;font-weight:800}
+
+@media (max-height:430px){
+  #ammobox{padding:5px 9px;min-width:126px}
+  #ammobox .wammo{font-size:19px}
+}
+
+#waypoint{position:absolute;left:50%;top:8%;transform:translateX(-50%);display:none;
+  align-items:center;gap:7px;pointer-events:none;background:rgba(10,6,32,.8);
+  border:1.5px solid rgba(255,77,94,.7);border-radius:11px;padding:4px 12px;
+  font-weight:900;font-size:13px;direction:ltr}
+#waypoint.on{display:flex}
+#waypoint b{display:inline-block;font-size:16px}
+
+#bigmap .bm-hint{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);
+  font-size:13px;font-weight:800;color:var(--ink-2);pointer-events:none;text-align:center}
+#bigmap .bm-close{position:absolute;top:12px;right:12px;z-index:3}
+#bigmap .bm-clear{position:absolute;top:12px;left:12px;z-index:3}
+
+.mode-bar{position:absolute;transform:translate(-50%,-50%);display:flex;gap:6px;z-index:4}
+.mode-chip{display:flex;align-items:center;gap:5px;padding:5px 11px;border-radius:11px;cursor:pointer;
+  background:rgba(8,4,24,.74);border:1.5px solid rgba(255,255,255,.22);
+  font-size:clamp(10px,1.3vw,13px);font-weight:900;white-space:nowrap;transition:.12s}
+.mode-chip.on{background:linear-gradient(180deg,var(--acc),var(--acc-d));color:#3a2400;border-color:transparent}
+.mode-chip:active{transform:translateY(2px)}
+
+.paint-cv{width:100%;height:auto;aspect-ratio:2/1;border-radius:12px;background:
+  repeating-conic-gradient(#2a1f4d 0% 25%, #221a40 0% 50%) 0 0/18px 18px;
+  border:2px solid var(--line);touch-action:none;cursor:crosshair;display:block}
+.paint-pal{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.paint-pal i{width:30px;height:30px;border-radius:9px;cursor:pointer;
+  border:2px solid rgba(255,255,255,.25)}
+.paint-pal i.on{border-color:var(--acc);transform:scale(1.1)}

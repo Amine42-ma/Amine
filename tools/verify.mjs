@@ -43,7 +43,7 @@ let r = await page.evaluate(() => ({
   shapes: [...document.querySelectorAll('#stageview .hw')].map((n) => n.className.match(/shape-(\w+)/)?.[1]),
   hasShapePicker: !!document.querySelector('#side .tool'),
 }));
-check('س1: أزرار الأفعال فقط (10)', r.widgets === 10, `عدد=${r.widgets}`);
+check('س1: أزرار الأفعال فقط (15)', r.widgets === 15, `عدد=${r.widgets}`);
 check('س1: العدّادات ليست هنا', !r.shapes.includes(undefined));
 
 // اختر زراً ثم بدّل شكله

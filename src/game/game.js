@@ -11,7 +11,8 @@ import {
   autoCrates, spawnPoints, buildSky, buildOcean, pointInPoly, closestOnPoly,
   autoFlightPath, mapView,
 } from './world.js';
-import { currentHero } from '../core/store.js';
+import { currentHero, MODES } from '../core/store.js';
+import { Inventory, buildWeaponMesh, muzzleOf, crateLoot, AMMO_KINDS } from './weapons.js';
 import { Character, buildChute, nameTag } from './character.js';
 import { HUD, Minimap } from './hud.js';
 
@@ -94,7 +95,8 @@ export class Game {
     // ---- السماء والبحر ----
     onProgress(0.84, 'بناء العالم…');
     this.env = buildSky(this.scene, { dayTime: P.match.dayTime, fog: P.match.fog });
-    this.ocean = buildOcean(this.an.waterY + 0.15, Math.max(this.an.span * 6, 6000));
+    // أنزل سطح البحر قليلاً تحت مستوى الماء في النموذج كي لا يغطّي الشاطئ
+    this.ocean = buildOcean(this.an.waterY - 0.45, Math.max(this.an.span * 6, 6000));
     this.scene.add(this.ocean);
 
     // ---- الحدود ----
@@ -113,6 +115,7 @@ export class Game {
     this.buildPlayer();
     this.buildBots();
     this.buildEffects();
+    await this.buildWeapons();
     this.buildZone();
 
     // ---- الواجهة ----
@@ -132,13 +135,22 @@ export class Game {
     };
     this.mm.boundary = this.boundary;
     this.hud.attachMinimap(this.mm);
-    this.bigmap = el('div', { id: 'bigmap' }, el('canvas'));
-    this.bigmap.addEventListener('pointerdown', () => this.toggleBigMap());
+    this.bigmap = el('div', { id: 'bigmap' }, el('canvas'),
+      el('div', { class: 'bm-hint' }, 'اضغط على الخريطة لوضع علامة وجهة 📍 • زر ✕ للإغلاق'),
+      el('button', { class: 'btn r sm bm-close', onclick: (e) => { e.stopPropagation(); this.toggleBigMap(); } }, '✕'),
+      el('button', { class: 'btn ghost sm bm-clear', onclick: (e) => {
+        e.stopPropagation(); this.waypoint = null; this.mm.waypoint = null; this.drawBigMap();
+      } }, '🚫 إزالة العلامة'));
+    this.bigmap.querySelector('canvas').addEventListener('pointerdown', (e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      this.setWaypoint(e.clientX - r.left, e.clientY - r.top);
+    });
     this.node.append(this.bigmap);
 
     this.stats = { kills: 0, alive: P.match.bots + 1, rank: P.match.bots + 1, hp: 100, maxHp: 100,
-                   shield: 0, ammo: 30, maxAmmo: 30 };
-    this.hud.setHP(100);
+                   shield: 0 };
+    this.refreshGunModel();
+    this.hud.setHP(100, 100, 0);
     this.hud.setStat('kills', 0);
     this.hud.setStat('alive', this.stats.alive);
     this.hud.setStat('rank', '#' + this.stats.rank);
@@ -263,6 +275,12 @@ export class Game {
     const cc = currentHero(this.P);
     this.player = new Character({ ...cc, outlineOn: this.P.match.quality !== 'low' });
     this.scene.add(this.player.group);
+    // النقش المرسوم يدوياً
+    if (cc.decal && assetURL(cc.decal)) {
+      const im = new Image();
+      im.onload = () => { if (!this.disposed) this.player.setDecal(im); };
+      im.src = assetURL(cc.decal);
+    }
     // الإكسسوارات
     for (const at of cc.attachments || []) {
       if (!at.visible || !at.assetId) continue;
@@ -275,7 +293,9 @@ export class Game {
     }
     this.pos = new THREE.Vector3();
     this.vel = new THREE.Vector3();
+    this.view = this.P.match.view === 'fps' ? 'fps' : 'tps';
     this.yaw = 0; this.pitch = 0.18;
+    this.flyYaw = 0; this.flyPitch = 0.25;
     this.camDist = 7.2;
     this.camPos = new THREE.Vector3();
     this.grounded = false;
@@ -286,17 +306,20 @@ export class Game {
 
   buildBots() {
     this.bots = [];
+    const mode = MODES[this.P.match.mode] || MODES.solo;
+    this.teamSize = mode.size;
     const n = this.P.match.bots;
     const spawns = spawnPoints(this.an, n + 6);
     for (let i = 0; i < n; i++) {
-      const col = pick(BOT_COLORS);
+      const col = i < (MODES[this.P.match.mode] || MODES.solo).size - 1 ? '#39e07b' : pick(BOT_COLORS);
       const ch = new Character({
         body: col, belly: '#ffffff', eye: '#101018',
         outline: '#1a1226', outlineOn: false, lod: true,
       });
       const s = spawns[i % spawns.length];
+      const ally = i < this.teamSize - 1;                 // رفاق فريقك
       const b = {
-        id: uid('bot'), ch, name: BOT_NAMES[i % BOT_NAMES.length] + (i > 29 ? i : ''),
+        id: uid('bot'), ch, ally, name: BOT_NAMES[i % BOT_NAMES.length] + (i > 29 ? i : ''),
         pos: new THREE.Vector3(s.x, s.y, s.z), vel: new THREE.Vector3(),
         hp: 100, alive: true, yaw: rnd(0, 6.28), target: null,
         state: 'idle', t: rnd(0, 3), fire: 0, speed: 0, landed: false, dropDelay: rnd(0.5, 9),
@@ -421,6 +444,108 @@ export class Game {
     this.hud.setStat('zone', z.done ? '—' : `${mm}:${String(ss).padStart(2, '0')}`);
     const st = this.hud.stats.zone;
     if (st?.icon) st.icon.textContent = z.state === 'shrink' ? '🌀' : '⏱️';
+  }
+
+  // =========================================================
+  //  الأسلحة
+  // =========================================================
+  async buildWeapons() {
+    this.wdefs = this.P.weapons || [];
+    this.wmeshCache = new Map();
+    // حمّل نماذج GLB إن رُفعت، وإلا استخدم النموذج البرمجي
+    for (const def of this.wdefs) {
+      let mesh = null;
+      if (def.assetId) {
+        const url = assetURL(def.assetId);
+        if (url) {
+          try {
+            const g = await loadGLB(url);
+            const bb = new THREE.Box3().setFromObject(g.scene);
+            const sz = bb.getSize(new THREE.Vector3());
+            const k = 0.95 / Math.max(sz.x, sz.y, sz.z || 1);
+            const holder = new THREE.Group();
+            g.scene.scale.setScalar(k);
+            g.scene.position.sub(bb.getCenter(new THREE.Vector3()).multiplyScalar(k));
+            g.scene.traverse((o) => { if (o.isMesh) { o.castShadow = true; } });
+            holder.add(g.scene);
+            mesh = holder;
+          } catch (e) { console.warn('weapon glb', def.name, e); }
+        }
+      }
+      this.wmeshCache.set(def.id, mesh || buildWeaponMesh(def));
+    }
+
+    this.inv = new Inventory(this.wdefs);
+    // سلاح البداية: مسدس بذخيرة قليلة (مثل الهبوط بلا شيء تقريباً)
+    const pistol = this.wdefs.find((w) => w.kind === 'pistol');
+    if (pistol) { this.inv.addWeapon(pistol); this.inv.addAmmo(pistol.ammo, 24); }
+
+    // مُثبَّت اليد (منظور ثالث)
+    this.handGun = new THREE.Group();
+    this.player.mounts.hand.add(this.handGun);
+    // سلاح المنظور الأول — مرتبط بالكاميرا
+    this.fpsGun = new THREE.Group();
+    this.fpsGun.renderOrder = 999;
+    this.camera.add(this.fpsGun);
+    this.scene.add(this.camera);
+    this.refreshGunModel();
+  }
+
+  cloneGun(def) {
+    const src = this.wmeshCache.get(def.id);
+    if (!src) return new THREE.Group();
+    const c = skClone(src);
+    c.scale.setScalar(def.scale || 1);
+    return c;
+  }
+
+  refreshGunModel() {
+    const g = this.inv?.gun;
+    while (this.handGun.children.length) this.handGun.remove(this.handGun.children[0]);
+    while (this.fpsGun.children.length) this.fpsGun.remove(this.fpsGun.children[0]);
+    this.hud?.setSlots(this.inv.slots, this.inv.active);
+    this.hud?.setAmmo(this.inv.hud());
+    if (!g) return;
+    const d = g.def;
+    const h = this.cloneGun(d);
+    h.position.set(d.hold.px, d.hold.py, d.hold.pz);
+    h.rotation.set(d.hold.rx, d.hold.ry, d.hold.rz);
+    this.handGun.add(h);
+
+    const f = this.cloneGun(d);
+    f.position.set(d.fps.px, d.fps.py, d.fps.pz);
+    f.rotation.set(d.fps.rx, d.fps.ry, d.fps.rz);
+    f.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.frustumCulled = false; } });
+    this.fpsGun.add(f);
+    this.updGunVisibility();
+  }
+
+  updGunVisibility() {
+    const fps = this.view === 'fps';
+    this.handGun.visible = !fps && this.phase === 'ground';
+    this.fpsGun.visible = fps && this.phase === 'ground';
+  }
+
+  /** ارتداد + تمايل سلاح المنظور الأول */
+  updFpsGun(dt) {
+    if (!this.fpsGun?.visible) return;
+    const g = this.inv.gun;
+    if (!g) return;
+    const d = g.def;
+    const sp = Math.hypot(this.vel.x, this.vel.z);
+    this._gunT = (this._gunT || 0) + dt * (4 + sp * 1.3);
+    this._kick = Math.max(0, (this._kick || 0) - dt * 9);
+    const ads = this.hud.input.aiming || this.hud.input.scope;
+    const bob = sp > 0.5 ? 0.011 * Math.min(sp / 8, 1) : 0;
+    const tx = (ads ? 0 : d.fps.px) + Math.cos(this._gunT) * bob;
+    const ty = (ads ? -0.10 : d.fps.py) + Math.abs(Math.sin(this._gunT)) * bob;
+    const tz = (ads ? -0.34 : d.fps.pz) + this._kick * 0.09;
+    const o = this.fpsGun.children[0];
+    if (!o) return;
+    o.position.x = smooth(o.position.x, tx, 16, dt);
+    o.position.y = smooth(o.position.y, ty, 16, dt);
+    o.position.z = smooth(o.position.z, tz, 20, dt);
+    o.rotation.x = smooth(o.rotation.x, d.fps.rx - this._kick * 0.22, 18, dt);
   }
 
   buildEffects() {
@@ -630,6 +755,8 @@ export class Game {
     }
 
     this.updZone(dt);
+    this.updFpsGun(dt);
+    this.updGunVisibility();
     this.updBots(dt);
     this.updCrates(dt);
     this.updLoot(dt);
@@ -659,10 +786,19 @@ export class Game {
     this.player.group.rotation.y = this.ship ? this.ship.rotation.y : 0;
     this.player.update(dt, { speed: 0, grounded: false, groundY: y - 3 });
 
-    // كاميرا سينمائية حول الطائرة
-    const a = this.clock.elapsedTime * 0.22;
-    this.camera.position.set(p.x + Math.cos(a) * 34, y + 11, p.z + Math.sin(a) * 34);
+    // كاميرا حرّة حول الطائرة — يمكنك النظر في أي اتجاه ورؤية الجزيرة كاملة
+    this.applyLook(dt, { yawKey: 'flyYaw', pitchKey: 'flyPitch', minP: -0.25, maxP: 1.25 });
+    this._flyAuto = (this._flyAuto || 0) + dt;
+    const idle = Math.abs(this.hud.input.look.x) < 0.01;
+    const a = this.flyYaw + (idle && this._flyAuto < 3 ? 0 : 0);
+    const dist = 42 + Math.sin(this.pitch) * 6;
+    const ch = Math.cos(this.flyPitch), sh = Math.sin(this.flyPitch);
+    this.camera.position.set(
+      p.x + Math.sin(a) * dist * ch,
+      y + 6 + sh * dist,
+      p.z + Math.cos(a) * dist * ch);
     this.camera.lookAt(p.x, y - 2, p.z);
+    if (this.hud.consume('view')) this.toggleView();
 
     A.engineSound.set(1, 1 + Math.sin(this.clock.elapsedTime * .5) * .03);
 
@@ -683,6 +819,8 @@ export class Game {
   updDrop(dt) {
     const chute = this.phase === 'chute';
     const inp = this.hud.input;
+    this.applyLook(dt);
+    if (this.hud.consume('view')) this.toggleView();
     const acc = chute ? 16 : 26;
     // التوجيه بالكاميرا
     const mx = inp.move.x, my = inp.move.y;
@@ -747,15 +885,14 @@ export class Game {
     const inp = this.hud.input;
     const P = this.P;
 
-    // دوران الكاميرا بعصا التصويب
-    if (Math.abs(inp.aim.x) > 0.05 || Math.abs(inp.aim.y) > 0.05) {
-      this.yaw -= inp.aim.x * 2.6 * dt;
-      this.pitch = clamp(this.pitch + inp.aim.y * 1.5 * dt, -0.5, 0.85);
-    }
+    this.applyLook(dt);
+    if (this.hud.consume('view')) this.toggleView();
 
     const run = inp.run;
     const crouch = inp.crouch;
-    const base = crouch ? 2.6 : run ? 9.4 : 5.6;
+    this._boost = Math.max(0, (this._boost || 0) - dt);
+    const boost = this._boost > 0 ? 1.25 : 1;
+    const base = (crouch ? 2.6 : run ? 9.4 : 5.6) * boost;
     const mx = inp.move.x, my = inp.move.y;
     const mag = clamp(Math.hypot(mx, my), 0, 1);
 
@@ -785,6 +922,9 @@ export class Game {
     if (gx - curG <= step) this.pos.x = nx; else this.vel.x *= -0.15;
     if (gz - curG <= step) this.pos.z = nz; else this.vel.z *= -0.15;
 
+    // حدّ صلب: لا يمكن تجاوز مضلّع الحدود ولا النزول في الماء
+    this.clampToIsland();
+
     this.pos.y += this.vel.y * dt;
     const gy = this.groundY(this.pos.x, this.pos.z);
     if (this.pos.y <= gy) {
@@ -798,11 +938,17 @@ export class Game {
     if (this.grounded && this._stepT > 2.1) { this._stepT = 0; A.sfx.step(); }
 
     this.player.group.position.copy(this.pos);
-    const yawTarget = sp > 0.3 ? Math.atan2(this.vel.x, this.vel.z) : (inp.aiming ? this.yaw + Math.PI : undefined);
+    // في المنظور الأول أو أثناء التصويب: الجسم يتبع الكاميرا دائماً.
+    // خارج ذلك: يتبع اتجاه الحركة — فلا يلتفت يميناً ويساراً بلا سبب.
+    const facingCam = this.view === 'fps' || inp.aiming || inp.shoot;
+    const yawTarget = facingCam ? this.yaw + Math.PI
+      : (sp > 0.6 ? Math.atan2(this.vel.x, this.vel.z) : undefined);
     this.player.update(dt, {
-      speed: sp, grounded: this.grounded, crouch, aim: inp.aiming, vy: this.vel.y,
-      yaw: yawTarget, groundY: gy, look: new THREE.Vector2(0, 0),
+      speed: sp, grounded: this.grounded, crouch, aim: inp.aiming || inp.shoot, vy: this.vel.y,
+      yaw: yawTarget, turnSnap: facingCam, groundY: gy, look: this._lookV ||= new THREE.Vector2(0, 0),
     });
+    // إخفاء جسم اللاعب في المنظور الأول (يبقى الظل)
+    this.player.tilt.visible = this.view !== 'fps';
 
     // الحدود
     this.checkBounds(dt);
@@ -811,14 +957,51 @@ export class Game {
     // التفاعل
     this.updInteract(dt);
 
-    this.updCamera(dt, this.camDist * (inp.aiming ? 0.72 : 1) * (run ? 1.12 : 1), inp.aiming ? 1.7 : 2.1);
+    if (this.view === 'fps') this.updCameraFPS(dt);
+    else this.updCamera(dt, this.camDist * (inp.aiming ? 0.72 : 1) * (run ? 1.12 : 1), inp.aiming ? 1.7 : 2.1);
 
     // FOV ديناميكي
-    const wantFov = 62 + (run ? 7 : 0) - (inp.aiming ? 9 : 0);
+    const scoped = inp.scope;
+    const wantFov = (this.view === 'fps' ? 74 : 62) + (run ? 7 : 0)
+      - (inp.aiming ? 9 : 0) - (scoped ? 28 : 0);
     if (Math.abs(this.camera.fov - wantFov) > 0.05) {
       this.camera.fov = smooth(this.camera.fov, wantFov, 7, dt);
       this.camera.updateProjectionMatrix();
     }
+  }
+
+  /** يطبّق سحب الشاشة + عصا التصويب على زوايا الكاميرا */
+  applyLook(dt, { yawKey = 'yaw', pitchKey = 'pitch', minP = -0.62, maxP = 1.15 } = {}) {
+    const inp = this.hud.input;
+    const sens = (this.P.match.lookSens || 1) * 0.0032;
+    const l = this.hud.takeLook();
+    this[yawKey] -= l.x * sens;
+    this[pitchKey] = clamp(this[pitchKey] + l.y * sens, minP, maxP);
+    // عصا التصويب تضيف تدويراً مستمراً (اختياري لمن يفضّلها)
+    if (Math.abs(inp.aim.x) > 0.05 || Math.abs(inp.aim.y) > 0.05) {
+      this[yawKey] -= inp.aim.x * 2.6 * dt;
+      this[pitchKey] = clamp(this[pitchKey] + inp.aim.y * 1.5 * dt, minP, maxP);
+    }
+  }
+
+  toggleView() {
+    this.view = this.view === 'fps' ? 'tps' : 'fps';
+    this.P.match.view = this.view;
+    this.hud.feed(this.view === 'fps' ? '👁️ منظور الشخص الأول' : '👁️ منظور الشخص الثالث');
+    A.sfx.click();
+  }
+
+  /** كاميرا المنظور الأول */
+  updCameraFPS(dt) {
+    const eye = this.tmp.v1.copy(this.pos);
+    eye.y += this.player.totalH * (this.hud.input.crouch ? 0.62 : 0.92);
+    this.camera.position.lerp(eye, 1 - Math.exp(-26 * dt));
+    const d = this.tmp.v2.set(
+      -Math.sin(this.yaw) * Math.cos(this.pitch),
+      -Math.sin(this.pitch),
+      -Math.cos(this.yaw) * Math.cos(this.pitch)
+    );
+    this.camera.lookAt(this.camera.position.clone().add(d));
   }
 
   updCamera(dt, dist, height) {
@@ -838,6 +1021,32 @@ export class Game {
     this.camera.lookAt(look);
   }
 
+  /** يعيد اللاعب داخل الجزيرة فعلياً (جدار صلب لا مجرّد ضرر) */
+  clampToIsland() {
+    if (!this.boundary?.length) return;
+    const inside = pointInPoly(this.pos.x, this.pos.z, this.boundary);
+    if (!inside) {
+      const c = closestOnPoly(this.pos.x, this.pos.z, this.boundary);
+      const dx = c.x - this.pos.x, dz = c.z - this.pos.z;
+      const d = Math.hypot(dx, dz) || 1;
+      this.pos.x = c.x + (dx / d) * 0.6;
+      this.pos.z = c.z + (dz / d) * 0.6;
+      this.vel.x *= 0.1; this.vel.z *= 0.1;
+      this._hitWall = 0.6;
+    }
+    // ولا الوقوف في الماء
+    if (!this.Q.isLand(this.pos.x, this.pos.z)) {
+      const L = this.Q.nearestLand(this.pos.x, this.pos.z, 3);
+      this.pos.x = L.x; this.pos.z = L.z;
+      this.vel.x *= 0.1; this.vel.z *= 0.1;
+      this._hitWall = 0.6;
+    }
+    if (this._hitWall > 0) {
+      this._hitWall -= 0.016;
+      if (this._hitWall > 0.55) A.sfx.step();
+    }
+  }
+
   checkBounds(dt) {
     if (!this.boundary?.length) return;
     const inside = pointInPoly(this.pos.x, this.pos.z, this.boundary);
@@ -848,70 +1057,173 @@ export class Game {
       this.hud.showOOB('🌀 خارج الزون!<br><small>اتجه للمركز — ' + Math.max(0, d).toFixed(0) + 'م</small>');
       return;
     }
-    if (!inside || wet) {
-      const c = closestOnPoly(this.pos.x, this.pos.z, this.boundary);
-      this.hud.showOOB('⚠️ خارج حدود المعركة<br><small>عُد إلى الجزيرة — المسافة ' + c.dist.toFixed(0) + 'م</small>');
-      this.damage(16 * dt, 'الحدود');
-      // دفعة لطيفة للداخل
-      const dx = c.x - this.pos.x, dz = c.z - this.pos.z;
-      const d = Math.hypot(dx, dz) || 1;
-      this.vel.x += (dx / d) * 26 * dt;
-      this.vel.z += (dz / d) * 26 * dt;
-      this._oobT = (this._oobT || 0) + dt;
-      if (this._oobT > 1) { this._oobT = 0; A.sfx.siren(); }
+    if (this._hitWall > 0) {
+      this.hud.showOOB('🚧 حدّ الجزيرة — لا يمكن التقدّم أكثر');
     } else this.hud.showOOB(null);
   }
 
   // ---------------- القتال ----------------
+  /** تسهيل التصويب: يجذب الطلقة نحو أقرب هدف داخل مخروط الشاشة */
+  aimAssist(from, dir, range) {
+    const k = this.P.match.aimAssist ?? 0.7;
+    if (k <= 0) return dir;
+    let best = null, bestScore = -1;
+    const v = new THREE.Vector3();
+    for (const b of this.bots) {
+      if (!b.alive || !b.landed || b.ally) continue;
+      v.copy(b.pos).sub(from);
+      v.y += b.ch.totalH * 0.55;
+      const d = v.length();
+      if (d > range) continue;
+      v.divideScalar(d);
+      const dot = v.dot(dir);
+      if (dot < 0.965) continue;                 // خارج مخروط المساعدة
+      const score = dot * (1 - d / range) * 2 + dot;
+      if (score > bestScore) { bestScore = score; best = v.clone(); }
+    }
+    if (!best) return dir;
+    return dir.clone().lerp(best, clamp(k, 0, 0.95)).normalize();
+  }
+
   updShoot(dt) {
-    this.fireCd = Math.max(0, (this.fireCd || 0) - dt);
     const inp = this.hud.input;
-    if (this.hud.consume('reload') || (this.stats.ammo <= 0 && !this.reloading)) {
-      this.reloading = 0.9; this.hud.showPrompt('إعادة التعبئة…');
+    const inv = this.inv;
+    this.fireCd = Math.max(0, (this.fireCd || 0) - dt);
+
+    // تبديل / رمي / حقيبة
+    if (this.hud.consume('swap') && inv.swap()) { this.refreshGunModel(); A.sfx.click(); }
+    if (this.hud.consume('slot1') && inv.select(0)) this.refreshGunModel();
+    if (this.hud.consume('slot2') && inv.select(1)) this.refreshGunModel();
+    if (this.hud.consume('drop')) this.dropWeapon();
+    if (this.hud.consume('bag')) this.toggleBag();
+
+    const g = inv.gun;
+    if (!g) { this.hud.setAmmo(inv.hud()); return; }
+    const d = g.def;
+
+    // إعادة التعبئة
+    if (this.hud.consume('reload') || (g.mag <= 0 && !this.reloading && (inv.reserve[d.ammo] || 0) > 0)) {
+      if (g.mag < d.mag && (inv.reserve[d.ammo] || 0) > 0) {
+        this.reloading = d.reload;
+        this.hud.showPrompt('🔄 إعادة التعبئة…');
+        A.sfx.reload();
+      }
     }
     if (this.reloading > 0) {
       this.reloading -= dt;
       if (this.reloading <= 0) {
-        this.stats.ammo = this.stats.maxAmmo; this.reloading = 0; this.hud.showPrompt(null);
+        inv.reload(); this.reloading = 0; this.hud.showPrompt(null);
+        A.sfx.reloadDone();
       }
+      this.hud.setAmmo(inv.hud());
       return;
     }
-    if (!inp.shoot || this.fireCd > 0 || this.stats.ammo <= 0) return;
-    this.fireCd = 0.11;
-    this.stats.ammo--;
-    A.sfx.shoot();
+
+    // إطلاق: زر الضرب، أو نقرة سريعة على الشاشة، أو تلقائي
+    const tap = this.hud.consume('tapFire');
+    const wantFire = inp.shoot || tap || (this.P.match.autoFire && this.enemyInSight());
+    if (!wantFire || this.fireCd > 0) { this.hud.setAmmo(inv.hud()); return; }
+    if (g.mag <= 0) { A.sfx.dryfire(); this.fireCd = 0.35; return; }
+
+    this.fireCd = 60 / (d.rpm || 500);
+    g.mag--;
+    this._kick = Math.min(1.6, (this._kick || 0) + (d.recoil || 1) * 0.5);
+    A.sfx.gun(d.kind);
 
     const from = this.pos.clone();
-    from.y += this.player.totalH * 0.72;
+    from.y += this.player.totalH * (this.view === 'fps' ? 0.92 : 0.72);
+    const base = new THREE.Vector3();
+    this.camera.getWorldDirection(base);
+    const ads = inp.aiming || inp.scope;
+    const spread = ads ? (d.adsSpread ?? 0.006) : (d.spread ?? 0.03);
+    const pellets = d.pellets || 1;
+
+    this.flash.position.copy(from).addScaledVector(base, 1.2);
+    this.flash.intensity = 20;
+
+    for (let i = 0; i < pellets; i++) {
+      let dir = base.clone();
+      dir.x += rnd(-spread, spread); dir.y += rnd(-spread, spread); dir.z += rnd(-spread, spread);
+      dir.normalize();
+      if (pellets === 1) dir = this.aimAssist(from, dir, d.range);
+      this.shootRay(from, dir, d);
+    }
+    // ارتداد الكاميرا
+    this.pitch = clamp(this.pitch - (d.recoil || 1) * 0.006 * (ads ? 0.5 : 1), -0.62, 1.15);
+    this.hud.setAmmo(inv.hud());
+  }
+
+  enemyInSight() {
+    const from = this.pos.clone();
+    from.y += this.player.totalH * 0.8;
     const dir = new THREE.Vector3();
     this.camera.getWorldDirection(dir);
-    const spread = inp.aiming ? 0.012 : 0.042;
-    dir.x += rnd(-spread, spread); dir.y += rnd(-spread, spread); dir.z += rnd(-spread, spread);
-    dir.normalize();
-
-    this.flash.position.copy(from).addScaledVector(dir, 1.2);
-    this.flash.intensity = 18;
-
-    // إصابة أقرب روبوت
-    let hit = null, hd = 260;
     const v = new THREE.Vector3();
     for (const b of this.bots) {
-      if (!b.alive || !b.landed) continue;
+      if (!b.alive || !b.landed || b.ally) continue;
+      v.copy(b.pos).sub(from);
+      const dd = v.length();
+      if (dd > 90) continue;
+      if (v.divideScalar(dd).dot(dir) > 0.992) return true;
+    }
+    return false;
+  }
+
+  shootRay(from, dir, d) {
+    let hit = null, hd = d.range;
+    const v = new THREE.Vector3();
+    for (const b of this.bots) {
+      if (!b.alive || !b.landed || b.ally) continue;
       v.copy(b.pos).sub(from);
       v.y += b.ch.totalH * 0.55;
       const along = v.dot(dir);
       if (along < 0.6 || along > hd) continue;
       const perp = v.clone().addScaledVector(dir, -along).length();
-      if (perp < 0.95) { hit = b; hd = along; }
+      if (perp < 1.05) { hit = b; hd = along; }
     }
-    const end = from.clone().addScaledVector(dir, hit ? hd : 190);
+    const end = from.clone().addScaledVector(dir, hit ? hd : d.range);
     this.addTracer(from.clone().addScaledVector(dir, 1.4), end);
     if (hit) {
       A.sfx.hit();
-      hit.hp -= 26;
+      hit.hp -= d.damage;
       hit.aggro = this.pos.clone();
+      this.hud.hitMark();
       if (hit.hp <= 0) this.killBot(hit, true);
     }
+  }
+
+  dropWeapon() {
+    const g = this.inv.dropActive();
+    if (!g) return;
+    this.refreshGunModel();
+    this.spawnPickup(this.pos.x + rnd(-1.4, 1.4), this.pos.y + 0.6, this.pos.z + rnd(-1.4, 1.4),
+      { t: 'weapon', def: g.def });
+    this.hud.feed('🗑️ رميتَ ' + g.def.name);
+    A.sfx.pickup();
+  }
+
+  toggleBag() {
+    if (this.bagOpen) { this.hud.closeBag(); this.bagOpen = false; return; }
+    this.bagOpen = true;
+    this.hud.openBag(this.inv, {
+      onDropItem: (k) => { if (this.inv.dropItem(k)) { this.spawnPickup(this.pos.x + rnd(-1, 1), this.pos.y + .6, this.pos.z + rnd(-1, 1), { t: 'item', kind: k, n: 1 }); A.sfx.pickup(); } },
+      onDropAmmo: (k) => { const n = this.inv.dropAmmo(k, 30); if (n) { this.spawnPickup(this.pos.x + rnd(-1, 1), this.pos.y + .6, this.pos.z + rnd(-1, 1), { t: 'ammo', kind: k, n }); A.sfx.pickup(); } },
+      onDropWeapon: (i) => { this.inv.active = i; this.dropWeapon(); },
+      onSelect: (i) => { if (this.inv.select(i)) this.refreshGunModel(); },
+      onUse: (k) => this.useItem(k),
+      onClose: () => { this.bagOpen = false; },
+    });
+  }
+
+  useItem(kind) {
+    const inv = this.inv;
+    if ((inv.items[kind] || 0) <= 0) return;
+    inv.items[kind]--;
+    if (kind === 'heal') { this.stats.hp = Math.min(this.stats.maxHp, this.stats.hp + 40); this.hud.feed('❤️ +40 صحة'); }
+    if (kind === 'shield') { this.stats.shield = Math.min(100, this.stats.shield + 50); this.hud.feed('🛡️ +50 درع'); }
+    if (kind === 'boost') { this._boost = 12; this.hud.feed('⚡ سرعة إضافية'); }
+    this.hud.setHP(this.stats.hp, this.stats.maxHp, this.stats.shield);
+    A.sfx.pickup();
   }
 
   killBot(b, byPlayer) {
@@ -938,9 +1250,9 @@ export class Game {
       const a = Math.min(this.stats.shield, v);
       this.stats.shield -= a; v -= a;
     }
-    if (v <= 0) { this.hud.setHP(this.stats.hp); return; }
+    if (v <= 0) { this.hud.setHP(this.stats.hp, this.stats.maxHp, this.stats.shield); return; }
     this.stats.hp -= v;
-    this.hud.setHP(this.stats.hp);
+    this.hud.setHP(this.stats.hp, this.stats.maxHp, this.stats.shield);
     if (v > 2) { this.hud.damage(); A.sfx.hurt(); }
     if (this.stats.hp <= 0) { this.stats.hp = 0; this.endMatch(false); }
   }
@@ -1018,7 +1330,7 @@ export class Game {
     }
     this.nearCrate = best;
     if (best) this.hud.showPrompt('📦 اضغط زر «فتح الصناديق»');
-    else if (lootNear) this.hud.showPrompt('✋ اضغط زر «التقاط الأشياء»');
+    else if (lootNear) this.hud.showPrompt('✋ التقاط: ' + lootNear.label);
     else if (!this.reloading) this.hud.showPrompt(null);
 
     if (this.hud.consume('open') && best) {
@@ -1027,44 +1339,82 @@ export class Game {
       A.sfx.crate();
       const d = this.detailPool.find((x) => x.crate === best);
       if (d?.action) { d.action.reset(); d.action.play(); }
-      const n = rndi(2, 3);
-      for (let i = 0; i < n; i++) this.spawnLoot(best.x + rnd(-1.6, 1.6), best.y + 1.2, best.z + rnd(-1.6, 1.6));
-      this.hud.feed('📦 صندوق مفتوح');
+      const loot = crateLoot(this.wdefs);
+      loot.forEach((pl, i) => {
+        const a = (i / loot.length) * 6.28;
+        this.spawnPickup(best.x + Math.cos(a) * 1.5, best.y + 1.3, best.z + Math.sin(a) * 1.5, pl);
+      });
+      this.hud.feed('📦 صندوق مفتوح — ' + loot.length + ' غنائم');
     }
     if (this.hud.consume('pickup') && lootNear) this.take(lootNear);
   }
 
-  spawnLoot(x, y, z, kind) {
-    kind = kind || pick(['hp', 'shield', 'ammo', 'ammo']);
-    const m = new THREE.Mesh(this.lootGeo, this.lootMats[kind]);
-    m.position.set(x, y, z);
-    m.castShadow = true;
-    const light = new THREE.PointLight(this.lootMats[kind].color.getHex(), 2.4, 6);
-    m.add(light);
-    this.scene.add(m);
-    this.loot.push({ mesh: m, kind, t: rnd(0, 6.28), vy: 2.4, ground: this.groundY(x, z) + 0.6 });
-    while (this.loot.length > 26) {
-      const old = this.loot.shift();
-      this.scene.remove(old.mesh);
+  // ---------------- الغنائم والالتقاط ----------------
+  spawnPickup(x, y, z, payload) {
+    const g = new THREE.Group();
+    let color = 0xffc21a, label = '';
+    if (payload.t === 'weapon') {
+      const m = this.cloneGun(payload.def);
+      m.scale.multiplyScalar(0.9);
+      m.rotation.z = 0.35;
+      g.add(m);
+      color = 0xffd166; label = payload.def.name;
+    } else if (payload.t === 'ammo') {
+      const k = AMMO_KINDS[payload.kind] || AMMO_KINDS.ar;
+      color = new THREE.Color(k.color).getHex();
+      g.add(new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.3, 0.28),
+        new THREE.MeshStandardMaterial({ color, roughness: .5, emissive: color, emissiveIntensity: .25 })));
+      label = k.label + ' ×' + payload.n;
+    } else {
+      const c = { heal: 0x39e07b, shield: 0x25d3ff, boost: 0xff8a1e }[payload.kind] || 0xffffff;
+      color = c;
+      g.add(new THREE.Mesh(new THREE.IcosahedronGeometry(0.3, 0),
+        new THREE.MeshStandardMaterial({ color: c, roughness: .3, emissive: c, emissiveIntensity: .35 })));
+      label = { heal: 'عدّة إسعاف', shield: 'درع', boost: 'مُعزّز' }[payload.kind];
     }
+    const halo = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.55, 0.55, 1.2, 16, 1, true),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .22, side: THREE.DoubleSide, depthWrite: false }));
+    halo.position.y = 0.5;
+    g.add(halo);
+    g.position.set(x, y, z);
+    g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    this.scene.add(g);
+    this.loot.push({ mesh: g, payload, label, t: rnd(0, 6.28), vy: 2.2,
+                     ground: this.groundY(x, z) + 0.45 });
+    while (this.loot.length > 60) { const o = this.loot.shift(); this.scene.remove(o.mesh); }
   }
 
   take(l) {
+    const p = l.payload;
+    const inv = this.inv;
+    if (p.t === 'weapon') {
+      const r = inv.addWeapon(p.def);
+      this.refreshGunModel();
+      this.hud.feed('🔫 ' + p.def.name);
+      if (r.replaced) {
+        this.spawnPickup(this.pos.x + rnd(-1.2, 1.2), this.pos.y + .6, this.pos.z + rnd(-1.2, 1.2),
+          { t: 'weapon', def: r.replaced.def });
+      }
+    } else if (p.t === 'ammo') {
+      inv.addAmmo(p.kind, p.n);
+      this.hud.feed((AMMO_KINDS[p.kind]?.emo || '🔸') + ' ' + p.n + ' ذخيرة');
+    } else {
+      inv.addItem(p.kind, p.n || 1);
+      this.hud.feed('🎒 ' + l.label);
+    }
     A.sfx.pickup();
-    if (l.kind === 'hp') { this.stats.hp = Math.min(this.stats.maxHp, this.stats.hp + 35); this.hud.setHP(this.stats.hp); this.hud.feed('❤️ +35 صحة'); }
-    if (l.kind === 'shield') { this.stats.shield = Math.min(100, this.stats.shield + 40); this.hud.feed('🛡️ +40 درع'); }
-    if (l.kind === 'ammo') { this.stats.ammo = this.stats.maxAmmo; this.hud.feed('🔫 ذخيرة ممتلئة'); }
     this.scene.remove(l.mesh);
     this.loot.splice(this.loot.indexOf(l), 1);
+    this.hud.setAmmo(inv.hud());
   }
 
   updLoot(dt) {
     for (const l of this.loot) {
       l.t += dt;
       if (l.mesh.position.y > l.ground) { l.vy -= 22 * dt; l.mesh.position.y += l.vy * dt; }
-      else l.mesh.position.y = l.ground + Math.sin(l.t * 2.4) * 0.16;
-      l.mesh.rotation.y += dt * 1.7;
-      l.mesh.rotation.x += dt * 0.8;
+      else l.mesh.position.y = l.ground + Math.sin(l.t * 2.2) * 0.12;
+      l.mesh.rotation.y += dt * 1.2;
     }
   }
 
@@ -1085,6 +1435,7 @@ export class Game {
       }
       b.t += dt;
       const dp = b.pos.distanceTo(this.pos);
+      if (b.ally) { this.updAlly(b, dt, dp); continue; }
       const canSee = pj && dp < 62;
 
       if (canSee || (b.aggro && b.t - (b.aggroT || 0) < 6)) {
@@ -1184,6 +1535,51 @@ export class Game {
     }
   }
 
+  /** رفيق فريق: يتبعك ويطلق النار على الأعداء القريبين */
+  updAlly(b, dt, dp) {
+    b.t += dt;
+    // ابقَ قرب اللاعب
+    let tx = this.pos.x + Math.cos(b.t * 0.6 + b.id.length) * 7;
+    let tz = this.pos.z + Math.sin(b.t * 0.6 + b.id.length) * 7;
+    // هاجم أقرب عدو
+    let foe = null, fd = 55;
+    for (const e of this.bots) {
+      if (!e.alive || e.ally || !e.landed) continue;
+      const d = e.pos.distanceTo(b.pos);
+      if (d < fd) { fd = d; foe = e; }
+    }
+    if (foe) {
+      tx = lerp(b.pos.x, foe.pos.x, 0.5); tz = lerp(b.pos.z, foe.pos.z, 0.5);
+      b.fire -= dt;
+      if (b.fire <= 0) {
+        b.fire = rnd(0.4, 1.0);
+        const from = b.pos.clone(); from.y += b.ch.totalH * 0.7;
+        const to = foe.pos.clone(); to.y += foe.ch.totalH * 0.6;
+        this.addTracer(from, to);
+        if (Math.random() < 0.5) {
+          foe.hp -= rnd(8, 18);
+          if (foe.hp <= 0) { this.killBot(foe, false); this.hud.feed(`🤝 ${b.name} أسقط ${foe.name}`); }
+        }
+      }
+    }
+    const dx = tx - b.pos.x, dz = tz - b.pos.z;
+    const dl = Math.hypot(dx, dz) || 1;
+    const spd = dp > 16 ? 8 : 4;
+    b.vel.x = smooth(b.vel.x, (dx / dl) * spd, 8, dt);
+    b.vel.z = smooth(b.vel.z, (dz / dl) * spd, 8, dt);
+    const cg = this.groundY(b.pos.x, b.pos.z);
+    const nx = b.pos.x + b.vel.x * dt, nz = b.pos.z + b.vel.z * dt;
+    if (this.groundY(nx, b.pos.z) - cg <= 0.8) b.pos.x = nx;
+    if (this.groundY(b.pos.x, nz) - cg <= 0.8) b.pos.z = nz;
+    b.pos.y = this.groundY(b.pos.x, b.pos.z);
+    const sp = Math.hypot(b.vel.x, b.vel.z);
+    b.ch.group.position.copy(b.pos);
+    b.ch.update(dt, { speed: sp, grounded: true, groundY: b.pos.y,
+                      yaw: sp > 0.4 ? Math.atan2(b.vel.x, b.vel.z) : undefined });
+    b.tag.visible = dp < 90;
+    b.ch.group.visible = dp < 240;
+  }
+
   // ---------------- آثار الطلقات ----------------
   addTracer(a, b) {
     this.tracers.list.push({ a: a.clone(), b: b.clone(), t: 0.09 });
@@ -1221,7 +1617,8 @@ export class Game {
     for (const b of this.bots) {
       if (!b.alive || !b.landed) continue;
       const d = b.pos.distanceTo(this.pos);
-      if (d < 130) others.push({ x: b.pos.x, z: b.pos.z, color: '#ff4d5e', r: 3 });
+      if (d < (b.ally ? 400 : 130))
+        others.push({ x: b.pos.x, z: b.pos.z, color: b.ally ? '#39e07b' : '#ff4d5e', r: b.ally ? 3.6 : 3 });
     }
     for (const c of this.crates) {
       if (c.opened) continue;
@@ -1229,6 +1626,12 @@ export class Game {
         others.push({ x: c.x, z: c.z, color: '#ffc21a', r: 2.2 });
     }
     this.mm.zone = this.zone && this.zone.cfg.enabled ? this.zone : null;
+    this.mm.waypoint = this.waypoint || null;
+    if (this.waypoint) {
+      const d = Math.hypot(this.waypoint.x - this.pos.x, this.waypoint.z - this.pos.z);
+      const ang = Math.atan2(this.waypoint.x - this.pos.x, this.waypoint.z - this.pos.z) - this.yaw;
+      this.hud.setWaypoint(d, ang);
+    } else this.hud.setWaypoint(null);
     this.mm.draw(this.pos.x, this.pos.z, this.yaw, others);
     if (this.bigmap.classList.contains('on')) this.drawBigMap();
   }
@@ -1236,6 +1639,25 @@ export class Game {
   toggleBigMap() {
     const on = this.bigmap.classList.toggle('on');
     if (on) this.drawBigMap();
+  }
+
+  /** يضع علامة وجهة على الخريطة الكبيرة */
+  setWaypoint(px, py) {
+    const cv = this.bigmap.querySelector('canvas');
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    const W = cv.width, H = cv.height;
+    const s = Math.min(W, H) * 0.92;
+    const ox = (W - s) / 2, oy = (H - s) / 2;
+    const V = this.an.view || { x0: this.an.minX, z0: this.an.minZ, size: this.an.maxX - this.an.minX };
+    const x = ((px * dpr - ox) / s) * V.size + V.x0;
+    const z = ((py * dpr - oy) / s) * V.size + V.z0;
+    if (px * dpr < ox || px * dpr > ox + s || py * dpr < oy || py * dpr > oy + s) return false;
+    this.waypoint = { x, z };
+    this.mm.waypoint = this.waypoint;
+    this.hud.feed('📍 وُضعت علامة الوجهة');
+    A.sfx.ui_ok();
+    this.drawBigMap();
+    return true;
   }
   drawBigMap() {
     const cv = this.bigmap.querySelector('canvas');
@@ -1279,12 +1701,17 @@ export class Game {
         g.setLineDash([]);
       }
     }
+    if (this.waypoint) {
+      const [wx, wy] = to(this.waypoint.x, this.waypoint.z);
+      g.fillStyle = '#ff4d5e'; g.strokeStyle = '#fff'; g.lineWidth = 3;
+      g.beginPath();
+      g.moveTo(wx, wy); g.lineTo(wx - 9, wy - 20); g.lineTo(wx + 9, wy - 20);
+      g.closePath(); g.fill(); g.stroke();
+    }
     const [px, pz] = to(this.pos.x, this.pos.z);
     g.fillStyle = '#25d3ff'; g.strokeStyle = '#001b26'; g.lineWidth = 3;
     g.beginPath(); g.arc(px, pz, 9, 0, 7); g.fill(); g.stroke();
-    g.fillStyle = '#fff'; g.font = 'bold ' + Math.round(16 * dpr) + 'px Tajawal, sans-serif';
-    g.textAlign = 'center';
-    g.fillText('اضغط في أي مكان للإغلاق', W / 2, oy + s + 26 * dpr);
+
   }
 
   // ---------------- النهاية ----------------

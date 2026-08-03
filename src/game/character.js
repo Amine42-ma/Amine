@@ -59,7 +59,9 @@ export class Character {
     const seg = (a, b) => [Math.max(4, Math.round(a * D)), Math.max(6, Math.round(b * D))];
 
     this.group = new THREE.Group();
-    this.root = new THREE.Group();       // يتحرك للانحناء/القفزة
+    this.root = new THREE.Group();       // الدوران الأفقي فقط (yaw)
+    this.tilt = new THREE.Group();       // الميل الأمامي/الجانبي — منفصل كي لا يشوّه الدوران
+    this.root.add(this.tilt);
     this.group.add(this.root);
 
     const R = 0.36 * o.width;
@@ -83,7 +85,7 @@ export class Character {
     this.body = new THREE.Mesh(geo, mat);
     this.body.castShadow = true; this.body.receiveShadow = true;
     this.body.position.y = R + L / 2;
-    this.root.add(this.body);
+    this.tilt.add(this.body);
 
     // مخطّط خارجي (Inverted hull) — مظهر كرتوني
     if (o.outlineOn) {
@@ -91,7 +93,7 @@ export class Character {
       this.outline = new THREE.Mesh(geo, om);
       this.outline.scale.setScalar(1.055);
       this.outline.position.copy(this.body.position);
-      this.root.add(this.outline);
+      this.tilt.add(this.outline);
     }
 
     // بطن أفتح
@@ -100,13 +102,13 @@ export class Character {
     this.belly = new THREE.Mesh(bellyGeo, bellyMat);
     this.belly.scale.set(0.78, 1.02, 0.55);
     this.belly.position.set(0, R + L * 0.34, R * 0.62);
-    this.root.add(this.belly);
+    this.tilt.add(this.belly);
     this.bellyMat = bellyMat;
 
     // العينان
     this.eyes = new THREE.Group();
     this.eyes.position.set(0, R + L * 0.82, R * 0.30);
-    this.root.add(this.eyes);
+    this.tilt.add(this.eyes);
     const es = 0.155 * o.eyeSize * o.width;
     const sclera = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.22, metalness: 0 });
     const pupilM = new THREE.MeshStandardMaterial({ color: o.eye, roughness: 0.16, metalness: 0 });
@@ -135,7 +137,7 @@ export class Character {
     this.footL = new THREE.Mesh(footGeo, footMat);
     this.footR = new THREE.Mesh(footGeo, footMat);
     for (const f of [this.footL, this.footR]) {
-      f.scale.set(1, 0.62, 1.45); f.castShadow = !o.lod; this.root.add(f);
+      f.scale.set(1, 0.62, 1.45); f.castShadow = !o.lod; this.tilt.add(f);
     }
     this.footL.position.set(-R * 0.46, R * 0.22, 0);
     this.footR.position.set(R * 0.46, R * 0.22, 0);
@@ -163,13 +165,30 @@ export class Character {
     this.mounts.body.position.set(0, R + L * 0.36, R * 0.78);
     this.mounts.hand.position.set(R * 1.05, R + L * 0.5, R * 0.35);
     this.mounts.back.position.set(0, R + L * 0.55, -R * 0.86);
-    for (const k in this.mounts) this.root.add(this.mounts[k]);
+    for (const k in this.mounts) this.tilt.add(this.mounts[k]);
 
     // حالة الحركة
     this.st = {
       speed: 0, t: 0, bob: 0, lean: 0, squash: 1, blink: 0, nextBlink: 2 + Math.random() * 4,
       grounded: true, crouch: 0, aim: 0, yaw: 0, yawV: 0, look: new THREE.Vector2(),
     };
+  }
+
+  /** يضع نقشاً مرسوماً يدوياً فوق لون الجسم */
+  setDecal(imgOrNull) {
+    if (this._decal) { this.tilt.remove(this._decal); this._decal.geometry.dispose(); this._decal = null; }
+    if (!imgOrNull) return;
+    const tex = imgOrNull instanceof THREE.Texture ? imgOrNull : new THREE.Texture(imgOrNull);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    const geo = new THREE.CapsuleGeometry(this.R * 1.012, this.L, 8, 24);
+    const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+      map: tex, transparent: true, roughness: 0.5, metalness: 0,
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1,
+    }));
+    m.position.copy(this.body.position);
+    this._decal = m;
+    this.tilt.add(m);
   }
 
   setColors(c) {
@@ -215,15 +234,15 @@ export class Character {
     st.aim = smooth(st.aim, s.aim ? 1 : 0, 12, dt);
 
     // دوران سلس نحو اتجاه الحركة
-    if (s.yaw !== undefined) {
+    if (s.yaw !== undefined && Number.isFinite(s.yaw)) {
       let d = s.yaw - st.yaw;
       while (d > Math.PI) d -= Math.PI * 2;
       while (d < -Math.PI) d += Math.PI * 2;
-      const k = s.aim ? 22 : 13;
+      const k = s.turnSnap ? 40 : (s.aim ? 22 : 13);
       st.yawV = d * k;
       st.yaw += st.yawV * dt;
-      this.root.rotation.y = st.yaw;
     }
+    this.root.rotation.y = st.yaw;
 
     const run = clamp(st.speed / 7, 0, 1.4);
     const cyc = st.t * (5.4 + run * 6.5);
@@ -241,6 +260,7 @@ export class Character {
       smooth(this.body.scale.y, squash, 16, dt),
       smooth(this.body.scale.z, 2 - squash, 16, dt)
     );
+    if (this._decal) { this._decal.position.copy(this.body.position); this._decal.scale.copy(this.body.scale); }
     if (this.outline) {
       this.outline.position.copy(this.body.position);
       this.outline.scale.copy(this.body.scale).multiplyScalar(1.055);
@@ -251,8 +271,8 @@ export class Character {
     // ميل للأمام حسب السرعة + انحناء جانبي عند الالتفاف
     const lean = clamp(run * 0.16 + air * 0.06, 0, 0.3);
     const side = clamp(-st.yawV * 0.035, -0.24, 0.24);
-    this.root.rotation.x = smooth(this.root.rotation.x, lean, 9, dt);
-    this.root.rotation.z = smooth(this.root.rotation.z, side, 9, dt);
+    this.tilt.rotation.x = smooth(this.tilt.rotation.x, lean, 9, dt);
+    this.tilt.rotation.z = smooth(this.tilt.rotation.z, side, 9, dt);
 
     // القدمان
     const sw = st.grounded ? Math.sin(cyc) * 0.3 * run : 0.12;
@@ -309,29 +329,39 @@ export class Character {
 // ---------- مظلّة الهبوط ----------
 export function buildChute(color = '#ffc21a') {
   const g = new THREE.Group();
+  // قبّة بشرائح ملوّنة كما في الألعاب الاحترافية
+  const seg = 16;
   const canopy = new THREE.Mesh(
-    new THREE.SphereGeometry(1.5, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2),
-    new THREE.MeshStandardMaterial({ color, side: THREE.DoubleSide, roughness: .7 })
+    new THREE.SphereGeometry(1.7, seg, 14, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color, side: THREE.DoubleSide, roughness: .62, metalness: .02 })
   );
-  canopy.scale.set(1, 0.62, 1);
-  canopy.position.y = 2.4;
+  const cols = [];
+  const base = new THREE.Color(color);
+  for (let i = 0; i < seg; i++) cols.push(i % 2 ? base : base.clone().offsetHSL(0, 0, -0.22));
+  canopy.geometry = canopy.geometry.toNonIndexed();
+  const pos = canopy.geometry.attributes.position;
+  const carr = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const a = Math.atan2(pos.getZ(i), pos.getX(i));
+    const k = Math.floor(((a + Math.PI) / (Math.PI * 2)) * seg) % seg;
+    const c = cols[k];
+    carr[i * 3] = c.r; carr[i * 3 + 1] = c.g; carr[i * 3 + 2] = c.b;
+  }
+  canopy.geometry.setAttribute('color', new THREE.BufferAttribute(carr, 3));
+  canopy.material.vertexColors = true;
+  canopy.scale.set(1, 0.58, 1);
+  canopy.position.y = 2.45;
   canopy.castShadow = true;
   g.add(canopy);
-  const stripes = new THREE.Mesh(
-    new THREE.SphereGeometry(1.51, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2),
-    new THREE.MeshStandardMaterial({ color: 0xffffff, side: THREE.DoubleSide, roughness: .7,
-      transparent: true, opacity: .55, alphaTest: .05 })
-  );
-  stripes.scale.set(1, .62, 1); stripes.position.y = 2.4;
-  g.add(stripes);
-  const lineMat = new THREE.LineBasicMaterial({ color: 0x222222 });
-  for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * Math.PI * 2;
+  const lineMat = new THREE.LineBasicMaterial({ color: 0x1b1b22 });
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
     const geo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(Math.cos(a) * 1.4, 2.4, Math.sin(a) * 1.4),
-      new THREE.Vector3(0, 0.9, 0),
+      new THREE.Vector3(Math.cos(a) * 1.62, 2.42, Math.sin(a) * 1.62),
+      new THREE.Vector3(0, 0.95, 0),
     ]);
     g.add(new THREE.Line(geo, lineMat));
   }
+  g.userData.canopy = canopy;
   return g;
 }

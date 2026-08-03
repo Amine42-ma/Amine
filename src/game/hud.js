@@ -6,6 +6,8 @@ import { assetURL } from '../core/assets.js';
 import { CONTROL_DEFS, STAT_DEFS } from '../core/store.js';
 
 const REF_H = 720;
+const AMMO_LABEL = { ar: '🟩 ذخيرة 5.56', smg: '🟨 ذخيرة 9مم', sg: '🟥 خرطوش', sr: '🟦 ذخيرة 7.62' };
+const ITEM_LABEL = { heal: '❤️ عدّة إسعاف', shield: '🛡️ درع', boost: '⚡ مُعزّز' };
 
 export class HUD {
   constructor(root, project, { onBigMap } = {}) {
@@ -16,12 +18,13 @@ export class HUD {
 
     this.input = {
       move: { x: 0, y: 0 }, aim: { x: 0, y: 0 }, aiming: false,
-      shoot: false, run: false, crouch: false,
+      shoot: false, run: false, crouch: false, scope: false,
       pressed: {},           // نبضات لمرة واحدة
-      lookDelta: { x: 0, y: 0 },
+      look: { x: 0, y: 0 },  // تراكم حركة الكاميرا، يُستهلك كل إطار
     };
     this.widgets = {};
     this.stats = {};
+    this.buildLookPad();
     this.buildStatic();
     this.build();
 
@@ -31,6 +34,55 @@ export class HUD {
     addEventListener('keyup', this._ku);
     this._rs = () => this.layout();
     addEventListener('resize', this._rs);
+  }
+
+  // ---------- طبقة النظر الحر (تدوير الكاميرا بالسحب في أي مكان) ----------
+  buildLookPad() {
+    const pad = el('div', { id: 'lookpad' });
+    this.node.append(pad);
+    this.lookPad = pad;
+    const active = new Map();
+
+    pad.addEventListener('pointerdown', (e) => {
+      pad.setPointerCapture(e.pointerId);
+      active.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now(), moved: 0 });
+      // على الحاسوب: قفل المؤشّر لتحكّم كامل مثل ألعاب FPS
+      if (e.pointerType === 'mouse' && this.wantPointerLock && !document.pointerLockElement) {
+        pad.requestPointerLock?.();
+      }
+    });
+    pad.addEventListener('pointermove', (e) => {
+      const a = active.get(e.pointerId);
+      if (!a) return;
+      const dx = e.clientX - a.x, dy = e.clientY - a.y;
+      a.moved += Math.abs(dx) + Math.abs(dy);
+      a.x = e.clientX; a.y = e.clientY;
+      this.input.look.x += dx;
+      this.input.look.y += dy;
+    });
+    const end = (e) => {
+      const a = active.get(e.pointerId);
+      active.delete(e.pointerId);
+      // نقرة قصيرة بلا سحب = إطلاق سريع (مثل ببجي)
+      if (a && a.moved < 9 && performance.now() - a.t < 260) this.input.pressed.tapFire = true;
+    };
+    pad.addEventListener('pointerup', end);
+    pad.addEventListener('pointercancel', end);
+
+    // قفل المؤشّر على الحاسوب
+    document.addEventListener('mousemove', (e) => {
+      if (document.pointerLockElement !== pad) return;
+      this.input.look.x += e.movementX;
+      this.input.look.y += e.movementY;
+    });
+  }
+
+  /** يقرأ حركة الكاميرا المتراكمة ويصفّرها */
+  takeLook() {
+    const l = this.input.look;
+    const out = { x: l.x, y: l.y };
+    l.x = 0; l.y = 0;
+    return out;
   }
 
   // ---------- عناصر ثابتة ----------
@@ -43,7 +95,24 @@ export class HUD {
     this.dropinfo = el('div', { class: 'dropinfo' });
     this.hp = el('div', { id: 'hpbar' }, el('i'), el('span'));
     this.endcard = el('div', { id: 'endcard' });
-    this.node.append(this.cross, this.flash, this.oob, this.prompt, this.killfeed, this.dropinfo, this.hp, this.endcard);
+    this.hitm = el('div', { id: 'hitmark' }, el('i'), el('i'), el('i'), el('i'));
+    this.ammoBox = el('div', { id: 'ammobox' },
+      el('div', { class: 'slots' },
+        el('b', { class: 'slot on', data: { i: '0' } }, '1'),
+        el('b', { class: 'slot', data: { i: '1' } }, '2')),
+      el('div', { class: 'wname' }, 'بلا سلاح'),
+      el('div', { class: 'wammo' }, el('span', { class: 'mag' }, '0'), ' / ',
+        el('span', { class: 'res' }, '0')));
+    this.bag = el('div', { id: 'bagpanel' });
+    this.wp = el('div', { id: 'waypoint' }, el('b', {}, '📍'), el('span', {}, ''));
+    this.node.append(this.cross, this.hitm, this.flash, this.oob, this.prompt, this.killfeed,
+      this.dropinfo, this.hp, this.ammoBox, this.wp, this.bag, this.endcard);
+    for (const b of this.ammoBox.querySelectorAll('.slot')) {
+      b.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        this.input.pressed['slot' + (+b.dataset.i + 1)] = true;
+      });
+    }
   }
 
   // ---------- أدوات التحكم ----------
@@ -84,6 +153,7 @@ export class HUD {
       if (c.id === 'shoot') this.input.shoot = v;
       else if (c.id === 'run') this.input.run = v;
       else if (c.id === 'crouch') this.input.crouch = v;
+      else if (c.id === 'scope') this.input.scope = v;
       if (v) this.input.pressed[c.id] = true;
     };
     node.addEventListener('pointerdown', (e) => { e.preventDefault(); node.setPointerCapture(e.pointerId); set(true); });
@@ -185,6 +255,12 @@ export class HUD {
       case 'KeyE': if (down) this.input.pressed.pickup = true; break;
       case 'KeyR': if (down) this.input.pressed.reload = true; break;
       case 'KeyM': if (down) this.onBigMap && this.onBigMap(); break;
+      case 'KeyV': if (down) this.input.pressed.view = true; break;
+      case 'KeyQ': if (down) this.input.pressed.swap = true; break;
+      case 'Tab': if (down) { this.input.pressed.bag = true; e.preventDefault(); } break;
+      case 'KeyG': if (down) this.input.pressed.drop = true; break;
+      case 'Digit1': if (down) this.input.pressed.slot1 = true; break;
+      case 'Digit2': if (down) this.input.pressed.slot2 = true; break;
       default: return;
     }
   }
@@ -197,15 +273,97 @@ export class HUD {
 
   // ---------- تحديثات العرض ----------
   setStat(id, v) { const s = this.stats[id]; if (s?.val) s.val.textContent = v; }
-  setHP(v, max = 100) {
+
+  setHP(v, max = 100, shield = 0) {
     const p = clamp(v / max, 0, 1);
     const bar = this.hp.querySelector('i');
     bar.style.width = p * 100 + '%';
     bar.style.background = p > .55 ? 'linear-gradient(180deg,#5cff8d,#12a84a)'
       : p > .25 ? 'linear-gradient(180deg,#ffd35c,#c98800)'
       : 'linear-gradient(180deg,#ff6b7b,#b8202f)';
-    this.hp.querySelector('span').textContent = Math.max(0, Math.ceil(v)) + ' / ' + max;
+    let sh = this.hp.querySelector('u');
+    if (!sh) { sh = el('u'); this.hp.append(sh); }
+    sh.style.width = clamp(shield / 100, 0, 1) * 100 + '%';
+    this.hp.querySelector('span').textContent =
+      Math.max(0, Math.ceil(v)) + ' / ' + max + (shield > 0 ? '  🛡️' + Math.ceil(shield) : '');
   }
+
+  /** بطاقة السلاح والذخيرة */
+  setAmmo(h) {
+    if (!h) return;
+    this.ammoBox.querySelector('.wname').textContent = (h.emo || '') + ' ' + h.name;
+    this.ammoBox.querySelector('.mag').textContent = h.mag;
+    this.ammoBox.querySelector('.res').textContent = h.res;
+    this.ammoBox.classList.toggle('empty', h.mag === 0);
+  }
+  setSlots(slots, active) {
+    const b = this.ammoBox.querySelectorAll('.slot');
+    slots.forEach((sl, i) => {
+      b[i].classList.toggle('on', i === active);
+      b[i].classList.toggle('has', !!sl);
+      b[i].textContent = sl ? (sl.def.short || String(i + 1)) : String(i + 1);
+    });
+  }
+
+  /** بوصلة الوجهة: المسافة والاتجاه بالنسبة لنظر اللاعب */
+  setWaypoint(dist, ang) {
+    if (dist == null) { this.wp.classList.remove('on'); return; }
+    this.wp.classList.add('on');
+    this.wp.querySelector('span').textContent = Math.round(dist) + 'م';
+    this.wp.querySelector('b').style.transform = `rotate(${ang}rad)`;
+  }
+
+  hitMark() {
+    this.hitm.classList.add('on');
+    clearTimeout(this._hm);
+    this._hm = setTimeout(() => this.hitm.classList.remove('on'), 160);
+  }
+
+  // ---------- الحقيبة ----------
+  openBag(inv, cb) {
+    this.bagCb = cb;
+    this.bag.classList.add('on');
+    const render = () => {
+      this.bag.innerHTML = '';
+      const head = el('div', { class: 'bag-head' },
+        el('h3', {}, '🎒 الحقيبة'),
+        el('button', { class: 'btn sm r', onclick: () => { this.closeBag(); cb.onClose && cb.onClose(); } }, '✕'));
+      this.bag.append(head);
+
+      const secW = el('div', { class: 'bag-sec' }, el('h4', {}, 'الأسلحة'));
+      inv.slots.forEach((sl, i) => {
+        secW.append(el('div', { class: 'bag-row' + (i === inv.active ? ' on' : '') },
+          el('b', {}, 'الخانة ' + (i + 1)),
+          el('span', { class: 'f' }, sl ? `${sl.def.emo} ${sl.def.name}  ${sl.mag}/${sl.def.mag}` : '— فارغة —'),
+          sl ? el('button', { class: 'btn sm c', onclick: () => { cb.onSelect(i); render(); } }, 'استخدام') : null,
+          sl ? el('button', { class: 'btn sm r', onclick: () => { cb.onDropWeapon(i); render(); } }, 'رمي') : null));
+      });
+      this.bag.append(secW);
+
+      const secA = el('div', { class: 'bag-sec' }, el('h4', {}, 'الذخيرة'));
+      for (const k in inv.reserve) {
+        const n = inv.reserve[k] || 0;
+        secA.append(el('div', { class: 'bag-row' },
+          el('b', {}, AMMO_LABEL[k] || k),
+          el('span', { class: 'f' }, String(n)),
+          n > 0 ? el('button', { class: 'btn sm r', onclick: () => { cb.onDropAmmo(k); render(); } }, 'رمي 30') : null));
+      }
+      this.bag.append(secA);
+
+      const secI = el('div', { class: 'bag-sec' }, el('h4', {}, 'الأدوات'));
+      for (const k in inv.items) {
+        const n = inv.items[k] || 0;
+        secI.append(el('div', { class: 'bag-row' },
+          el('b', {}, ITEM_LABEL[k] || k),
+          el('span', { class: 'f' }, String(n)),
+          n > 0 ? el('button', { class: 'btn sm g', onclick: () => { cb.onUse(k); render(); } }, 'استخدام') : null,
+          n > 0 ? el('button', { class: 'btn sm r', onclick: () => { cb.onDropItem(k); render(); } }, 'رمي') : null));
+      }
+      this.bag.append(secI);
+    };
+    render();
+  }
+  closeBag() { this.bag.classList.remove('on'); this.bag.innerHTML = ''; }
   damage() {
     this.flash.style.opacity = '.85';
     setTimeout(() => (this.flash.style.opacity = '0'), 120);
@@ -229,7 +387,9 @@ export class HUD {
     while (this.killfeed.children.length > 5) this.killfeed.lastChild.remove();
   }
   setCombatVisible(on) {
-    for (const id of ['shoot', 'run', 'crouch', 'open', 'pickup', 'reload', 'aim', 'emote']) {
+    this.ammoBox.classList.toggle('on', on);
+    for (const id of ['shoot', 'run', 'crouch', 'open', 'pickup', 'reload', 'aim', 'emote',
+                      'swap', 'bag', 'drop', 'scope']) {
       const w = this.widgets[id];
       if (!w) continue;
       const want = on && w.cfg.visible;
@@ -350,6 +510,13 @@ export class Minimap {
         g.beginPath(); g.arc(tx, ty, Z.tr * sc, 0, 7); g.stroke();
         g.setLineDash([]);
       }
+    }
+    // علامة الوجهة
+    if (this.waypoint) {
+      const [wx, wy] = toPx(this.waypoint.x, this.waypoint.z);
+      const cx2 = clamp(wx, 6, w - 6), cy2 = clamp(wy, 6, h - 6);
+      g.fillStyle = '#ff4d5e'; g.strokeStyle = '#fff'; g.lineWidth = 1.6 * (w / 200);
+      g.beginPath(); g.arc(cx2, cy2, 4.5 * (w / 200), 0, 7); g.fill(); g.stroke();
     }
     // العلامات
     for (const m of others) {

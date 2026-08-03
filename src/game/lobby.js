@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { el, clamp, uid, toast, promptBox, confirmBox, pickFile, slider, colorRow } from '../core/util.js';
 import { assetURL, importFile } from '../core/assets.js';
-import { LOBBY_DEFS, currentHero, heroUnlocked, defHero } from '../core/store.js';
+import { LOBBY_DEFS, MODES, currentHero, heroUnlocked, defHero } from '../core/store.js';
 import { Character } from './character.js';
 import { loadGLB } from './world.js';
 import * as A from '../core/audio.js';
@@ -55,6 +55,7 @@ export class CharacterPreview {
     this.drag = 0;
     this.attachIds = new Set();
     this.reloadAttachments();
+    this.applyDecal();
 
     let down = false, lx = 0;
     this.canvas.style.pointerEvents = 'auto';
@@ -65,6 +66,16 @@ export class CharacterPreview {
 
     this.loop = this.loop.bind(this);
     this._raf = requestAnimationFrame(this.loop);
+  }
+
+  applyDecal() {
+    const id = this.cfg.decal;
+    if (!id) { this.char.setDecal(null); return; }
+    const url = assetURL(id);
+    if (!url) { this.char.setDecal(null); return; }
+    const img = new Image();
+    img.onload = () => this.char.setDecal(img);
+    img.src = url;
   }
 
   async reloadAttachments() {
@@ -101,6 +112,7 @@ export class CharacterPreview {
     this.scene.add(this.char.group);
     this.spin = spin;
     this.reloadAttachments();
+    this.applyDecal();
   }
 
   loop() {
@@ -193,8 +205,9 @@ export class Lobby {
     this.preview?.dispose();
     this.preview = new CharacterPreview(stage3d, currentHero(P));
 
-    // شريط اللاعب العلوي
+    // شريط اللاعب العلوي + اختيار النمط
     this.node.append(this.header());
+    this.node.append(this.modeBar());
 
     // الأزرار
     for (const b of L.buttons) {
@@ -225,6 +238,30 @@ export class Lobby {
   }
 
   relayout() { for (const [b, w] of this._els || []) this.place(w, b); }
+
+  /** شريط اختيار نمط المباراة (فردي/ثنائي/رباعي) فوق زر اللعب */
+  modeBar() {
+    const P = this.P;
+    const play = P.lobby.buttons.find((b) => b.kind === 'play' && b.visible);
+    const bar = el('div', { class: 'mode-bar' });
+    if (play) {
+      bar.style.left = play.x * 100 + '%';
+      bar.style.top = `calc(${play.y * 100}% - 4.6em)`;
+    } else { bar.style.left = '85%'; bar.style.top = '72%'; }
+    for (const k in MODES) {
+      const m = MODES[k];
+      const b = el('div', { class: 'mode-chip' + (P.match.mode === k ? ' on' : '') },
+        el('span', {}, m.emo), el('b', {}, m.label));
+      b.onclick = () => {
+        P.match.mode = k;
+        A.sfx.click();
+        this.onChange && this.onChange();
+        this.node.replaceChild(this.modeBar(), bar);
+      };
+      bar.append(b);
+    }
+    return bar;
+  }
 
   header() {
     const p = this.P.player;
@@ -523,6 +560,9 @@ export function heroEditor(P, h, onChange, refresh, reRender) {
         const a = await importFile(f, 'image');
         h.icon = a.id; onChange && onChange(); render(); reRender && reRender();
       } }, '🖼️ صورة البطل في القائمة'));
+      body.append(el('button', { class: 'btn y', style: { width: '100%', marginTop: '8px' }, onclick: () => {
+        paintPanel(P, h, onChange, refresh);
+      } }, '🖌️ ارسم على الشخصية (علم، خطوط، أي شيء)'));
 
       body.append(el('div', { class: 'sep' }));
       body.append(el('button', { class: 'btn r', style: { width: '100%' }, onclick: async () => {
@@ -536,6 +576,93 @@ export function heroEditor(P, h, onChange, refresh, reRender) {
     };
     render();
   }, () => reRender && reRender(), P.lobby.friendsSide === 'left' ? 'right' : 'left');
+}
+
+/** الرسم اليدوي على الكبسولة — فرشاة، ألوان، تراجع، مسح */
+export function paintPanel(P, hero, onChange, refresh) {
+  return sheet('🖌️ الرسم على الشخصية', (body) => {
+    const W = 512, H = 256;
+    const cv = el('canvas', { width: W, height: H, class: 'paint-cv' });
+    const g = cv.getContext('2d');
+    g.clearRect(0, 0, W, H);
+    const undoStack = [];
+    const pushUndo = () => {
+      undoStack.push(g.getImageData(0, 0, W, H));
+      if (undoStack.length > 30) undoStack.shift();
+    };
+
+    // ابدأ من النقش الحالي إن وُجد
+    if (hero.decal && assetURL(hero.decal)) {
+      const im = new Image();
+      im.onload = () => g.drawImage(im, 0, 0, W, H);
+      im.src = assetURL(hero.decal);
+    }
+
+    let color = '#c1272d', size = 14, erase = false, drawing = false, last = null;
+    const pos = (e) => {
+      const r = cv.getBoundingClientRect();
+      return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+    };
+    const stroke = (a, b) => {
+      g.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
+      g.strokeStyle = color; g.lineWidth = size; g.lineCap = 'round'; g.lineJoin = 'round';
+      g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
+    };
+    cv.addEventListener('pointerdown', (e) => {
+      cv.setPointerCapture(e.pointerId); pushUndo();
+      drawing = true; last = pos(e); stroke(last, last);
+    });
+    cv.addEventListener('pointermove', (e) => {
+      if (!drawing) return;
+      const p2 = pos(e); stroke(last, p2); last = p2;
+    });
+    const stop = () => { drawing = false; };
+    cv.addEventListener('pointerup', stop);
+    cv.addEventListener('pointercancel', stop);
+
+    body.append(el('div', { class: 'hint', style: { marginBottom: '8px' } },
+      'ارسم بإصبعك أو بالفأرة. الجزء الأيسر من اللوحة يلتف حول الجسم — جرّب واحفظ لترى النتيجة مباشرة.'));
+    body.append(cv);
+
+    const colors = ['#c1272d', '#006233', '#ffffff', '#000000', '#ffc21a', '#25d3ff',
+                    '#39e07b', '#c56bff', '#ff8a1e', '#8b5a2b'];
+    const pal = el('div', { class: 'paint-pal' });
+    for (const c of colors) {
+      const sw = el('i', { style: { background: c } });
+      sw.onclick = () => { color = c; erase = false; [...pal.children].forEach((x) => x.classList.remove('on')); sw.classList.add('on'); };
+      pal.append(sw);
+    }
+    pal.firstChild.classList.add('on');
+    body.append(pal);
+    body.append(el('div', { class: 'row', style: { margin: '8px 0' } },
+      el('label', { style: { fontSize: '12.5px', fontWeight: 800 } }, 'لون حر'),
+      el('input', { type: 'color', value: color, oninput: (e) => { color = e.target.value; erase = false; } })));
+    body.append(slider({ label: 'حجم الفرشاة', min: 2, max: 48, value: size,
+      onInput: (v) => { size = v; } }));
+
+    body.append(el('div', { class: 'grid2', style: { marginTop: '8px' } },
+      el('button', { class: 'btn ghost sm', onclick: () => { erase = !erase; toast(erase ? 'ممحاة' : 'قلم'); } }, '🧽 ممحاة/قلم'),
+      el('button', { class: 'btn ghost sm', onclick: () => {
+        const d = undoStack.pop(); if (d) g.putImageData(d, 0, 0);
+      } }, '↶ تراجع'),
+      el('button', { class: 'btn r sm', onclick: () => { pushUndo(); g.clearRect(0, 0, W, H); } }, '🗑️ مسح الكل'),
+      el('button', { class: 'btn y sm', onclick: async () => {
+        const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+        const buf = await blob.arrayBuffer();
+        const { putAsset } = await import('../core/assets.js');
+        hero.decal = await putAsset({ name: 'رسم-' + hero.name + '.png', kind: 'image',
+          mime: 'image/png', buf });
+        onChange && onChange();
+        refresh && refresh();
+        toast('تم الحفظ على الشخصية', 'ok');
+      } }, '💾 حفظ على الشخصية')));
+
+    if (hero.decal) {
+      body.append(el('button', { class: 'btn r', style: { width: '100%', marginTop: '8px' }, onclick: () => {
+        hero.decal = null; onChange && onChange(); refresh && refresh(); toast('أُزيل الرسم');
+      } }, '✕ إزالة الرسم'));
+    }
+  }, null, 'left');
 }
 
 /** ضبط موضع وحجم نموذج مثبّت */

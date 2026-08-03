@@ -2,6 +2,7 @@
 //  حالة المشروع + تراجع/إعادة + حفظ تلقائي في المتصفح
 // ============================================================
 import { clone, uid } from './util.js';
+import { defaultWeapons } from '../game/weapons.js';
 
 const LS_KEY = 'royal-builder-project-v1';
 export const PROJECT_VERSION = 4;
@@ -17,6 +18,17 @@ export const CONTROL_DEFS = {
   pickup: { label: 'التقاط الأشياء', emo: '✋', kind: 'btn' },
   reload: { label: 'إعادة التعبئة', emo: '🔄', kind: 'btn' },
   emote:  { label: 'تعبير',         emo: '😀', kind: 'btn' },
+  view:   { label: 'تبديل المنظور',  emo: '👁️', kind: 'btn' },
+  swap:   { label: 'تبديل السلاح',   emo: '🔁', kind: 'btn' },
+  bag:    { label: 'الحقيبة',        emo: '🎒', kind: 'btn' },
+  drop:   { label: 'رمي السلاح',     emo: '🗑️', kind: 'btn' },
+  scope:  { label: 'التقريب',        emo: '🔭', kind: 'btn' },
+};
+
+export const MODES = {
+  solo:   { label: 'فردي',  emo: '👤', size: 1 },
+  duo:    { label: 'ثنائي', emo: '👥', size: 2 },
+  squad:  { label: 'رباعي', emo: '👨‍👩‍👧‍👦', size: 4 },
 };
 
 export const SHAPES = {
@@ -64,6 +76,11 @@ function defControls() {
   add('pickup', 0.505, 0.80, 66, 'sq');
   add('reload', 0.60, 0.63, 60);
   add('emote', 0.06, 0.42, 56);
+  add('view', 0.955, 0.10, 52, 'sq');
+  add('swap', 0.60, 0.905, 60, 'sq');
+  add('bag', 0.505, 0.905, 60, 'sq');
+  add('drop', 0.415, 0.905, 54, 'sq');
+  add('scope', 0.815, 0.315, 58);
   L.find((c) => c.id === 'emote').visible = false;
   return L;
 }
@@ -174,7 +191,14 @@ export function defaultProject() {
       selectedHero: null,        // يُضبط على أول بطل عند التحميل (انظر normalize)
     },
 
+    weapons: defaultWeapons(),
+
     match: {
+      view: 'tps',            // tps | fps
+      mode: 'solo',           // solo | duo | squad
+      lookSens: 1.0,          // حساسية تحريك الكاميرا
+      aimAssist: 0.7,         // قوة تسهيل التصويب على الهاتف
+      autoFire: false,        // إطلاق تلقائي عند وجود عدو في المرمى
       bots: 24, botSkill: 0.55, matchName: 'ساحة العراك',
       dayTime: 0.42, fog: 0.55, quality: 'auto',
       music: true, sfx: true, engineSfx: true,
@@ -312,6 +336,12 @@ function migrate(d) {
   }
   if (out.lobby.friendsSide !== 'left') out.lobby.friendsSide = 'right';
   out.match = { ...def.match, ...(d.match || {}) };
+  if (!Array.isArray(out.weapons) || !out.weapons.length) out.weapons = def.weapons;
+  for (const w of out.weapons) {
+    if (!w.hold) w.hold = { px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 };
+    if (!w.fps) w.fps = { px: 0.26, py: -0.24, pz: -0.52, rx: 0, ry: 0, rz: 0 };
+    if (!w.scale) w.scale = 1;
+  }
   out.player = { ...def.player, ...(d.player || {}) };
   // تأكّد من وجود كل أزرار التحكم والإحصاءات
   const have = new Set((out.controls.layout || []).map((c) => c.id));

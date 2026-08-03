@@ -6,7 +6,7 @@ import { el, clamp, onDrag, toast, pickFile, slider, colorRow, toggleRow,
 import { store, P, LOBBY_DEFS, currentHero, heroUnlocked, defHero } from '../core/store.js';
 import { importFile, assetURL } from '../core/assets.js';
 import { CharacterPreview, tileFor, friendsPanel, shopPanel, settingsPanel,
-         heroesPanel, heroEditor } from '../game/lobby.js';
+         heroesPanel, heroEditor, paintPanel, sheet } from '../game/lobby.js';
 
 export function mountStage3(view, side, ctx) {
   const L = () => P().lobby;
@@ -251,6 +251,29 @@ export function mountStage3(view, side, ctx) {
       } }, '👁️ معاينة الشبكة')));
     sbody.append(sc);
 
+    // ---- الأسلحة ----
+    const sw = el('div', { class: 'sec' }, el('h4', {}, '🔫 الأسلحة'));
+    sw.append(el('div', { class: 'hint', style: { marginBottom: '8px' } },
+      'كل سلاح له ضرر وسرعة إطلاق وحجم مخزن ونوع ذخيرة. ارفع ملف GLB لأي سلاح، '
+      + 'وحدّد مكانه في يد اللاعب وفي منظور الشخص الأول.'));
+    const wl = el('div', { class: 'list' });
+    for (const w of P().weapons) {
+      wl.append(el('div', { class: 'li' },
+        el('div', { class: 'ic' }, w.emo || '🔫'),
+        el('div', { class: 'nm' }, `${w.name} — ${w.damage}× ${w.mag}`),
+        el('span', { class: 'x', onclick: () => weaponEditor(w) }, '✎')));
+    }
+    sw.append(wl);
+    sw.append(el('button', { class: 'btn g sm', style: { width: '100%', marginTop: '8px' }, onclick: () => {
+      const w = JSON.parse(JSON.stringify(P().weapons[0]));
+      w.id = 'w_' + Math.random().toString(36).slice(2, 8);
+      w.name = 'سلاح ' + (P().weapons.length + 1);
+      w.assetId = null;
+      store.edit('سلاح جديد', (d) => { d.weapons.push(w); });
+      buildSide(); weaponEditor(w);
+    } }, '＋ إضافة سلاح'));
+    sbody.append(sw);
+
     // ---- الأصدقاء والمتجر ----
     const sf = el('div', { class: 'sec' }, el('h4', {}, '🗂️ اللوحات'));
     sf.append(el('div', { class: 'row', style: { marginBottom: '10px' } },
@@ -309,6 +332,97 @@ export function mountStage3(view, side, ctx) {
       f('العملات', 'coins', 'number'), f('الجواهر', 'gems', 'number'));
     modal({ title: '🙂 بيانات اللاعب', body: box,
       actions: [{ label: 'حفظ', cls: 'y', run: () => { store.snap('بيانات اللاعب'); buildButtons(); } }] });
+  }
+
+  /** محرّر سلاح: النموذج، الأرقام، وموضعه في اليد وفي المنظور الأول */
+  function weaponEditor(w) {
+    sheet('🔫 ' + w.name, (body, close) => {
+      const render = () => {
+        body.innerHTML = '';
+        const t = (label, key, type = 'text') => {
+          const i = el('input', { type, value: w[key], oninput: (e) => {
+            w[key] = type === 'number' ? +e.target.value : e.target.value; store.save();
+          } });
+          return el('div', { class: 'field' }, el('label', {}, label), i);
+        };
+        body.append(t('الاسم', 'name'), t('الاختصار في الواجهة', 'short'));
+
+        const kindSel = el('select', {
+          style: { background: 'rgba(0,0,0,.35)', border: '1px solid var(--line)',
+            borderRadius: '9px', padding: '8px', width: '100%' },
+          onchange: (e) => { w.kind = e.target.value; store.save(); },
+        });
+        for (const [v, l] of [['ar', 'رشاش هجومي'], ['smg', 'رشاش خفيف'], ['sniper', 'قنص'],
+                              ['shotgun', 'خرطوش'], ['pistol', 'مسدس']])
+          kindSel.append(el('option', { value: v, selected: w.kind === v }, l));
+        body.append(el('div', { class: 'field' }, el('label', {}, 'النوع'), kindSel));
+
+        const ammoSel = el('select', {
+          style: { background: 'rgba(0,0,0,.35)', border: '1px solid var(--line)',
+            borderRadius: '9px', padding: '8px', width: '100%' },
+          onchange: (e) => { w.ammo = e.target.value; store.save(); },
+        });
+        for (const [v, l] of [['ar', '🟩 5.56'], ['smg', '🟨 9مم'], ['sg', '🟥 خرطوش'], ['sr', '🟦 7.62']])
+          ammoSel.append(el('option', { value: v, selected: w.ammo === v }, l));
+        body.append(el('div', { class: 'field' }, el('label', {}, 'نوع الذخيرة'), ammoSel));
+
+        for (const [label, key, mn, mx, st] of [
+          ['الضرر', 'damage', 1, 150, 1], ['طلقات/دقيقة', 'rpm', 30, 1200, 10],
+          ['حجم المخزن', 'mag', 1, 100, 1], ['زمن التعبئة (ث)', 'reload', 0.5, 6, 0.1],
+          ['التشتّت', 'spread', 0, 0.12, 0.002], ['التشتّت أثناء التصويب', 'adsSpread', 0, 0.06, 0.001],
+          ['المدى (م)', 'range', 20, 600, 5], ['الارتداد', 'recoil', 0, 4, 0.1]])
+          body.append(slider({ label, min: mn, max: mx, step: st, value: w[key] ?? mn,
+            onInput: (v) => { w[key] = v; store.save(); } }));
+
+        body.append(toggleRow('إطلاق تلقائي (مستمر)', !!w.auto, (v) => { w.auto = v; store.save(); }));
+
+        body.append(el('div', { class: 'sep' }));
+        body.append(el('button', { class: 'btn c', style: { width: '100%' }, onclick: async () => {
+          const f = await pickFile('.glb,.gltf');
+          if (!f) return;
+          const a = await importFile(f, 'glb');
+          store.edit('نموذج سلاح', () => { w.assetId = a.id; });
+          toast('تم رفع نموذج ' + f.name, 'ok');
+          render();
+        } }, w.assetId ? '📂 استبدال نموذج GLB' : '📂 رفع نموذج GLB'));
+        if (w.assetId) {
+          body.append(el('button', { class: 'btn ghost sm', style: { width: '100%', marginTop: '6px' },
+            onclick: () => { store.edit('حذف نموذج', () => { w.assetId = null; }); render(); } },
+            '✕ العودة للنموذج المدمج'));
+        }
+
+        body.append(el('div', { class: 'sep' }));
+        body.append(el('div', { style: { fontWeight: '900', fontSize: '13px', color: 'var(--acc)', marginBottom: '6px' } },
+          '✋ موضعه في يد اللاعب (منظور ثالث)'));
+        body.append(slider({ label: 'الحجم', min: .2, max: 3, step: .02, value: w.scale,
+          onInput: (v) => { w.scale = v; store.save(); } }));
+        for (const [label, key] of [['إزاحة ↔', 'px'], ['إزاحة ↕', 'py'], ['إزاحة ⤢', 'pz']])
+          body.append(slider({ label, min: -1, max: 1, step: .01, value: w.hold[key],
+            onInput: (v) => { w.hold[key] = v; store.save(); } }));
+        for (const [label, key] of [['دوران X', 'rx'], ['دوران Y', 'ry'], ['دوران Z', 'rz']])
+          body.append(slider({ label, min: -3.2, max: 3.2, step: .02, value: w.hold[key],
+            onInput: (v) => { w.hold[key] = v; store.save(); } }));
+
+        body.append(el('div', { class: 'sep' }));
+        body.append(el('div', { style: { fontWeight: '900', fontSize: '13px', color: 'var(--acc)', marginBottom: '6px' } },
+          '👁️ موضعه في منظور الشخص الأول'));
+        for (const [label, key] of [['إزاحة ↔', 'px'], ['إزاحة ↕', 'py'], ['إزاحة ⤢', 'pz']])
+          body.append(slider({ label, min: -1.2, max: 1.2, step: .01, value: w.fps[key],
+            onInput: (v) => { w.fps[key] = v; store.save(); } }));
+        for (const [label, key] of [['دوران X', 'rx'], ['دوران Y', 'ry'], ['دوران Z', 'rz']])
+          body.append(slider({ label, min: -3.2, max: 3.2, step: .02, value: w.fps[key],
+            onInput: (v) => { w.fps[key] = v; store.save(); } }));
+
+        body.append(el('div', { class: 'sep' }));
+        body.append(el('button', { class: 'btn r', style: { width: '100%' }, onclick: async () => {
+          if (P().weapons.length <= 1) return toast('لا يمكن حذف آخر سلاح', 'err');
+          if (!(await confirmBox('حذف سلاح', `حذف «${w.name}»؟`, 'حذف'))) return;
+          store.edit('حذف سلاح', (d) => { d.weapons = d.weapons.filter((x) => x !== w); });
+          buildSide(); close();
+        } }, '🗑️ حذف هذا السلاح'));
+      };
+      render();
+    }, () => buildSide(), 'left');
   }
 
   function remakePreview() {

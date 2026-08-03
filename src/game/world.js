@@ -761,5 +761,9 @@ export function buildOcean(y, size = 6000) {
   m.rotation.x = -Math.PI / 2;
   m.position.y = y;
   m.renderOrder = -1;
+  m.material.depthWrite = true;
+  m.material.polygonOffset = true;      // يمنع تداخل البحر مع رمل الشاطئ
+  m.material.polygonOffsetFactor = 2;
+  m.material.polygonOffsetUnits = 4;
   return m;
 }
