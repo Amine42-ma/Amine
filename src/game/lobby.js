@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { el, clamp, uid, toast, promptBox, confirmBox, pickFile, slider, colorRow } from '../core/util.js';
 import { assetURL, importFile } from '../core/assets.js';
-import { LOBBY_DEFS } from '../core/store.js';
+import { LOBBY_DEFS, currentHero, heroUnlocked, defHero } from '../core/store.js';
 import { Character } from './character.js';
 import { loadGLB } from './world.js';
 import * as A from '../core/audio.js';
@@ -91,6 +91,8 @@ export class CharacterPreview {
   refreshColors() { this.char.setColors(this.cfg); }
 
   /** يعيد بناء الشخصية بالكامل (أبعاد + إكسسوارات) */
+  setHero(cfg) { this.cfg = cfg; this.refreshAll(); }
+
   refreshAll() {
     const spin = this.spin;
     this.scene.remove(this.char.group);
@@ -160,6 +162,12 @@ export class Lobby {
     container.append(this.node);
     this.selected = null;
     this.render();
+    // ResizeObserver أدقّ من حدث resize: يلتقط دوران الشاشة وظهور/اختفاء أشرطة المتصفح
+    this._ro = new ResizeObserver(() => this.relayout());
+    this._ro.observe(this.node);
+    this._rs = () => requestAnimationFrame(() => this.relayout());
+    addEventListener('resize', this._rs);
+    addEventListener('orientationchange', this._rs);
   }
 
   render() {
@@ -167,6 +175,7 @@ export class Lobby {
     this.node.innerHTML = '';
 
     // خلفية
+    this._els = new Map();
     const bg = el('div', { class: 'lb-bg' });
     const url = L.bgAssetId && assetURL(L.bgAssetId);
     if (url) bg.style.backgroundImage = `url(${url})`;
@@ -182,7 +191,7 @@ export class Lobby {
     });
     this.node.append(stage3d);
     this.preview?.dispose();
-    this.preview = new CharacterPreview(stage3d, L.character);
+    this.preview = new CharacterPreview(stage3d, currentHero(P));
 
     // شريط اللاعب العلوي
     this.node.append(this.header());
@@ -192,6 +201,7 @@ export class Lobby {
       if (!b.visible && !this.editable) continue;
       const w = el('div', { class: 'lb-el', data: { uid: b.uid, kind: b.kind } }, tileFor(b, this.editable));
       w.style.opacity = b.visible ? '1' : '.4';
+      (this._els ||= new Map()).set(b, w);
       this.place(w, b);
       if (!this.editable) {
         w.addEventListener('click', () => { A.sfx.click(); this.onAction && this.onAction(b); });
@@ -201,13 +211,20 @@ export class Lobby {
     this.buttonsHost = this.node;
   }
 
+  /**
+   * الموضع بنسبة الشاشة (يحافظ على التصاق الأزرار بالحواف)،
+   * والحجم يُحسب في CSS من «صندوق تصميم 16:9» عبر vw/vh —
+   * فلا يحتاج أي معالج تغيير حجم ولا يمكن أن يتأخّر عن الشاشة.
+   */
   place(w, b) {
     w.style.left = b.x * 100 + '%';
     w.style.top = b.y * 100 + '%';
-    w.style.width = b.w * 100 + '%';
-    w.style.height = b.h * 100 + '%';
+    w.style.setProperty('--w', b.w);
+    w.style.setProperty('--h', b.h);
     w.style.transform = 'translate(-50%,-50%)';
   }
+
+  relayout() { for (const [b, w] of this._els || []) this.place(w, b); }
 
   header() {
     const p = this.P.player;
@@ -246,14 +263,20 @@ export class Lobby {
     return box;
   }
 
-  dispose() { this.preview?.dispose(); this.node.remove(); }
+  dispose() {
+    this._ro?.disconnect();
+    removeEventListener('resize', this._rs);
+    removeEventListener('orientationchange', this._rs);
+    this.preview?.dispose();
+    this.node.remove();
+  }
 }
 
 // ------------------------------------------------------------
 //  لوحات جانبية (أصدقاء / متجر / إعدادات / أبطال)
 // ------------------------------------------------------------
-export function sheet(title, buildBody, onClose) {
-  const s = el('div', { class: 'panel-sheet' });
+export function sheet(title, buildBody, onClose, side = 'right') {
+  const s = el('div', { class: 'panel-sheet ' + (side === 'left' ? 'from-left' : 'from-right') });
   const body = el('div', { class: 'pb' });
   s.append(
     el('div', { class: 'ph' },
@@ -311,7 +334,7 @@ export function friendsPanel(P, onChange) {
       grp('غير متوفّرين (' + off.length + ')', off, 'لا أحد هنا.');
     };
     render();
-  });
+  }, null, P.lobby.friendsSide || 'right');
 }
 
 export function shopPanel(P, onChange, editable) {
@@ -381,86 +404,157 @@ export function settingsPanel(P, onChange) {
   });
 }
 
-export function brawlersPanel(P, onChange, onEditChar) {
+// ------------------------------------------------------------
+//  الأبطال — شبكة اختيار + قفل بالكؤوس + إضافة أبطال ونماذج
+// ------------------------------------------------------------
+export function heroesPanel(P, onChange, refresh, { editable = true } = {}) {
   return sheet('🦸 الأبطال', (body) => {
-    body.append(el('div', { class: 'hint', style: { marginBottom: '12px' } },
-      'شخصيتك الأساسية كبسولة بعينين. يمكنك تلوينها وإضافة نماذج ثلاثية الأبعاد (نظارات، قبعة…) من محرّر الشخصية.'));
-    body.append(el('button', { class: 'btn y', style: { width: '100%' }, onclick: () => onEditChar && onEditChar() },
-      '🎨 محرّر الشخصية'));
-  });
-}
-
-// ------------------------------------------------------------
-//  محرّر الشخصية داخل اللعبة (يعمل أيضاً في الملف المُصدَّر)
-// ------------------------------------------------------------
-export function characterPanel(P, onChange, refresh) {
-  return sheet('🎨 محرّر الشخصية', (body) => {
-    const C = P.lobby.character;
     const touch = () => { onChange && onChange(); refresh && refresh(); };
     const render = () => {
       body.innerHTML = '';
-      body.append(el('div', { class: 'hint', style: { marginBottom: '12px' } },
-        'غيّر ألوان الكبسولة، وأضف نماذج GLB مثل النظارات أو القبعة. اسحب الشخصية في القائمة لتدويرها.'));
-      body.append(
-        colorRow('لون الجسم', C.body, (v) => { C.body = v; touch(); }),
-        colorRow('لون البطن', C.belly, (v) => { C.belly = v; touch(); }),
-        colorRow('لون العين', C.eye, (v) => { C.eye = v; touch(); }),
-        colorRow('الحد الخارجي', C.outline, (v) => { C.outline = v; touch(); }),
-        slider({ label: 'الطول', min: .6, max: 1.6, step: .02, value: C.height,
-          onInput: (v) => { C.height = v; touch(); } }),
-        slider({ label: 'العرض', min: .6, max: 1.5, step: .02, value: C.width,
-          onInput: (v) => { C.width = v; touch(); } }),
-        slider({ label: 'حجم العينين', min: .5, max: 1.8, step: .02, value: C.eyeSize,
-          onInput: (v) => { C.eyeSize = v; touch(); } }),
-        el('div', { class: 'sep' }),
-        el('div', { style: { fontSize: '13px', fontWeight: '900', color: 'var(--acc)', marginBottom: '8px' } },
-          'الإكسسوارات'));
+      body.append(el('div', { class: 'hint', style: { marginBottom: '10px' } },
+        `كؤوسك: ${P.player.trophies} 🏆 — كل بطل يُفتح عند عدد كؤوس معيّن. ` +
+        'الأبطال أزياء فقط، لا قدرات خاصة.'));
 
-      for (const at of C.attachments || []) {
+      const grid = el('div', { class: 'hero-grid' });
+      for (const h of P.lobby.heroes) {
+        const open = heroUnlocked(P, h);
+        const sel = h.id === P.lobby.selectedHero;
+        const face = h.icon && assetURL(h.icon)
+          ? el('img', { src: assetURL(h.icon), alt: '' })
+          : el('div', { class: 'hero-face', style: { background: h.body } },
+              el('i', { style: { background: h.eye } }), el('i', { style: { background: h.eye } }));
+        const card = el('div', { class: 'hero-card' + (sel ? ' on' : '') + (open ? '' : ' locked') },
+          el('div', { class: 'hero-th' }, face,
+            open ? null : el('div', { class: 'hero-lock' }, '🔒')),
+          el('div', { class: 'hero-nm' }, h.name),
+          el('div', { class: 'hero-tr' }, open ? (sel ? '✓ مُختار' : 'جاهز') : `🏆 ${h.unlockTrophies}`));
+        card.onclick = () => {
+          if (!open) { toast(`تحتاج ${h.unlockTrophies} كأساً لفتح ${h.name}`, 'err'); A.sfx.ui_err(); return; }
+          P.lobby.selectedHero = h.id;
+          A.sfx.ui_ok();
+          touch(); render();
+        };
+        if (editable) {
+          card.append(el('button', { class: 'hero-edit', onclick: (e) => {
+            e.stopPropagation();
+            heroEditor(P, h, onChange, refresh, render);
+          } }, '✎'));
+        }
+        grid.append(card);
+      }
+      body.append(grid);
+
+      if (editable) {
+        body.append(el('button', { class: 'btn g', style: { width: '100%', marginTop: '12px' }, onclick: () => {
+          const h = defHero({ name: 'بطل ' + (P.lobby.heroes.length + 1),
+            unlockTrophies: P.lobby.heroes.length * 500 });
+          P.lobby.heroes.push(h);
+          touch(); render();
+          heroEditor(P, h, onChange, refresh, render);
+        } }, '＋ إضافة بطل'));
+      }
+    };
+    render();
+  });
+}
+
+/** محرّر بطل واحد: الاسم، الكؤوس، الألوان، النماذج ثلاثية الأبعاد */
+export function heroEditor(P, h, onChange, refresh, reRender) {
+  return sheet('✎ ' + h.name, (body, close) => {
+    const touch = () => {
+      if (P.lobby.selectedHero === h.id) refresh && refresh();
+      onChange && onChange();
+    };
+    const render = () => {
+      body.innerHTML = '';
+      const nameI = el('input', { type: 'text', value: h.name,
+        oninput: (e) => { h.name = e.target.value; onChange && onChange(); } });
+      body.append(el('div', { class: 'field' }, el('label', {}, 'اسم البطل'), nameI));
+      const trI = el('input', { type: 'number', min: 0, step: 100, value: h.unlockTrophies,
+        oninput: (e) => { h.unlockTrophies = Math.max(0, +e.target.value || 0); onChange && onChange(); } });
+      body.append(el('div', { class: 'field' },
+        el('label', {}, 'الكؤوس المطلوبة لفتحه 🏆'), trI));
+
+      body.append(el('div', { class: 'sep' }));
+      body.append(
+        colorRow('لون الجسم', h.body, (v) => { h.body = v; touch(); }),
+        colorRow('لون البطن', h.belly, (v) => { h.belly = v; touch(); }),
+        colorRow('لون العين', h.eye, (v) => { h.eye = v; touch(); }),
+        colorRow('الحد الخارجي', h.outline, (v) => { h.outline = v; touch(); }),
+        slider({ label: 'الطول', min: .6, max: 1.6, step: .02, value: h.height,
+          onInput: (v) => { h.height = v; touch(); } }),
+        slider({ label: 'العرض', min: .6, max: 1.5, step: .02, value: h.width,
+          onInput: (v) => { h.width = v; touch(); } }),
+        slider({ label: 'حجم العينين', min: .5, max: 1.8, step: .02, value: h.eyeSize,
+          onInput: (v) => { h.eyeSize = v; touch(); } }));
+
+      body.append(el('div', { class: 'sep' }));
+      body.append(el('div', { style: { fontSize: '13px', fontWeight: '900', color: 'var(--acc)', marginBottom: '8px' } },
+        'النماذج ثلاثية الأبعاد (نظارات، قبعة، سلاح…)'));
+      for (const at of h.attachments) {
         body.append(el('div', { class: 'friend' },
           el('div', { class: 'av' }, '🕶️'),
           el('div', { class: 'nm' }, el('b', {}, at.name || 'إكسسوار'),
             el('s', {}, { face: 'الوجه', head: 'الرأس', body: 'الجسم', hand: 'اليد', back: 'الظهر' }[at.slot] || at.slot)),
+          el('button', { class: 'btn sm ghost', onclick: () => { attachEditor(at, touch); } }, '⚙️'),
           el('button', { class: 'btn sm ' + (at.visible ? 'g' : 'ghost'), onclick: () => {
             at.visible = !at.visible; touch(); render();
           } }, at.visible ? 'مُرتدى' : 'مخفي'),
           el('button', { class: 'btn sm r', onclick: () => {
-            C.attachments.splice(C.attachments.indexOf(at), 1); touch(); render();
+            h.attachments.splice(h.attachments.indexOf(at), 1); touch(); render();
           } }, '✕')));
       }
-      if (!(C.attachments || []).length) body.append(el('div', { class: 'hint' }, 'لا توجد إكسسوارات بعد.'));
+      if (!h.attachments.length) body.append(el('div', { class: 'hint' }, 'لا توجد نماذج بعد.'));
 
       body.append(el('button', { class: 'btn c', style: { width: '100%', marginTop: '10px' }, onclick: async () => {
         const f = await pickFile('.glb,.gltf');
         if (!f) return;
         const a = await importFile(f, 'glb');
-        C.attachments = C.attachments || [];
-        C.attachments.push({ id: uid('at'), assetId: a.id, name: f.name.replace(/\.(glb|gltf)$/i, ''),
-          slot: 'face', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, scale: 1, visible: true });
-        touch(); render();
-        toast('تمت الإضافة — عدّل موضعها من الأزرار أدناه', 'ok');
-      } }, '＋ إضافة نموذج GLB'));
+        const at = { id: uid('at'), assetId: a.id, name: f.name.replace(/\.(glb|gltf)$/i, ''),
+          slot: 'face', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, scale: 1, visible: true };
+        h.attachments.push(at);
+        touch(); render(); attachEditor(at, touch);
+      } }, '＋ نموذج GLB من جهازك'));
 
-      const at = (C.attachments || [])[C.attachments.length - 1];
-      if (at) {
-        body.append(el('div', { class: 'sep' }));
-        body.append(el('div', { style: { fontSize: '12.5px', fontWeight: '900', marginBottom: '6px' } },
-          'ضبط: ' + (at.name || '')));
-        const slotSel = el('select', {
-          style: { background: 'rgba(0,0,0,.35)', border: '1px solid var(--line)', borderRadius: '9px', padding: '7px', width: '100%' },
-          onchange: (e) => { at.slot = e.target.value; touch(); },
-        });
-        for (const [v, t] of [['face', 'الوجه (نظارات)'], ['head', 'الرأس (قبعة)'], ['body', 'الجسم'],
-                              ['hand', 'اليد'], ['back', 'الظهر']])
-          slotSel.append(el('option', { value: v, selected: at.slot === v }, t));
-        body.append(el('div', { class: 'field' }, el('label', {}, 'مكان التثبيت'), slotSel));
-        for (const [label, key, mn, mx, st] of [['الحجم', 'scale', .1, 4, .02],
-          ['إزاحة ↔', 'px', -1.5, 1.5, .01], ['إزاحة ↕', 'py', -1.5, 1.5, .01],
-          ['إزاحة ⤢', 'pz', -1.5, 1.5, .01], ['دوران Y', 'ry', -3.2, 3.2, .02]])
-          body.append(slider({ label, min: mn, max: mx, step: st, value: at[key],
-            onInput: (v) => { at[key] = v; touch(); } }));
-      }
+      body.append(el('button', { class: 'btn c', style: { width: '100%', marginTop: '8px' }, onclick: async () => {
+        const f = await pickFile('image/*');
+        if (!f) return;
+        const a = await importFile(f, 'image');
+        h.icon = a.id; onChange && onChange(); render(); reRender && reRender();
+      } }, '🖼️ صورة البطل في القائمة'));
+
+      body.append(el('div', { class: 'sep' }));
+      body.append(el('button', { class: 'btn r', style: { width: '100%' }, onclick: async () => {
+        if (P.lobby.heroes.length <= 1) return toast('لا يمكن حذف آخر بطل', 'err');
+        if (!(await confirmBox('حذف بطل', `حذف «${h.name}»؟`, 'حذف'))) return;
+        P.lobby.heroes.splice(P.lobby.heroes.indexOf(h), 1);
+        if (P.lobby.selectedHero === h.id) P.lobby.selectedHero = P.lobby.heroes[0].id;
+        onChange && onChange(); refresh && refresh(); reRender && reRender();
+        close();
+      } }, '🗑️ حذف هذا البطل'));
     };
     render();
-  });
+  }, () => reRender && reRender(), P.lobby.friendsSide === 'left' ? 'right' : 'left');
+}
+
+/** ضبط موضع وحجم نموذج مثبّت */
+export function attachEditor(at, touch) {
+  return sheet('⚙️ ' + (at.name || 'إكسسوار'), (body) => {
+    const slotSel = el('select', {
+      style: { background: 'rgba(0,0,0,.35)', border: '1px solid var(--line)',
+        borderRadius: '9px', padding: '8px', width: '100%' },
+      onchange: (e) => { at.slot = e.target.value; touch(); },
+    });
+    for (const [v, t] of [['face', 'الوجه (نظارات)'], ['head', 'الرأس (قبعة)'], ['body', 'الجسم'],
+                          ['hand', 'اليد (سلاح)'], ['back', 'الظهر']])
+      slotSel.append(el('option', { value: v, selected: at.slot === v }, t));
+    body.append(el('div', { class: 'field' }, el('label', {}, 'مكان التثبيت'), slotSel));
+    for (const [label, key, mn, mx, st] of [
+      ['الحجم', 'scale', .05, 5, .01],
+      ['إزاحة ↔', 'px', -2, 2, .01], ['إزاحة ↕', 'py', -2, 2, .01], ['إزاحة ⤢', 'pz', -2, 2, .01],
+      ['دوران X', 'rx', -3.2, 3.2, .02], ['دوران Y', 'ry', -3.2, 3.2, .02], ['دوران Z', 'rz', -3.2, 3.2, .02]])
+      body.append(slider({ label, min: mn, max: mx, step: st, value: at[key],
+        onInput: (v) => { at[key] = v; touch(); } }));
+  }, null, 'right');
 }

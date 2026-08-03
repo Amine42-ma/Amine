@@ -364,3 +364,89 @@ input[type=color]{width:44px;height:34px;padding:2px;border:1px solid var(--line
 }
 .only-mobile{display:none}
 @media (max-width:640px){.only-mobile{display:inline-flex}.no-mobile{display:none}}
+
+
+/* ============================================================
+   أشكال الأزرار
+   ============================================================ */
+.hw .body, #hud .gw .body { border-radius:50%; }
+.hw.shape-sq .body, #hud .gw.shape-sq .body { border-radius:24%; }
+.hw.sq .body, #hud .gw.sq .body { border-radius:24%; }
+.hw.shape-hex .body, #hud .gw.shape-hex .body {
+  border-radius:8%; clip-path:polygon(25% 3%,75% 3%,100% 50%,75% 97%,25% 97%,0% 50%); }
+.hw.shape-diamond .body, #hud .gw.shape-diamond .body {
+  border-radius:6%; clip-path:polygon(50% 0%,100% 50%,50% 100%,0% 50%); }
+.hw.shape-shield .body, #hud .gw.shape-shield .body {
+  border-radius:14% 14% 46% 46%; clip-path:polygon(6% 0%,94% 0%,94% 58%,50% 100%,6% 58%); }
+
+/* ============================================================
+   شبكة الأبطال
+   ============================================================ */
+.hero-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:10px}
+.hero-card{position:relative;border-radius:15px;padding:9px 7px 8px;cursor:pointer;
+  background:linear-gradient(180deg,rgba(255,255,255,.13),rgba(0,0,0,.28));
+  border:2px solid var(--line);box-shadow:0 5px 0 rgba(0,0,0,.36);
+  display:flex;flex-direction:column;align-items:center;gap:5px;transition:transform .08s,border-color .15s}
+.hero-card:active{transform:translateY(3px)}
+.hero-card.on{border-color:var(--acc);background:linear-gradient(180deg,rgba(255,194,26,.26),rgba(0,0,0,.3))}
+.hero-card.locked{filter:grayscale(.75) brightness(.72)}
+.hero-th{position:relative;width:100%;aspect-ratio:1;border-radius:12px;overflow:hidden;
+  background:radial-gradient(circle at 50% 120%,rgba(255,255,255,.2),rgba(0,0,0,.35));
+  display:grid;place-items:center}
+.hero-th img{width:100%;height:100%;object-fit:contain}
+.hero-face{width:56%;height:70%;border-radius:44% 44% 40% 40%;position:relative;
+  box-shadow:inset 0 -10px 16px rgba(0,0,0,.28),0 4px 10px rgba(0,0,0,.45)}
+.hero-face i{position:absolute;top:30%;width:20%;height:26%;border-radius:50%;background:#111;
+  box-shadow:0 0 0 3px #fff}
+.hero-face i:nth-child(1){left:18%} .hero-face i:nth-child(2){right:18%}
+.hero-lock{position:absolute;inset:0;display:grid;place-items:center;font-size:26px;
+  background:rgba(4,2,14,.55)}
+.hero-nm{font-size:12.5px;font-weight:900;text-align:center;line-height:1.25;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.hero-tr{font-size:11px;font-weight:800;color:var(--acc)}
+.hero-edit{position:absolute;top:-7px;left:-7px;width:26px;height:26px;border:2px solid #3a2400;
+  border-radius:50%;background:var(--acc);color:#3a2400;font-weight:900;cursor:pointer;
+  display:grid;place-items:center;font-size:13px;padding:0}
+
+/* ============================================================
+   جهة اللوحات الجانبية
+   ============================================================ */
+.panel-sheet.from-right{left:auto;right:0;border-right:0;border-left:1px solid var(--line);
+  box-shadow:-20px 0 60px rgba(0,0,0,.6);transform:translateX(102%)}
+.panel-sheet.from-right.on{transform:none}
+.panel-sheet.from-left{left:0;right:auto;transform:translateX(-102%)}
+.panel-sheet.from-left.on{transform:none}
+
+/* ============================================================
+   تأقلم مع أي عرض/طول
+   ============================================================ */
+/* حجم أزرار القائمة يُشتقّ من «صندوق تصميم 16:9» محصور داخل الشاشة،
+   فتبقى النِسَب سليمة على أي عرض أو طول بلا أي جافاسكربت */
+#lobby .lb-el{
+  --dw:min(100vw, calc(100vh * 16 / 9));
+  --dh:calc(var(--dw) * 9 / 16);
+  width:calc(var(--w,.1) * var(--dw));
+  height:calc(var(--h,.12) * var(--dh));
+}
+@supports (height:100dvh){
+  #lobby .lb-el{ --dw:min(100vw, calc(100dvh * 16 / 9)); }
+}
+@media (orientation:portrait){
+  #lobby .lb-el{font-size:16px}
+  .bs-tile .lbl{font-size:15cqh}
+}
+/* شاشات عريضة جداً: اجعل القائمة تتمركز ولا تتمدّد بلا حدود */
+#lobby .lb-safe{position:absolute;top:0;bottom:0;left:50%;transform:translateX(-50%);
+  width:min(100%, calc(100vh * 2.2));pointer-events:none}
+#lobby .lb-safe>*{pointer-events:auto}
+
+/* شاشات قصيرة جداً (هواتف عرضية) */
+@media (max-height:420px){
+  .hud-stat{font-size:13px;padding:3px 8px}
+  #hpbar{height:18px}
+  .hero-grid{grid-template-columns:repeat(auto-fill,minmax(92px,1fr))}
+}
+@media (max-width:420px){
+  .panel-sheet{width:100%}
+  .hero-grid{grid-template-columns:repeat(auto-fill,minmax(96px,1fr))}
+}

@@ -75,12 +75,28 @@ for (let i = 0; i < 90; i++) {
 }
 await page2.waitForTimeout(6000);
 await page2.screenshot({ path: `${OUT}/e2_exported_flight.png` });
-const gs = await page2.evaluate(() => ({
-  phase: window.__game.phase, crates: window.__game.crates.length,
-  bnd: window.__game.boundary.length, bots: window.__game.bots.length,
-  span: Math.round(window.__game.an.span),
-}));
+const gs = await page2.evaluate(() => {
+  const g = window.__game;
+  return {
+    phase: g.phase, crates: g.crates.length, bnd: g.boundary.length, bots: g.bots.length,
+    span: Math.round(g.an.span),
+    pathPts: g.path.length, dropWindow: [+g.dropFrom.toFixed(2), +g.dropTo.toFixed(2)],
+    zone: g.zone ? { r: Math.round(g.zone.r), phases: g.zone.phases, on: g.zone.cfg.enabled } : null,
+    heroes: g.P.lobby.heroes.length,
+    dropAllLand: (() => {
+      for (let i = 0; i < 30; i++) {
+        const f = g.dropFrom + Math.random() * (g.dropTo - g.dropFrom);
+        const p = g.pathAt(f);
+        if (!g.Q.isLand(p.x, p.z)) return false;
+      }
+      return true;
+    })(),
+  };
+});
 console.log('exported game state:', JSON.stringify(gs));
+if (!gs.dropAllLand) { console.log('❌ نافذة القفز تمرّ فوق الماء في الملف المُصدَّر'); }
+if (!gs.zone?.on) { console.log('❌ الزون غير مفعّل في الملف المُصدَّر'); }
+if (gs.heroes < 5) { console.log('❌ الأبطال ناقصون في الملف المُصدَّر'); }
 
 console.log('\n=== builder errors ===\n' + ([...new Set(errors)].join('\n') || '(none)'));
 console.log('=== exported errors ===\n' + ([...new Set(err2)].join('\n') || '(none)'));

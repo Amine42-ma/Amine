@@ -3,9 +3,10 @@
 // ============================================================
 import { el, clamp, onDrag, toast, pickFile, slider, colorRow, toggleRow,
          confirmBox, promptBox, uid, modal } from '../core/util.js';
-import { store, P, LOBBY_DEFS } from '../core/store.js';
+import { store, P, LOBBY_DEFS, currentHero, heroUnlocked, defHero } from '../core/store.js';
 import { importFile, assetURL } from '../core/assets.js';
-import { CharacterPreview, tileFor, friendsPanel, shopPanel, settingsPanel } from '../game/lobby.js';
+import { CharacterPreview, tileFor, friendsPanel, shopPanel, settingsPanel,
+         heroesPanel, heroEditor } from '../game/lobby.js';
 
 export function mountStage3(view, side, ctx) {
   const L = () => P().lobby;
@@ -77,6 +78,7 @@ export function mountStage3(view, side, ctx) {
     }
     highlight();
   }
+  // معاينة المحرّر دائماً 16:9، فالنِسَب المئوية تطابق صندوق التصميم تماماً
   function place(w, b) {
     w.style.left = b.x * 100 + '%';
     w.style.top = b.y * 100 + '%';
@@ -97,6 +99,7 @@ export function mountStage3(view, side, ctx) {
     if (h > H) { h = H; w = h * ar; }
     device.style.width = w + 'px';
     device.style.height = h + 'px';
+    for (const [b, n] of nodes) place(n, b);
   }
 
   // ---------------- اللوحة الجانبية ----------------
@@ -212,47 +215,53 @@ export function mountStage3(view, side, ctx) {
       sbody.append(s);
     }
 
-    // ---- الشخصية ----
-    const sc = el('div', { class: 'sec' }, el('h4', {}, '🧍 الشخصية (الكبسولة)'));
-    const C = L().character;
-    sc.append(colorRow('لون الجسم', C.body, (v) => { store.live(() => { C.body = v; }); preview?.refreshColors(); }));
-    sc.append(colorRow('لون البطن', C.belly, (v) => { store.live(() => { C.belly = v; }); preview?.refreshColors(); }));
-    sc.append(colorRow('لون العين', C.eye, (v) => { store.live(() => { C.eye = v; }); preview?.refreshColors(); }));
-    sc.append(colorRow('لون الحد الخارجي', C.outline, (v) => { store.live(() => { C.outline = v; }); preview?.refreshColors(); }));
-    sc.append(slider({ label: 'الطول', min: .6, max: 1.6, step: .02, value: C.height,
-      onInput: (v) => { store.live(() => { C.height = v; }); remakePreview(); } }));
-    sc.append(slider({ label: 'العرض', min: .6, max: 1.5, step: .02, value: C.width,
-      onInput: (v) => { store.live(() => { C.width = v; }); remakePreview(); } }));
-    sc.append(slider({ label: 'حجم العينين', min: .5, max: 1.8, step: .02, value: C.eyeSize,
-      onInput: (v) => { store.live(() => { C.eyeSize = v; }); remakePreview(); } }));
-
-    sc.append(el('div', { class: 'sep' }));
+    // ---- الأبطال ----
+    const sc = el('div', { class: 'sec' }, el('h4', {}, '🦸 الأبطال'));
     sc.append(el('div', { class: 'hint', style: { marginBottom: '8px' } },
-      'أضف نماذج ثلاثية الأبعاد (نظارات، قبعة، سلاح…) وثبّتها على الشخصية.'));
-    const al = el('div', { class: 'list' });
-    (C.attachments || []).forEach((at, i) => {
-      al.append(el('div', { class: 'li' },
-        el('div', { class: 'ic' }, '🕶️'),
-        el('div', { class: 'nm', onclick: () => editAttachment(at) }, at.name || 'إكسسوار'),
-        el('span', { class: 'x', onclick: () => {
-          store.edit('حذف إكسسوار', () => { C.attachments.splice(i, 1); });
-          preview?.reloadAttachments(); buildSide();
-        } }, '✕')));
-    });
-    sc.append(al);
-    sc.append(el('button', { class: 'btn c sm', style: { width: '100%', marginTop: '8px' }, onclick: async () => {
-      const f = await pickFile('.glb,.gltf');
-      if (!f) return;
-      const a = await importFile(f, 'glb');
-      const at = { id: uid('at'), assetId: a.id, name: f.name.replace(/\.(glb|gltf)$/i, ''),
-        slot: 'face', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, scale: 1, visible: true };
-      store.edit('إضافة إكسسوار', () => { C.attachments.push(at); });
-      preview?.reloadAttachments(); buildSide(); editAttachment(at);
-    } }, '＋ إضافة نموذج GLB'));
+      'كل بطل زيّ فقط بلا قدرات. حدّد لكل بطل عدد الكؤوس التي تفتحه، وألوانه، ' +
+      'وألصق عليه نماذج GLB من جهازك (نظارات، قبعة، سلاح…).'));
+    const hl = el('div', { class: 'list' });
+    for (const h of L().heroes) {
+      const on = h.id === L().selectedHero;
+      const face = h.icon && assetURL(h.icon)
+        ? el('img', { src: assetURL(h.icon) })
+        : el('span', { style: { color: h.body, fontSize: '18px' } }, '●');
+      hl.append(el('div', { class: 'li' + (on ? ' on' : '') },
+        el('div', { class: 'ic' }, face),
+        el('div', { class: 'nm', onclick: () => {
+          store.edit('اختيار بطل', (d) => { d.lobby.selectedHero = h.id; });
+          remakePreview(); buildSide();
+        } }, `${h.name} — 🏆 ${h.unlockTrophies}`),
+        el('span', { class: 'x', onclick: (e) => {
+          e.stopPropagation();
+          heroEditor(P(), h, () => store.save(), () => remakePreview(), () => buildSide());
+        } }, '✎')));
+    }
+    sc.append(hl);
+    sc.append(el('div', { class: 'grid2', style: { marginTop: '8px' } },
+      el('button', { class: 'btn g sm', onclick: () => {
+        const h = defHero({ name: 'بطل ' + (L().heroes.length + 1),
+          unlockTrophies: L().heroes.length * 500 });
+        store.edit('إضافة بطل', (d) => { d.lobby.heroes.push(h); });
+        buildSide();
+        heroEditor(P(), h, () => store.save(), () => remakePreview(), () => buildSide());
+      } }, '＋ إضافة بطل'),
+      el('button', { class: 'btn ghost sm', onclick: () => {
+        heroesPanel(P(), () => store.save(), () => remakePreview());
+      } }, '👁️ معاينة الشبكة')));
     sbody.append(sc);
 
     // ---- الأصدقاء والمتجر ----
     const sf = el('div', { class: 'sec' }, el('h4', {}, '🗂️ اللوحات'));
+    sf.append(el('div', { class: 'row', style: { marginBottom: '10px' } },
+      el('label', { style: { flex: 1, fontSize: '12.5px', fontWeight: 800, color: 'var(--ink-2)' } },
+        'جهة لوحة الأصدقاء'),
+      el('button', { class: 'btn sm ' + (L().friendsSide === 'right' ? 'c' : 'ghost'), onclick: () => {
+        store.edit('جهة الأصدقاء', (d) => { d.lobby.friendsSide = 'right'; }); buildSide();
+      } }, 'يمين'),
+      el('button', { class: 'btn sm ' + (L().friendsSide === 'left' ? 'c' : 'ghost'), onclick: () => {
+        store.edit('جهة الأصدقاء', (d) => { d.lobby.friendsSide = 'left'; }); buildSide();
+      } }, 'يسار')));
     sf.append(el('div', { class: 'grid2' },
       el('button', { class: 'btn ghost sm', onclick: () => friendsPanel(P(), () => store.save()) }, '👥 الأصدقاء'),
       el('button', { class: 'btn ghost sm', onclick: () => shopPanel(P(), () => store.save(), true) }, '🛒 المتجر'),
@@ -304,7 +313,7 @@ export function mountStage3(view, side, ctx) {
 
   function remakePreview() {
     preview?.dispose();
-    preview = new CharacterPreview(charHost, L().character);
+    preview = new CharacterPreview(charHost, currentHero(P()));
   }
 
   applyBG();

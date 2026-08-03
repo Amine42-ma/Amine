@@ -3,8 +3,9 @@
 // ============================================================
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { el, clamp, toast, pickFile, slider, confirmBox, promptBox, uid, onDrag } from '../core/util.js';
-import { store, P } from '../core/store.js';
+import { el, clamp, toast, pickFile, slider, confirmBox, promptBox, uid, onDrag,
+         toggleRow } from '../core/util.js';
+import { store, P, STAT_DEFS } from '../core/store.js';
 import { importFile, assetURL, getAsset } from '../core/assets.js';
 import {
   loadGLB, prepMap, analyzeMapCached, makeQuery, minimapCanvas, autoBoundary, autoCrates,
@@ -27,6 +28,76 @@ export function mountStage2(view, side, ctx) {
   const info = el('div', { class: 'mapinfo' });
   const bar = el('div', { class: 'toolbar-float' });
   view.append(glHost, canvas2d, bar, info);
+
+  // طبقة ترتيب عناصر واجهة اللعب فوق الخريطة
+  const hudLayer = el('div', { style: { position: 'absolute', inset: '0', display: 'none', zIndex: '8' } });
+  view.append(hudLayer);
+  let selStat = null;
+  const hudNodes = new Map();
+
+  function statPreview(c) {
+    if (c.id === 'kills') return '💀 3';
+    if (c.id === 'rank') return '🏆 #7';
+    if (c.id === 'alive') return '👥 12';
+    if (c.id === 'hp') return '❤️ 100 / 100';
+    if (c.id === 'zone') return '⏱️ 0:45';
+    return c.id;
+  }
+
+  function buildHudLayer() {
+    for (const [, n] of hudNodes) n.remove();
+    hudNodes.clear();
+    for (const c of P().controls.stats) {
+      const isMap = c.id === 'minimap';
+      const body = el('div', { class: 'body' }, isMap
+        ? el('div', { style: { width: '100%', height: '100%', display: 'grid', placeItems: 'center',
+            fontSize: '22px', background: 'rgba(6,17,31,.75)' } }, '🗺️')
+        : el('span', { class: 'txt' }, statPreview(c)));
+      const hnd = el('div', { class: 'hnd' });
+      const tag = el('div', { class: 'tag' }, STAT_DEFS[c.id]?.label || c.id);
+      const n = el('div', { class: 'hw sq' }, body, hnd, tag);
+      n.addEventListener('pointerdown', () => { selStat = c; layoutHud(); buildSide(); });
+      onDrag(n, {
+        start: (_, st) => { st.x = c.x; st.y = c.y; selStat = c; buildSide(); },
+        move: (d, st) => {
+          const r = hudLayer.getBoundingClientRect();
+          c.x = clamp(st.x + d.dx / r.width, 0.02, 0.98);
+          c.y = clamp(st.y + d.dy / r.height, 0.02, 0.98);
+          store.live(() => {}); layoutHud();
+        },
+        end: () => store.snap('تحريك عنصر الواجهة'),
+      });
+      onDrag(hnd, {
+        start: (_, st) => { st.v = c.size; selStat = c; },
+        move: (d, st) => {
+          const k = (-d.dx + d.dy);
+          c.size = isMap ? clamp(st.v + k * 0.6, 80, 460) : clamp(st.v + k * 0.006, 0.5, 2.6);
+          store.live(() => {}); layoutHud(); buildSide();
+        },
+        end: () => store.snap('حجم عنصر الواجهة'),
+      });
+      hudNodes.set(c, n);
+      hudLayer.append(n);
+    }
+    layoutHud();
+  }
+
+  function layoutHud() {
+    const r = hudLayer.getBoundingClientRect();
+    if (!r.width) return;
+    const k = clamp(r.height / 720, 0.7, 1.6);
+    for (const [c, n] of hudNodes) {
+      const isMap = c.id === 'minimap';
+      const w = isMap ? c.size * k : 130 * (c.size || 1);
+      const h = isMap ? c.size * k : 36 * (c.size || 1);
+      n.style.width = w + 'px';
+      n.style.height = h + 'px';
+      n.style.left = c.x * r.width - w / 2 + 'px';
+      n.style.top = c.y * r.height - h / 2 + 'px';
+      n.style.opacity = c.visible ? 1 : 0.3;
+      n.classList.toggle('sel', selStat === c);
+    }
+  }
 
   const loading = el('div', { style: { position: 'absolute', inset: '0', display: 'grid', placeItems: 'center',
     background: 'rgba(6,3,20,.92)', zIndex: 20, textAlign: 'center' } },
@@ -190,7 +261,13 @@ export function mountStage2(view, side, ctx) {
     bar.innerHTML = '';
     const t = (id, emo, label) => el('button', {
       class: 'btn sm ' + (tool === id ? 'c' : 'ghost'),
-      onclick: () => { tool = id; if (id !== 'path') activePath = null; buildBar(); buildSide(); draw(); },
+      onclick: () => {
+        tool = id;
+        if (id !== 'path') activePath = null;
+        hudLayer.style.display = id === 'hud' ? '' : 'none';
+        if (id === 'hud') { buildHudLayer(); }
+        buildBar(); buildSide(); draw();
+      },
       title: label,
     }, emo + ' ' + label);
     if (mode2d) {
@@ -199,7 +276,8 @@ export function mountStage2(view, side, ctx) {
         t('path', '✈️', 'رسم المسار'),
         t('crate', '📦', 'الصناديق'),
         t('bound', '🚧', 'الحدود'),
-        t('erase', '🧽', 'مسح'));
+        t('erase', '🧽', 'مسح'),
+        t('hud', '🧭', 'ترتيب الواجهة'));
     }
     if (mode2d) bar.append(el('button', { class: 'btn sm ghost', title: 'ملاءمة العرض',
       onclick: () => { V.user = false; fitView(); draw(); } }, '⤢ ملاءمة'));
@@ -211,7 +289,7 @@ export function mountStage2(view, side, ctx) {
   }
 
   // ---------------- اللوحة الجانبية ----------------
-  const head = el('div', { class: 'side-head' }, '🗺️ الخريطة والمسارات');
+  const head = el('div', { class: 'side-head' }, '🗺️ الخطوة 2: الخريطة والعدّادات');
   const sbody = el('div', { class: 'side-body' });
   const foot = el('div', { class: 'side-foot' },
     el('button', { class: 'btn ghost sm', onclick: () => ctx.goto(1) }, '→ السابق'),
@@ -285,12 +363,100 @@ export function mountStage2(view, side, ctx) {
     sbody.append(sp);
 
     // ---- الطيران ----
-    const sfl = el('div', { class: 'sec' }, el('h4', {}, '🛫 إعدادات الطيران'));
+    const sfl = el('div', { class: 'sec' }, el('h4', {}, '🛫 مسار الطائرة'));
+    sfl.append(el('div', { class: 'row', style: { marginBottom: '8px' } },
+      el('button', { class: 'btn sm ' + (M().flight.mode === 'auto' ? 'c' : 'ghost'), onclick: () => {
+        store.edit('مسار تلقائي', (d) => { d.map.flight.mode = 'auto'; }); buildSide();
+      } }, '✨ تلقائي'),
+      el('button', { class: 'btn sm ' + (M().flight.mode === 'manual' ? 'c' : 'ghost'), onclick: () => {
+        store.edit('مسار يدوي', (d) => { d.map.flight.mode = 'manual'; }); buildSide();
+      } }, '✏️ يدوي')));
+    sfl.append(el('div', { class: 'hint', style: { marginBottom: '8px' } },
+      M().flight.mode === 'auto'
+        ? 'المحرّك يولّد مساراً جديداً من 3 نقاط في كل مباراة — في مكان مختلف كل مرة، '
+          + 'ولا يفتح نافذة القفز إلا فوق اليابسة، فيستحيل السقوط في البحر.'
+        : 'يُختار أحد مساراتك عشوائياً وقد يبدأ من أي طرف. نافذة القفز تُحسب تلقائياً '
+          + 'على الجزء المارّ فوق اليابسة فقط.'));
     sfl.append(slider({ label: 'ارتفاع الطيران', min: 60, max: 420, value: M().flight.altitude, unit: 'م',
       onInput: (v) => { store.live((d) => { d.map.flight.altitude = v; }); build3D(); } }));
     sfl.append(slider({ label: 'سرعة الطائرة', min: 40, max: 260, value: M().flight.speed, unit: '',
       onInput: (v) => { store.live((d) => { d.map.flight.speed = v; }); } }));
+    sfl.append(slider({ label: 'ابتعاد نافظة القفز عن الشاطئ', min: 4, max: 40,
+      value: M().flight.landMargin, unit: 'خ',
+      onInput: (v) => { store.live((d) => { d.map.flight.landMargin = v; }); } }));
     sbody.append(sfl);
+
+    // ---- الزون ----
+    const Z = M().zone;
+    const sz = el('div', { class: 'sec' }, el('h4', {}, '🌀 الزون المتقلّص'));
+    sz.append(toggleRow('تفعيل الزون', Z.enabled, (v) => {
+      store.edit('الزون', (d) => { d.map.zone.enabled = v; }); buildSide();
+    }));
+    if (Z.enabled) {
+      sz.append(el('div', { class: 'hint', style: { marginBottom: '8px' } },
+        'دائرة تنكمش على مراحل وتتحرّك إلى مكان جديد كل مرة، ومن يبقى خارجها يتأذّى. '
+        + `الوقت الكلّي التقريبي: ${Math.round((Z.firstDelay + Z.phases * (Z.holdTime + Z.shrinkTime)) / 60)} دقيقة.`));
+      sz.append(slider({ label: 'عدد المراحل', min: 2, max: 12, value: Z.phases,
+        onInput: (v) => { store.live((d) => { d.map.zone.phases = v; }); } }));
+      sz.append(slider({ label: 'انتظار قبل كل تقلّص', min: 10, max: 120, value: Z.holdTime, unit: 'ث',
+        onInput: (v) => { store.live((d) => { d.map.zone.holdTime = v; }); } }));
+      sz.append(slider({ label: 'مدّة التقلّص', min: 8, max: 90, value: Z.shrinkTime, unit: 'ث',
+        onInput: (v) => { store.live((d) => { d.map.zone.shrinkTime = v; }); } }));
+      sz.append(slider({ label: 'تأخير أول دائرة', min: 0, max: 120, value: Z.firstDelay, unit: 'ث',
+        onInput: (v) => { store.live((d) => { d.map.zone.firstDelay = v; }); } }));
+      sz.append(slider({ label: 'الضرر الابتدائي/ثانية', min: 1, max: 20, value: Z.damageStart,
+        onInput: (v) => { store.live((d) => { d.map.zone.damageStart = v; }); } }));
+      sz.append(slider({ label: 'زيادة الضرر كل مرحلة', min: 0, max: 20, value: Z.damageStep,
+        onInput: (v) => { store.live((d) => { d.map.zone.damageStep = v; }); } }));
+    }
+    sbody.append(sz);
+
+    // ---- عناصر واجهة اللعب ----
+    const sh = el('div', { class: 'sec' }, el('h4', {}, '🧭 عدّادات وواجهة اللعب'));
+    sh.append(el('div', { class: 'hint', style: { marginBottom: '8px' } },
+      'اضغط أداة «ترتيب الواجهة» ثم اسحب الخريطة المصغّرة وعدّاد القتلى وعدد الباقين '
+      + 'والترتيب ومؤقّت الزون إلى المكان المناسب.'));
+    const shl = el('div', { class: 'list' });
+    for (const c of P().controls.stats) {
+      shl.append(el('div', { class: 'li' + (selStat === c ? ' on' : ''), onclick: () => {
+        selStat = c;
+        if (tool !== 'hud') { tool = 'hud'; hudLayer.style.display = ''; buildHudLayer(); buildBar(); }
+        layoutHud(); buildSide();
+      } },
+        el('div', { class: 'ic' }, STAT_DEFS[c.id]?.emo || '•'),
+        el('div', { class: 'nm' }, STAT_DEFS[c.id]?.label || c.id),
+        el('span', { class: 'x', onclick: (e) => {
+          e.stopPropagation();
+          store.edit('إظهار/إخفاء', () => { c.visible = !c.visible; });
+          layoutHud(); buildSide();
+        } }, c.visible ? '👁️' : '🚫')));
+    }
+    sh.append(shl);
+    if (selStat) {
+      const isMap = selStat.id === 'minimap';
+      sh.append(el('div', { class: 'sep' }));
+      sh.append(slider({ label: 'حجم ' + (STAT_DEFS[selStat.id]?.label || ''),
+        min: isMap ? 80 : 0.5, max: isMap ? 460 : 2.6, step: isMap ? 1 : 0.05,
+        value: selStat.size,
+        onInput: (v) => { store.live(() => { selStat.size = v; }); layoutHud(); } }));
+      if (isMap) {
+        sh.append(slider({ label: 'تقريب الخريطة', min: 0.6, max: 6, step: 0.1, value: selStat.zoom || 1,
+          onInput: (v) => { store.live(() => { selStat.zoom = v; }); } }));
+      }
+      sh.append(el('div', { class: 'row' },
+        el('button', { class: 'btn c sm', onclick: async () => {
+          const f = await pickFile('image/*');
+          if (!f) return;
+          const a = await importFile(f, 'image');
+          store.edit('أيقونة عنصر الواجهة', () => { selStat.icon = a.id; });
+          buildHudLayer(); buildSide();
+        } }, '🖼️ أيقونة'),
+        selStat.icon ? el('button', { class: 'btn r sm', onclick: () => {
+          store.edit('حذف أيقونة', () => { selStat.icon = null; });
+          buildHudLayer(); buildSide();
+        } }, '✕') : null));
+    }
+    sbody.append(sh);
 
     // ---- الصناديق ----
     const sc = el('div', { class: 'sec' }, el('h4', {}, '📦 الصناديق (' + M().crates.length + ')'));
@@ -591,6 +757,7 @@ export function mountStage2(view, side, ctx) {
     renderer.setSize(w, h, false);
     cam.aspect = w / h; cam.updateProjectionMatrix();
     if (an) { if (!V.user) fitView(); draw(); }
+    layoutHud();
   }
   const ro = new ResizeObserver(resize);
   ro.observe(view);

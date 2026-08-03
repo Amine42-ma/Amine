@@ -281,6 +281,29 @@ function computeDerived(an) {
   }
   an.edgeDist = D;
 
+  // أقرب خلية يابسة لكل خلية — تمنع الهبوط في البحر
+  const NL = new Int32Array(res * res).fill(-1);
+  const ND = new Float32Array(res * res).fill(1e9);
+  for (let i = 0; i < res * res; i++) if (island[i]) { NL[i] = i; ND[i] = 0; }
+  const relax = (i, j, w) => {
+    if (NL[j] >= 0 && ND[j] + w < ND[i]) { ND[i] = ND[j] + w; NL[i] = NL[j]; }
+  };
+  for (let y = 0; y < res; y++) for (let x = 0; x < res; x++) {
+    const i = y * res + x;
+    if (x > 0) relax(i, i - 1, 1);
+    if (y > 0) relax(i, i - res, 1);
+    if (x > 0 && y > 0) relax(i, i - res - 1, 1.414);
+    if (x < res - 1 && y > 0) relax(i, i - res + 1, 1.414);
+  }
+  for (let y = res - 1; y >= 0; y--) for (let x = res - 1; x >= 0; x--) {
+    const i = y * res + x;
+    if (x < res - 1) relax(i, i + 1, 1);
+    if (y < res - 1) relax(i, i + res, 1);
+    if (x < res - 1 && y < res - 1) relax(i, i + res + 1, 1.414);
+    if (x > 0 && y < res - 1) relax(i, i + res - 1, 1.414);
+  }
+  an.nearLand = NL;
+
   // نافذة عرض مربّعة متمركزة على الجزيرة (النموذج قد يحوي بحراً شاسعاً)
   let cx0 = res, cx1 = 0, cz0 = res, cz1 = 0, any = false;
   for (let i = 0; i < res * res; i++) {
@@ -322,8 +345,35 @@ export function makeQuery(an) {
     const u = Math.round(clamp(toU(x), 0, res - 1)), v = Math.round(clamp(toV(z), 0, res - 1));
     return v * res + u;
   }
+  const W2 = an.maxX - an.minX, H2 = an.maxZ - an.minZ;
+  /** أقرب نقطة يابسة آمنة لأي إحداثي */
+  function nearestLand(x, z, inset = 0) {
+    const i = cellAt(x, z);
+    if (island[i] === 1 && (!inset || edgeDist[i] >= inset)) return { x, z, moved: false };
+    let j = an.nearLand ? an.nearLand[i] : -1;
+    if (j < 0) j = i;
+    // ادفع للداخل قليلاً لتفادي حافة الشاطئ
+    if (inset) {
+      let best = j, bestD = edgeDist[j];
+      const R = Math.ceil(inset) + 2;
+      const cx = j % res, cy = (j / res) | 0;
+      for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+        const nx = cx + dx, ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= res || ny >= res) continue;
+        const k = ny * res + nx;
+        if (island[k] === 1 && edgeDist[k] > bestD) { bestD = edgeDist[k]; best = k; }
+      }
+      j = best;
+    }
+    return {
+      x: an.minX + ((j % res) / (res - 1)) * W2,
+      z: an.minZ + (((j / res) | 0) / (res - 1)) * H2,
+      moved: true,
+    };
+  }
+
   return {
-    an, toU, toV, heightAt, cellAt,
+    an, toU, toV, heightAt, cellAt, nearestLand,
     isLand: (x, z) => island[cellAt(x, z)] === 1,
     slopeAt: (x, z) => slope[cellAt(x, z)],
     edgeAt: (x, z) => edgeDist[cellAt(x, z)],
@@ -537,6 +587,88 @@ export function autoCrates(an, { count = 46, minGapWorld = 26, edgeMin = 10 } = 
     ry: Math.random() * Math.PI * 2,
     scale: 1,
   }));
+}
+
+// ------------------------------------------------------------
+//  توليد مسار الطائرة تلقائياً — 3 نقاط، مختلف كل مباراة،
+//  ويضمن أن نافذة القفز كلها فوق اليابسة (لا سقوط في البحر)
+// ------------------------------------------------------------
+export function autoFlightPath(an, { margin = 12, tries = 60 } = {}) {
+  const { res, island, edgeDist } = an;
+  const V = mapView(an);
+  const cx = V.x0 + V.size / 2, cz = V.z0 + V.size / 2;
+  const R = V.size * 0.5;
+
+  const cellOf = (x, z) => {
+    const u = Math.round(clamp(((x - an.minX) / (an.maxX - an.minX)) * (res - 1), 0, res - 1));
+    const v = Math.round(clamp(((z - an.minZ) / (an.maxZ - an.minZ)) * (res - 1), 0, res - 1));
+    return v * res + u;
+  };
+  const good = (x, z) => {
+    const i = cellOf(x, z);
+    return island[i] === 1 && edgeDist[i] >= margin;
+  };
+
+  let best = null, bestScore = -1;
+  for (let t = 0; t < tries; t++) {
+    // وتر عشوائي يعبر الجزيرة: زاوية عشوائية + إزاحة عن المركز
+    const ang = Math.random() * Math.PI * 2;
+    const off = (Math.random() * 2 - 1) * R * 0.42;
+    const dx = Math.cos(ang), dz = Math.sin(ang);
+    const nx = -dz, nz = dx;                       // العمودي
+    const ox = cx + nx * off, oz = cz + nz * off;
+    const L = R * 1.9;
+    const a = { x: ox - dx * L, z: oz - dz * L };
+    const b = { x: ox + dx * L, z: oz + dz * L };
+
+    // امسح الخط وابحث عن أطول قطعة متصلة فوق يابسة صالحة
+    const N = 220;
+    let run = 0, runStart = -1, bestRun = 0, bs = -1, be = -1;
+    for (let i = 0; i <= N; i++) {
+      const f = i / N;
+      const x = a.x + (b.x - a.x) * f, z = a.z + (b.z - a.z) * f;
+      if (good(x, z)) {
+        if (run === 0) runStart = i;
+        run++;
+        if (run > bestRun) { bestRun = run; bs = runStart; be = i; }
+      } else run = 0;
+    }
+    if (bestRun < N * 0.16) continue;              // لا يعبر الجزيرة بما يكفي
+
+    // درجة: طول العبور + ابتعاد عن المسارات المتكرّرة
+    const score = bestRun + Math.random() * 12;
+    if (score > bestScore) {
+      bestScore = score;
+      const fs = bs / N, fe = be / N;
+      const px = (f) => ({ x: a.x + (b.x - a.x) * f, z: a.z + (b.z - a.z) * f });
+      // 3 نقاط: الدخول، منتصف العبور (مع انحراف بسيط)، الخروج
+      const mid = px((fs + fe) / 2);
+      const jx = (Math.random() * 2 - 1) * R * 0.10, jz = (Math.random() * 2 - 1) * R * 0.10;
+      const midJ = good(mid.x + jx, mid.z + jz) ? { x: mid.x + jx, z: mid.z + jz } : mid;
+      best = {
+        points: [px(-0.12), midJ, px(1.12)],
+        // نافذة القفز بالنسبة لطول المسار الكامل (من -0.12 إلى 1.12)
+        dropFrom: (fs + 0.12) / 1.24,
+        dropTo: (fe + 0.12) / 1.24,
+      };
+    }
+  }
+
+  if (!best) {
+    // احتياط: خط عبر مركز الجزيرة
+    const ang = Math.random() * Math.PI * 2;
+    const dx = Math.cos(ang), dz = Math.sin(ang);
+    best = {
+      points: [{ x: cx - dx * R * 1.6, z: cz - dz * R * 1.6 }, { x: cx, z: cz },
+               { x: cx + dx * R * 1.6, z: cz + dz * R * 1.6 }],
+      dropFrom: 0.32, dropTo: 0.68,
+    };
+  }
+  // هامش أمان داخل النافذة
+  const w = best.dropTo - best.dropFrom;
+  best.dropFrom += w * 0.10;
+  best.dropTo -= w * 0.10;
+  return best;
 }
 
 /** نقاط ظهور اللاعبين/الروبوتات */

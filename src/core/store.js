@@ -4,7 +4,7 @@
 import { clone, uid } from './util.js';
 
 const LS_KEY = 'royal-builder-project-v1';
-export const PROJECT_VERSION = 3;
+export const PROJECT_VERSION = 4;
 
 export const CONTROL_DEFS = {
   move:   { label: 'التحرك (عصا)',  emo: '🕹️', kind: 'stick' },
@@ -19,12 +19,21 @@ export const CONTROL_DEFS = {
   emote:  { label: 'تعبير',         emo: '😀', kind: 'btn' },
 };
 
+export const SHAPES = {
+  round:  { label: 'دائري',  emo: '⭕' },
+  sq:     { label: 'مربّع',  emo: '🟦' },
+  hex:    { label: 'سداسي',  emo: '⬡' },
+  diamond:{ label: 'معيّن',   emo: '🔶' },
+  shield: { label: 'درع',    emo: '🛡️' },
+};
+
 export const STAT_DEFS = {
   kills:   { label: 'عدّاد القتلى', emo: '💀' },
   rank:    { label: 'الترتيب',      emo: '🏆' },
   alive:   { label: 'الباقون',      emo: '👥' },
   hp:      { label: 'شريط الصحة',   emo: '❤️' },
   minimap: { label: 'الخريطة المصغّرة', emo: '🗺️' },
+  zone:    { label: 'مؤقّت الزون',   emo: '⏱️' },
 };
 
 export const LOBBY_DEFS = {
@@ -66,6 +75,7 @@ function defStats() {
     { id: 'alive',   x: 0.385, y: 0.055, size: 1.0, visible: true, emoji: '👥', icon: null },
     { id: 'hp',      x: 0.50, y: 0.935, size: 1.0, visible: true, emoji: '❤️', icon: null },
     { id: 'minimap', x: 0.075, y: 0.16, size: 155, visible: true, emoji: '🗺️', icon: null, zoom: 1 },
+    { id: 'zone',    x: 0.075, y: 0.34, size: 1.0, visible: true, emoji: '⏱️', icon: null },
   ];
 }
 
@@ -87,6 +97,28 @@ function defLobby() {
   return B;
 }
 
+export function defHero(over = {}) {
+  return {
+    id: uid('hero'), name: 'بطل جديد', unlockTrophies: 0,
+    body: '#ffc21a', belly: '#fff3c4', eye: '#101018', outline: '#2a1c00',
+    height: 1.0, width: 1.0, eyeSize: 1.0,
+    attachments: [],   // [{id,assetId,name,slot,px,py,pz,rx,ry,rz,scale,visible}]
+    icon: null,
+    ...over,
+  };
+}
+
+function defHeroes() {
+  return [
+    defHero({ name: 'شيلي', unlockTrophies: 0, body: '#ffc21a', belly: '#fff3c4', outline: '#2a1c00' }),
+    defHero({ name: 'نيتا', unlockTrophies: 500, body: '#39e07b', belly: '#e8ffef', outline: '#0d3a1e' }),
+    defHero({ name: 'كولت', unlockTrophies: 1500, body: '#25d3ff', belly: '#e6faff', outline: '#062c3a' }),
+    defHero({ name: 'إل بريمو', unlockTrophies: 3000, body: '#ff4d5e', belly: '#ffe6e8', outline: '#3d0a11' }),
+    defHero({ name: 'سبايك', unlockTrophies: 6000, body: '#c56bff', belly: '#f4e6ff', outline: '#2a0d40' }),
+    defHero({ name: 'كرو', unlockTrophies: 10000, body: '#1f2a3a', belly: '#9fb4c9', outline: '#05080d' }),
+  ];
+}
+
 export function defaultProject() {
   return {
     version: PROJECT_VERSION,
@@ -105,7 +137,20 @@ export function defaultProject() {
       paths: [],               // [{id,name,points:[{x,z}],color}]
       crates: [],              // [{id,x,y,z,ry,scale}]
       boundary: { mode: 'auto', poly: [] },
-      flight: { altitude: 190, speed: 105, minDropTime: 0.12, maxDropTime: 0.88 },
+      // mode:'auto' = المحرّك يولّد مساراً جديداً كل مباراة (3 نقاط) لا يمرّ إلا فوق اليابسة
+      flight: { mode: 'auto', altitude: 190, speed: 105, points: 3, landMargin: 12 },
+      zone: {
+        enabled: true,
+        phases: 7,          // عدد مراحل التقلّص
+        holdTime: 45,       // ثوانٍ قبل بدء كل تقلّص
+        shrinkTime: 35,     // ثوانٍ للتقلّص نفسه
+        firstDelay: 25,     // تأخير أول دائرة بعد الهبوط
+        startFactor: 1.0,   // نصف القطر الابتدائي (من نصف قطر الجزيرة)
+        finalFactor: 0.05,  // نصف القطر النهائي
+        damageStart: 2,     // ضرر/ثانية في المرحلة الأولى
+        damageStep: 3,      // زيادة الضرر كل مرحلة
+        color: '#25d3ff',
+      },
       analysisKey: null,       // مفتاح كاش التحليل
     },
 
@@ -124,12 +169,9 @@ export function defaultProject() {
         { id: uid('s'), name: 'حزمة جواهر', price: 45, emoji: '💎', icon: null },
         { id: uid('s'), name: 'زي أسطوري', price: 199, emoji: '👑', icon: null },
       ],
-      character: {
-        body: '#ffc21a', belly: '#fff3c4', eye: '#101018', outline: '#2a1c00',
-        height: 1.0, width: 1.0, eyeSize: 1.0,
-        attachments: [],   // [{id,assetId,name,slot,px,py,pz,rx,ry,rz,scale,visible}]
-      },
-      characters: [],      // شخصيات محفوظة
+      friendsSide: 'right',      // جهة لوحة الأصدقاء: يمين/يسار
+      heroes: defHeroes(),       // كل بطل: ألوان + إكسسوارات + كؤوس الفتح
+      selectedHero: null,        // يُضبط على أول بطل عند التحميل (انظر normalize)
     },
 
     match: {
@@ -143,7 +185,7 @@ export function defaultProject() {
 // ---------------------------------------------------------------
 class Store {
   constructor() {
-    this.data = defaultProject();
+    this.data = normalize(defaultProject());
     this.undoStack = [];
     this.redoStack = [];
     this.subs = new Set();
@@ -156,7 +198,7 @@ class Store {
       if (!raw) return false;
       const d = JSON.parse(raw);
       if (!d || typeof d !== 'object') return false;
-      this.data = migrate(d);
+      this.data = normalize(migrate(d));
       return true;
     } catch (e) { console.warn('load failed', e); return false; }
   }
@@ -171,7 +213,7 @@ class Store {
   }
 
   reset() {
-    this.data = defaultProject();
+    this.data = normalize(defaultProject());
     this.undoStack.length = 0;
     this.redoStack.length = 0;
     this.save();
@@ -224,6 +266,25 @@ class Store {
   }
 }
 
+/** يضمن اتساق الحقول المشتقّة */
+export function normalize(p) {
+  if (!p.lobby.heroes?.length) p.lobby.heroes = defHeroes();
+  if (!p.lobby.heroes.find((h) => h.id === p.lobby.selectedHero)) {
+    p.lobby.selectedHero = p.lobby.heroes[0].id;
+  }
+  return p;
+}
+
+/** البطل المُختار حالياً (مع حماية من الحذف) */
+export function currentHero(p) {
+  const H = p.lobby.heroes || [];
+  if (!H.length) { H.push(defHero()); }
+  return H.find((h) => h.id === p.lobby.selectedHero) || H[0];
+}
+
+/** هل فُتح هذا البطل بعدد كؤوس اللاعب؟ */
+export const heroUnlocked = (p, h) => (p.player.trophies || 0) >= (h.unlockTrophies || 0);
+
 function migrate(d) {
   const def = defaultProject();
   const out = { ...def, ...d };
@@ -231,8 +292,25 @@ function migrate(d) {
   out.map = { ...def.map, ...(d.map || {}) };
   out.map.boundary = { ...def.map.boundary, ...(d.map?.boundary || {}) };
   out.map.flight = { ...def.map.flight, ...(d.map?.flight || {}) };
+  out.map.zone = { ...def.map.zone, ...(d.map?.zone || {}) };
   out.lobby = { ...def.lobby, ...(d.lobby || {}) };
-  out.lobby.character = { ...def.lobby.character, ...(d.lobby?.character || {}) };
+  // ترقية المشاريع القديمة: الشخصية الواحدة تصبح أول بطل
+  if (!Array.isArray(out.lobby.heroes) || !out.lobby.heroes.length) {
+    out.lobby.heroes = def.lobby.heroes;
+    if (d.lobby?.character) {
+      Object.assign(out.lobby.heroes[0], d.lobby.character, { unlockTrophies: 0 });
+    }
+  }
+  delete out.lobby.character;
+  for (const h of out.lobby.heroes) {
+    if (!h.id) h.id = uid('hero');
+    if (!Array.isArray(h.attachments)) h.attachments = [];
+    if (typeof h.unlockTrophies !== 'number') h.unlockTrophies = 0;
+  }
+  if (!out.lobby.heroes.find((h) => h.id === out.lobby.selectedHero)) {
+    out.lobby.selectedHero = out.lobby.heroes[0].id;
+  }
+  if (out.lobby.friendsSide !== 'left') out.lobby.friendsSide = 'right';
   out.match = { ...def.match, ...(d.match || {}) };
   out.player = { ...def.player, ...(d.player || {}) };
   // تأكّد من وجود كل أزرار التحكم والإحصاءات

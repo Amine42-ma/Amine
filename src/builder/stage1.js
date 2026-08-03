@@ -2,7 +2,7 @@
 //  المرحلة 1 — ترتيب أزرار التحكم والواجهة قبل اللعب
 // ============================================================
 import { el, clamp, onDrag, toast, pickFile, slider, toggleRow } from '../core/util.js';
-import { store, P, CONTROL_DEFS, STAT_DEFS, defaultProject } from '../core/store.js';
+import { store, P, CONTROL_DEFS, SHAPES, defaultProject } from '../core/store.js';
 import { importFile, assetURL } from '../core/assets.js';
 
 export function mountStage1(view, side, ctx) {
@@ -51,18 +51,17 @@ export function mountStage1(view, side, ctx) {
     return el('span', { class: 'emo' }, c.emoji || '•');
   }
 
-  function makeNode(c, isStat) {
-    const isStick = !isStat && CONTROL_DEFS[c.id]?.kind === 'stick';
+  function makeNode(c, isStat = false) {
+    const isStick = CONTROL_DEFS[c.id]?.kind === 'stick';
     const body = el('div', { class: 'body' },
-      isStat ? el('span', { class: 'txt' }, statPreview(c))
-        : isStick && !c.icon
-          ? el('div', { style: { width: '42%', height: '42%', borderRadius: '50%',
-              background: 'radial-gradient(circle at 35% 30%,#fff,#9c8fd0)',
-              boxShadow: '0 3px 10px rgba(0,0,0,.6)' } })
-          : iconOf(c));
+      isStick && !c.icon
+        ? el('div', { style: { width: '42%', height: '42%', borderRadius: '50%',
+            background: 'radial-gradient(circle at 35% 30%,#fff,#9c8fd0)',
+            boxShadow: '0 3px 10px rgba(0,0,0,.6)' } })
+        : iconOf(c));
     const hnd = el('div', { class: 'hnd' });
-    const tag = el('div', { class: 'tag' }, (isStat ? STAT_DEFS[c.id] : CONTROL_DEFS[c.id])?.label || c.id);
-    const n = el('div', { class: 'hw' + (c.shape === 'sq' || isStat ? ' sq' : '') }, body, hnd, tag);
+    const tag = el('div', { class: 'tag' }, CONTROL_DEFS[c.id]?.label || c.id);
+    const n = el('div', { class: 'hw shape-' + (c.shape || 'round') }, body, hnd, tag);
     n.addEventListener('pointerdown', () => select(c, isStat));
 
     onDrag(n, {
@@ -91,25 +90,12 @@ export function mountStage1(view, side, ctx) {
     return { node: n, body, cfg: c, isStat };
   }
 
-  function statPreview(c) {
-    if (c.id === 'kills') return '💀 3';
-    if (c.id === 'rank') return '🏆 #7';
-    if (c.id === 'alive') return '👥 12';
-    if (c.id === 'hp') return '❤️ 100/100';
-    if (c.id === 'minimap') return '🗺️';
-    return c.id;
-  }
-
   function build() {
     for (const [, v] of nodes) v.node.remove();
     nodes.clear();
     for (const c of P().controls.layout) {
       const n = makeNode(c, false);
       nodes.set(c, n); screen.append(n.node);
-    }
-    for (const s of P().controls.stats) {
-      const n = makeNode(s, true);
-      nodes.set(s, n); screen.append(n.node);
     }
     layout();
   }
@@ -118,8 +104,8 @@ export function mountStage1(view, side, ctx) {
     const r = screen.getBoundingClientRect();
     const k = r.height / 720 * (P().controls.scale || 1);
     for (const [c, v] of nodes) {
-      const size = v.isStat && c.id !== 'minimap' ? 108 * (c.size || 1) : c.size * k;
-      const hh = v.isStat && c.id !== 'minimap' ? 34 * (c.size || 1) : size;
+      const size = c.size * k;
+      const hh = size;
       v.node.style.width = size + 'px';
       v.node.style.height = hh + 'px';
       v.node.style.left = c.x * r.width - size / 2 + 'px';
@@ -136,19 +122,19 @@ export function mountStage1(view, side, ctx) {
   }
 
   // ---------------- اللوحة الجانبية ----------------
-  const head = el('div', { class: 'side-head' }, '🎮 أزرار التحكم');
+  const head = el('div', { class: 'side-head' }, '🎮 الخطوة 1: رتّب الأزرار ثم اختر أيقوناتها');
   const body = el('div', { class: 'side-body' });
   const foot = el('div', { class: 'side-foot' },
     el('button', { class: 'btn ghost sm', onclick: () => { resetLayout(); } }, '↺ افتراضي'),
     el('div', { class: 'spacer' }),
-    el('button', { class: 'btn y', onclick: () => ctx.goto(2) }, 'التالي: الخريطة ←'));
+    el('button', { class: 'btn y', onclick: () => ctx.goto(2) }, 'التالي: الخريطة والعدّادات ←'));
   side.append(head, body, foot);
 
   function buildSide() {
     body.innerHTML = '';
 
     // ---- قائمة الأزرار ----
-    const s1 = el('div', { class: 'sec' }, el('h4', {}, 'الأزرار'));
+    const s1 = el('div', { class: 'sec' }, el('h4', {}, '1️⃣ رتّب الأزرار (اسحبها على الشاشة)'));
     const list = el('div', { class: 'list' });
     for (const c of P().controls.layout) {
       const def = CONTROL_DEFS[c.id];
@@ -167,49 +153,26 @@ export function mountStage1(view, side, ctx) {
     s1.append(list);
     body.append(s1);
 
-    // ---- الإحصاءات ----
-    const s2 = el('div', { class: 'sec' }, el('h4', {}, 'واجهة المعلومات'));
-    const list2 = el('div', { class: 'list' });
-    for (const c of P().controls.stats) {
-      const li = el('div', { class: 'li' + (sel === c ? ' on' : '') },
-        el('div', { class: 'ic' }, STAT_DEFS[c.id]?.emo || '•'),
-        el('div', { class: 'nm' }, STAT_DEFS[c.id]?.label || c.id),
-        el('span', { class: 'x', onclick: (e) => {
-          e.stopPropagation();
-          store.edit('إظهار/إخفاء', () => { c.visible = !c.visible; });
-          layout(); buildSide();
-        } }, c.visible ? '👁️' : '🚫'));
-      li.onclick = () => select(c, true);
-      list2.append(li);
-    }
-    s2.append(list2);
-    body.append(s2);
-
     // ---- خصائص المحدّد ----
     if (sel) {
-      const isStat = !!STAT_DEFS[sel.id] && !CONTROL_DEFS[sel.id];
-      const def = isStat ? STAT_DEFS[sel.id] : CONTROL_DEFS[sel.id];
+      const def = CONTROL_DEFS[sel.id];
       const s3 = el('div', { class: 'sec' }, el('h4', {}, '⚙️ ' + (def?.label || sel.id)));
 
-      if (!isStat || sel.id === 'minimap') {
-        s3.append(slider({ label: 'الحجم', min: isStat ? 80 : 34, max: isStat ? 400 : 340, value: sel.size,
-          onInput: (v) => { store.live(() => { sel.size = v; }); layout(); } }));
-      } else {
-        s3.append(slider({ label: 'الحجم', min: 0.5, max: 2.4, step: 0.05, value: sel.size || 1,
-          onInput: (v) => { store.live(() => { sel.size = v; }); layout(); } }));
+      s3.append(slider({ label: 'الحجم', min: 34, max: 340, value: sel.size,
+        onInput: (v) => { store.live(() => { sel.size = v; }); layout(); } }));
+      s3.append(slider({ label: 'الشفافية', min: 0.2, max: 1, step: 0.02, value: sel.opacity ?? .92,
+        onInput: (v) => { store.live(() => { sel.opacity = v; }); layout(); } }));
+
+      // ---- الشكل ----
+      s3.append(el('div', { class: 'hint', style: { margin: '4px 0 6px' } }, 'شكل الزر:'));
+      const shapes = el('div', { class: 'grid3' });
+      for (const k in SHAPES) {
+        shapes.append(el('div', { class: 'tool' + (sel.shape === k ? ' on' : ''), onclick: () => {
+          store.edit('شكل الزر', () => { sel.shape = k; }); build(); buildSide();
+        } }, el('span', { class: 'e' }, SHAPES[k].emo), SHAPES[k].label));
       }
-      if (!isStat) {
-        s3.append(slider({ label: 'الشفافية', min: 0.2, max: 1, step: 0.02, value: sel.opacity ?? .92,
-          onInput: (v) => { store.live(() => { sel.opacity = v; }); layout(); } }));
-        s3.append(el('div', { class: 'row', style: { marginBottom: '10px' } },
-          el('label', { style: { flex: 1, fontSize: '12.5px', fontWeight: 800, color: 'var(--ink-2)' } }, 'الشكل'),
-          el('button', { class: 'btn sm ' + (sel.shape !== 'sq' ? 'c' : 'ghost'), onclick: () => {
-            store.edit('شكل الزر', () => { sel.shape = 'round'; }); build(); buildSide();
-          } }, '⭕'),
-          el('button', { class: 'btn sm ' + (sel.shape === 'sq' ? 'c' : 'ghost'), onclick: () => {
-            store.edit('شكل الزر', () => { sel.shape = 'sq'; }); build(); buildSide();
-          } }, '⬛')));
-      }
+      s3.append(shapes);
+      s3.append(el('div', { class: 'sep' }));
       s3.append(toggleRow('ظاهر أثناء اللعب', sel.visible, (v) => {
         store.edit('إظهار/إخفاء', () => { sel.visible = v; }); layout(); buildSide();
       }));
@@ -232,7 +195,7 @@ export function mountStage1(view, side, ctx) {
         } }, '✕ إزالة') : null);
       s3.append(iconRow);
 
-      if (!isStat) {
+      {
         const emos = ['🕹️','🎯','🔫','⬆️','🏃','⬇️','📦','✋','🔄','😀','💥','🛡️','⚡','🔥','👊','🧨','🪂','🔭'];
         const g = el('div', { class: 'grid3', style: { marginTop: '10px' } });
         for (const e of emos) {

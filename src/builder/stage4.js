@@ -16,7 +16,10 @@ export function usedAssetIds(p = P()) {
   add(p.lobby.bgAssetId);
   for (const b of p.lobby.buttons) add(b.icon);
   for (const it of p.lobby.shop) add(it.icon);
-  for (const a of p.lobby.character.attachments || []) add(a.assetId);
+  for (const h of p.lobby.heroes || []) {
+    add(h.icon);
+    for (const a of h.attachments || []) add(a.assetId);
+  }
   return s;
 }
 
@@ -52,7 +55,11 @@ export function mountStage4(view, side, ctx) {
     row('أزرار التحكم الظاهرة', P().controls.layout.filter((c) => c.visible).length),
     row('أزرار القائمة', P().lobby.buttons.filter((b) => b.visible).length),
     row('الأصدقاء', P().lobby.friends.length),
-    row('إكسسوارات الشخصية', (P().lobby.character.attachments || []).length),
+    row('الأبطال', (P().lobby.heroes || []).length),
+    row('نماذج الأبطال',
+      (P().lobby.heroes || []).reduce((n, h) => n + (h.attachments || []).length, 0)),
+    row('الزون', P().map.zone?.enabled ? `${P().map.zone.phases} مراحل` : 'مُعطّل'),
+    row('مسار الطائرة', P().map.flight.mode === 'manual' ? 'يدوي' : 'تلقائي (يتغيّر كل مباراة)'),
     row('عدد الخصوم', P().match.bots),
     row('حجم الأصول', fmtBytes(bytes)),
     row('الحجم المتوقع للملف',

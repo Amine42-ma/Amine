@@ -4,8 +4,9 @@
 // ============================================================
 import { el, toast } from './core/util.js';
 import * as A from './core/audio.js';
-import { Lobby, friendsPanel, shopPanel, settingsPanel, characterPanel } from './game/lobby.js';
+import { Lobby, friendsPanel, shopPanel, settingsPanel, heroesPanel } from './game/lobby.js';
 import { Game } from './game/game.js';
+import { currentHero } from './core/store.js';
 
 const PREFS_KEY = 'royal-game-prefs-v1';
 
@@ -18,10 +19,8 @@ export function loadPrefs(project) {
     if (d.match) Object.assign(project.match, d.match);
     if (d.player) Object.assign(project.player, d.player);
     if (d.friends) project.lobby.friends = d.friends;
-    if (d.character) {
-      const at = project.lobby.character.attachments;
-      Object.assign(project.lobby.character, d.character);
-      project.lobby.character.attachments = at;
+    if (d.selectedHero && project.lobby.heroes?.find((h) => h.id === d.selectedHero)) {
+      project.lobby.selectedHero = d.selectedHero;
     }
   } catch (e) { /* تجاهل */ }
   return project;
@@ -41,6 +40,7 @@ class Runtime {
     this.opts = opts || {};
     this.node = el('div', { style: { position: 'absolute', inset: '0', overflow: 'hidden' } });
     host.append(this.node);
+    window.__runtime = this;    // للتشخيص
     this._unlock = () => { A.unlock(); if (this.P.match.music && this.lobby) A.startMusic(); };
     addEventListener('pointerdown', this._unlock, { once: true });
   }
@@ -62,7 +62,8 @@ class Runtime {
       case 'shop': shopPanel(this.P, () => {}, false); break;
       case 'settings': settingsPanel(this.P, () => this.savePrefs()); break;
       case 'brawlers': case 'skins':
-        characterPanel(this.P, () => this.savePrefs(), () => this.lobby?.preview?.refreshAll());
+        heroesPanel(this.P, () => this.savePrefs(),
+          () => this.lobby?.preview?.setHero(currentHero(this.P)));
         break;
       case 'club': toast('الاتحاد: قريباً 🛡️'); break;
       case 'news': toast('📰 مرحباً بك في بطل رويال!'); break;
@@ -111,7 +112,7 @@ class Runtime {
       localStorage.setItem(PREFS_KEY, JSON.stringify({
         match: this.P.match,
         friends: this.P.lobby.friends,
-        character: { ...this.P.lobby.character, attachments: undefined },
+        selectedHero: this.P.lobby.selectedHero,
         player: this.P.player,
       }));
     } catch (e) { /* تجاهل */ }

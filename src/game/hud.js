@@ -78,7 +78,7 @@ export class HUD {
 
   makeBtn(c) {
     const body = el('div', { class: 'body' }, this.iconFor(c));
-    const node = el('div', { class: 'gw ' + (c.shape === 'sq' ? 'sq' : ''), data: { id: c.id } }, body);
+    const node = el('div', { class: 'gw shape-' + (c.shape || 'round'), data: { id: c.id } }, body);
     const set = (v) => {
       node.classList.toggle('press', v);
       if (c.id === 'shoot') this.input.shoot = v;
@@ -335,6 +335,21 @@ export class Minimap {
       g.beginPath();
       this.path.forEach((p, i) => { const [a, b] = toPx(p.x, p.z); i ? g.lineTo(a, b) : g.moveTo(a, b); });
       g.stroke(); g.setLineDash([]);
+    }
+    // الزون
+    if (this.zone) {
+      const Z = this.zone;
+      const sc = (w / 2) / view;
+      const [zx, zy] = toPx(Z.cx, Z.cz);
+      g.strokeStyle = 'rgba(255,255,255,.95)'; g.lineWidth = 2.4 * (w / 200);
+      g.beginPath(); g.arc(zx, zy, Z.r * sc, 0, 7); g.stroke();
+      if (!Z.done) {
+        const [tx, ty] = toPx(Z.tx, Z.tz);
+        g.strokeStyle = Z.cfg.color || '#25d3ff'; g.lineWidth = 2 * (w / 200);
+        g.setLineDash([5 * (w / 200), 5 * (w / 200)]);
+        g.beginPath(); g.arc(tx, ty, Z.tr * sc, 0, 7); g.stroke();
+        g.setLineDash([]);
+      }
     }
     // العلامات
     for (const m of others) {

@@ -9,7 +9,9 @@ import * as A from '../core/audio.js';
 import {
   loadGLB, prepMap, analyzeMapCached, makeQuery, minimapCanvas, autoBoundary,
   autoCrates, spawnPoints, buildSky, buildOcean, pointInPoly, closestOnPoly,
+  autoFlightPath, mapView,
 } from './world.js';
+import { currentHero } from '../core/store.js';
 import { Character, buildChute, nameTag } from './character.js';
 import { HUD, Minimap } from './hud.js';
 
@@ -111,6 +113,7 @@ export class Game {
     this.buildPlayer();
     this.buildBots();
     this.buildEffects();
+    this.buildZone();
 
     // ---- الواجهة ----
     this.hud = new HUD(this.node, P, { onBigMap: () => this.toggleBigMap() });
@@ -257,7 +260,7 @@ export class Game {
   }
 
   buildPlayer() {
-    const cc = this.P.lobby.character;
+    const cc = currentHero(this.P);
     this.player = new Character({ ...cc, outlineOn: this.P.match.quality !== 'low' });
     this.scene.add(this.player.group);
     // الإكسسوارات
@@ -309,6 +312,117 @@ export class Game {
     }
   }
 
+  // =========================================================
+  //  الزون المتقلّص
+  // =========================================================
+  buildZone() {
+    const cfg = this.P.map.zone || {};
+    const V = mapView(this.an);
+    const R = V.size * 0.5;
+    this.zone = {
+      cfg,
+      cx: V.x0 + V.size / 2, cz: V.z0 + V.size / 2,
+      r: R * (cfg.startFactor ?? 1),
+      fromR: R * (cfg.startFactor ?? 1), fromX: 0, fromZ: 0,
+      tx: 0, tz: 0, tr: 0,
+      phase: 0, phases: Math.max(1, cfg.phases || 7),
+      state: 'hold', timer: cfg.firstDelay ?? 25, total: cfg.firstDelay ?? 25,
+      islandR: R, done: false,
+    };
+    this.zone.tx = this.zone.cx; this.zone.tz = this.zone.cz; this.zone.tr = this.zone.r;
+    this.planNextZone();
+
+    if (!cfg.enabled) return;
+    // جدار مرئي: أسطوانة مفتوحة تدور ببطء
+    const geo = new THREE.CylinderGeometry(1, 1, 1, 72, 1, true);
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { t: { value: 0 }, c: { value: new THREE.Color(cfg.color || '#25d3ff') } },
+      vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);} `,
+      fragmentShader: `
+        uniform float t; uniform vec3 c; varying vec2 vUv;
+        void main(){
+          float bars = smoothstep(.86,1.0,abs(sin(vUv.x*160.0 + t*0.6)));
+          float rise = smoothstep(.9,1.0,abs(sin(vUv.y*10.0 - t*1.4)));
+          float fade = smoothstep(1.0,.15,vUv.y);
+          float a = (bars*.55 + rise*.35 + .12) * fade;
+          gl_FragColor = vec4(c*(1.0+rise*1.8), a*.62);
+        }`,
+      transparent: true, side: THREE.DoubleSide, depthWrite: false,
+    });
+    this.zoneMesh = new THREE.Mesh(geo, mat);
+    this.zoneMesh.frustumCulled = false;
+    this.scene.add(this.zoneMesh);
+  }
+
+  planNextZone() {
+    const z = this.zone;
+    if (z.phase >= z.phases) { z.done = true; return; }
+    const cfg = z.cfg;
+    const s = cfg.startFactor ?? 1, e = cfg.finalFactor ?? 0.05;
+    const f = (z.phase + 1) / z.phases;
+    const nr = z.islandR * (s * Math.pow(e / s, f));
+    // مركز جديد عشوائي بحيث تبقى الدائرة الجديدة داخل الحالية تماماً
+    const maxOff = Math.max(0, z.r - nr);
+    const a = Math.random() * Math.PI * 2;
+    const d = Math.sqrt(Math.random()) * maxOff;
+    let nx = z.cx + Math.cos(a) * d, nz = z.cz + Math.sin(a) * d;
+    // فضّل مركزاً على اليابسة حتى لا تنتهي المباراة في البحر
+    if (this.Q && !this.Q.isLand(nx, nz)) {
+      const p = this.Q.nearestLand(nx, nz, 6);
+      const ddx = p.x - z.cx, ddz = p.z - z.cz;
+      const dd = Math.hypot(ddx, ddz);
+      if (dd <= maxOff) { nx = p.x; nz = p.z; }
+    }
+    z.fromX = z.cx; z.fromZ = z.cz; z.fromR = z.r;
+    z.tx = nx; z.tz = nz; z.tr = nr;
+  }
+
+  updZone(dt) {
+    const z = this.zone;
+    if (!z || !z.cfg.enabled || this.phase !== 'ground') return;
+    z.timer -= dt;
+    if (z.state === 'hold') {
+      if (z.timer <= 0) {
+        if (z.done) { z.timer = 9999; return; }
+        z.state = 'shrink';
+        z.total = z.timer = z.cfg.shrinkTime ?? 35;
+      }
+    } else {
+      const k = 1 - Math.max(0, z.timer) / Math.max(z.total, 0.001);
+      const e = k * k * (3 - 2 * k);                       // تنعيم
+      z.cx = lerp(z.fromX, z.tx, e);
+      z.cz = lerp(z.fromZ, z.tz, e);
+      z.r = lerp(z.fromR, z.tr, e);
+      if (z.timer <= 0) {
+        z.cx = z.tx; z.cz = z.tz; z.r = z.tr;
+        z.phase++;
+        z.state = 'hold';
+        z.total = z.timer = z.cfg.holdTime ?? 45;
+        this.planNextZone();
+        this.hud.feed(`⏱️ الزون يتقلّص — المرحلة ${z.phase}/${z.phases}`);
+        A.sfx.siren();
+      }
+    }
+    if (this.zoneMesh) {
+      this.zoneMesh.position.set(z.cx, this.an.yMin + 100, z.cz);
+      this.zoneMesh.scale.set(z.r, 260, z.r);
+      this.zoneMesh.material.uniforms.t.value = this.clock.elapsedTime;
+    }
+    // ضرر خارج الزون
+    const d = Math.hypot(this.pos.x - z.cx, this.pos.z - z.cz);
+    this.outZone = d > z.r;
+    if (this.outZone) {
+      const dps = (z.cfg.damageStart ?? 2) + z.phase * (z.cfg.damageStep ?? 3);
+      this.damage(dps * dt, 'الزون');
+    }
+    // مؤقّت الواجهة
+    const secs = Math.max(0, Math.ceil(z.timer));
+    const mm = Math.floor(secs / 60), ss = secs % 60;
+    this.hud.setStat('zone', z.done ? '—' : `${mm}:${String(ss).padStart(2, '0')}`);
+    const st = this.hud.stats.zone;
+    if (st?.icon) st.icon.textContent = z.state === 'shrink' ? '🌀' : '⏱️';
+  }
+
   buildEffects() {
     // آثار الطلقات
     const g = new THREE.BufferGeometry();
@@ -339,23 +453,34 @@ export class Game {
   // =========================================================
   beginFlight() {
     const P = this.P;
-    let path = P.map.paths?.length ? pick(P.map.paths).points.slice() : null;
-    if (!path || path.length < 2) {
-      // مسار عشوائي يعبر الجزيرة
-      const a = rnd(0, Math.PI * 2);
-      const R = this.an.span * 0.62;
-      const cx = (this.an.minX + this.an.maxX) / 2, cz = (this.an.minZ + this.an.maxZ) / 2;
-      path = [
-        { x: cx + Math.cos(a) * R, z: cz + Math.sin(a) * R },
-        { x: cx - Math.cos(a) * R, z: cz - Math.sin(a) * R },
-      ];
+    const fl = P.map.flight;
+    let path, dropFrom = 0.15, dropTo = 0.85;
+
+    if (fl.mode === 'manual' && P.map.paths?.length) {
+      // مسار رسمه المستخدم يدوياً
+      path = pick(P.map.paths).points.slice();
+      if (Math.random() < 0.5) path.reverse();
+      const ext = (p0, p1, d) => {
+        const l = Math.hypot(p0.x - p1.x, p0.z - p1.z) || 1;
+        return { x: p0.x + ((p0.x - p1.x) / l) * d, z: p0.z + ((p0.z - p1.z) / l) * d };
+      };
+      path.unshift(ext(path[0], path[1], this.an.span * 0.3));
+      path.push(ext(path[path.length - 1], path[path.length - 2], this.an.span * 0.3));
+      const w = this.landWindow(path);
+      dropFrom = w.from; dropTo = w.to;
+    } else {
+      // المحرّك يولّد مساراً جديداً كل مباراة — 3 نقاط، لا يعبر إلا فوق اليابسة
+      const g = autoFlightPath(this.an, { margin: fl.landMargin ?? 12 });
+      path = g.points.slice();
+      dropFrom = g.dropFrom; dropTo = g.dropTo;
+      if (Math.random() < 0.5) {                 // يبدأ من أي طرف
+        path.reverse();
+        const a = 1 - dropTo, b = 1 - dropFrom;
+        dropFrom = a; dropTo = b;
+      }
     }
-    if (Math.random() < 0.5) path.reverse();   // يبدأ من النهاية أحياناً
-    // مدّ المسار خارج الحدود لدخول/خروج طبيعي
-    const ext = (p0, p1, d) => ({ x: p0.x + (p0.x - p1.x) / Math.hypot(p0.x - p1.x, p0.z - p1.z) * d,
-                                  z: p0.z + (p0.z - p1.z) / Math.hypot(p0.x - p1.x, p0.z - p1.z) * d });
-    path.unshift(ext(path[0], path[1], this.an.span * 0.3));
-    path.push(ext(path[path.length - 1], path[path.length - 2], this.an.span * 0.3));
+    this.dropFrom = clamp(dropFrom, 0.02, 0.94);
+    this.dropTo = clamp(Math.max(dropTo, dropFrom + 0.05), 0.06, 0.96);
 
     this.path = path;
     this.pathLen = [];
@@ -395,6 +520,40 @@ export class Game {
     A.unlock();
     if (this.P.match.engineSfx) { A.engineSound.start(); A.engineSound.set(1, 1); }
     this.hud.showDrop('اضغط <b style="color:var(--acc)">القفز</b> للنزول من الطائرة');
+  }
+
+  /** أطول قطعة من المسار تمرّ فوق يابسة صالحة → نافذة قفز آمنة */
+  landWindow(path) {
+    const N = 200;
+    const seg = [];
+    let tot = 0;
+    for (let i = 1; i < path.length; i++)
+      tot += Math.hypot(path[i].x - path[i - 1].x, path[i].z - path[i - 1].z);
+    const at = (f) => {
+      let d = f * tot, i = 0;
+      while (i < path.length - 2) {
+        const l = Math.hypot(path[i + 1].x - path[i].x, path[i + 1].z - path[i].z);
+        if (d <= l) break;
+        d -= l; i++;
+      }
+      const a = path[i], b = path[i + 1] || a;
+      const l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+      const k = clamp(d / l, 0, 1);
+      return { x: lerp(a.x, b.x, k), z: lerp(a.z, b.z, k) };
+    };
+    let run = 0, start = -1, bestRun = 0, bs = 0, be = N;
+    for (let i = 0; i <= N; i++) {
+      const p = at(i / N);
+      const ok = this.Q.isLand(p.x, p.z) && this.Q.edgeAt(p.x, p.z) >= 10;
+      if (ok) {
+        if (run === 0) start = i;
+        run++;
+        if (run > bestRun) { bestRun = run; bs = start; be = i; }
+      } else run = 0;
+    }
+    if (bestRun < 6) return { from: 0.3, to: 0.7 };
+    const w = (be - bs) / N;
+    return { from: bs / N + w * 0.1, to: be / N - w * 0.1 };
   }
 
   pathAt(t) {
@@ -470,6 +629,7 @@ export class Game {
       case 'end': this.updEnd(dt); break;
     }
 
+    this.updZone(dt);
     this.updBots(dt);
     this.updCrates(dt);
     this.updLoot(dt);
@@ -506,13 +666,16 @@ export class Game {
 
     A.engineSound.set(1, 1 + Math.sin(this.clock.elapsedTime * .5) * .03);
 
-    const fl = this.P.map.flight;
-    const canJump = f > fl.minDropTime;
+    const canJump = f >= this.dropFrom;
     if (canJump) {
-      this.hud.showDrop(`اضغط <b style="color:var(--acc)">القفز</b> للنزول &nbsp;•&nbsp; ${Math.round((1 - f) * 100)}%`);
+      const left = Math.max(0, Math.round((this.dropTo - f) / (this.dropTo - this.dropFrom) * 100));
+      this.hud.showDrop(
+        `اضغط <b style="color:var(--acc)">القفز</b> للنزول &nbsp;•&nbsp; نافذة الهبوط ${left}%`);
       if (this.hud.consume('jump')) this.jumpOut();
+    } else {
+      this.hud.showDrop('الطائرة تقترب من الجزيرة…');
     }
-    if (f >= fl.maxDropTime) this.jumpOut();
+    if (f >= this.dropTo) this.jumpOut();     // قفز إجباري قبل مغادرة اليابسة
     this.hud.consume('jump');
   }
 
@@ -534,8 +697,21 @@ export class Game {
     const maxTerm = chute ? -11 : -58;
     this.vel.y = smooth(this.vel.y, maxTerm, chute ? 4.5 : 1.4, dt);
 
+    // توجيه تلقائي نحو اليابسة — يستحيل الهبوط في البحر
+    const safe = this.Q.nearestLand(this.pos.x, this.pos.z, 8);
+    if (safe.moved) {
+      const sx = safe.x - this.pos.x, sz = safe.z - this.pos.z;
+      const sd = Math.hypot(sx, sz) || 1;
+      const pull = chute ? 34 : 16;
+      this.vel.x += (sx / sd) * pull * dt;
+      this.vel.z += (sz / sd) * pull * dt;
+      this.hud.showOOB('🌊 توجيه تلقائي نحو اليابسة');
+    } else if (this._oobShown) this.hud.showOOB(null);
+    this._oobShown = safe.moved;
+
     this.pos.addScaledVector(this.vel, dt);
-    const gy = this.groundY(this.pos.x, this.pos.z);
+    const overSea = !this.Q.isLand(this.pos.x, this.pos.z);
+    const gy = overSea ? this.an.waterY - 60 : this.groundY(this.pos.x, this.pos.z);
     const alt = this.pos.y - gy;
 
     A.windSound.set(clamp(Math.abs(this.vel.y) / 55, 0, 1));
@@ -543,8 +719,15 @@ export class Game {
     if (!chute && (alt < 46 || this.hud.consume('jump'))) this.deployChute();
     if (chute) this.chute.scale.setScalar(smooth(this.chute.scale.x, 1, 8, dt));
 
-    if (alt <= 0.05) { this.pos.y = gy; this.vel.set(0, 0, 0); this.land(); }
-    else this.player.group.position.copy(this.pos);
+    if (alt <= 0.05) {
+      // ضمان نهائي: انقل إلى أقرب يابسة آمنة قبل ملامسة الأرض
+      const L = this.Q.nearestLand(this.pos.x, this.pos.z, 6);
+      this.pos.x = L.x; this.pos.z = L.z;
+      this.pos.y = this.groundY(L.x, L.z);
+      this.vel.set(0, 0, 0);
+      this.hud.showOOB(null);
+      this.land();
+    } else this.player.group.position.copy(this.pos);
 
     this.hud.showDrop(`الارتفاع <b style="color:var(--acc)">${Math.max(0, alt).toFixed(0)}م</b>` +
       (chute ? '' : ' — اضغط القفز لفتح المظلة'));
@@ -659,6 +842,12 @@ export class Game {
     if (!this.boundary?.length) return;
     const inside = pointInPoly(this.pos.x, this.pos.z, this.boundary);
     const wet = this.pos.y < this.an.waterY + 0.4;
+    if (this.outZone && inside && !wet) {
+      const z = this.zone;
+      const d = Math.hypot(this.pos.x - z.cx, this.pos.z - z.cz) - z.r;
+      this.hud.showOOB('🌀 خارج الزون!<br><small>اتجه للمركز — ' + Math.max(0, d).toFixed(0) + 'م</small>');
+      return;
+    }
     if (!inside || wet) {
       const c = closestOnPoly(this.pos.x, this.pos.z, this.boundary);
       this.hud.showOOB('⚠️ خارج حدود المعركة<br><small>عُد إلى الجزيرة — المسافة ' + c.dist.toFixed(0) + 'م</small>');
@@ -905,6 +1094,17 @@ export class Game {
         b.state = 'roam';
         const a = rnd(0, 6.28), r = rnd(18, 70);
         let tx = b.pos.x + Math.cos(a) * r, tz = b.pos.z + Math.sin(a) * r;
+        // ابقَ داخل الزون
+        const Z = this.zone;
+        if (Z && Z.cfg.enabled) {
+          const dz = Math.hypot(b.pos.x - Z.cx, b.pos.z - Z.cz);
+          if (dz > Z.r * 0.82) {
+            const k = rnd(0.15, 0.7);
+            tx = lerp(b.pos.x, Z.cx, k); tz = lerp(b.pos.z, Z.cz, k);
+          } else if (Math.hypot(tx - Z.cx, tz - Z.cz) > Z.r * 0.9) {
+            tx = lerp(tx, Z.cx, 0.6); tz = lerp(tz, Z.cz, 0.6);
+          }
+        }
         if (this.boundary && !pointInPoly(tx, tz, this.boundary)) {
           const c = closestOnPoly(tx, tz, this.boundary);
           tx = lerp(tx, c.x, 1.15); tz = lerp(tz, c.z, 1.15);
@@ -958,6 +1158,19 @@ export class Game {
       b.tag.visible = dp < 70;
       // إخفاء البعيدين لتحسين الأداء
       b.ch.group.visible = dp < 240;
+    }
+
+    // ضرر الزون على الروبوتات خارجه
+    const Z = this.zone;
+    if (pj && Z && Z.cfg.enabled) {
+      const dps = (Z.cfg.damageStart ?? 2) + Z.phase * (Z.cfg.damageStep ?? 3);
+      for (const b of this.bots) {
+        if (!b.alive || !b.landed) continue;
+        if (Math.hypot(b.pos.x - Z.cx, b.pos.z - Z.cz) > Z.r) {
+          b.hp -= dps * dt;
+          if (b.hp <= 0) this.killBot(b, false);
+        }
+      }
     }
 
     // إسقاط تدريجي للروبوتات البعيدة (لتقدّم الترتيب)
@@ -1015,6 +1228,7 @@ export class Game {
       if (Math.abs(c.x - this.pos.x) + Math.abs(c.z - this.pos.z) < 190)
         others.push({ x: c.x, z: c.z, color: '#ffc21a', r: 2.2 });
     }
+    this.mm.zone = this.zone && this.zone.cfg.enabled ? this.zone : null;
     this.mm.draw(this.pos.x, this.pos.z, this.yaw, others);
     if (this.bigmap.classList.contains('on')) this.drawBigMap();
   }
@@ -1050,6 +1264,20 @@ export class Game {
       if (c.opened) continue;
       const [a, b] = to(c.x, c.z);
       g.fillStyle = '#ffc21a'; g.fillRect(a - 3, b - 3, 6, 6);
+    }
+    const z = this.zone;
+    if (z && z.cfg.enabled) {
+      const scale = s / V.size;
+      const [zx, zy] = to(z.cx, z.cz);
+      g.strokeStyle = '#ffffff'; g.lineWidth = 3;
+      g.beginPath(); g.arc(zx, zy, z.r * scale, 0, 7); g.stroke();
+      if (!z.done) {
+        const [tx, ty] = to(z.tx, z.tz);
+        g.strokeStyle = z.cfg.color || '#25d3ff'; g.lineWidth = 3;
+        g.setLineDash([8, 7]);
+        g.beginPath(); g.arc(tx, ty, z.tr * scale, 0, 7); g.stroke();
+        g.setLineDash([]);
+      }
     }
     const [px, pz] = to(this.pos.x, this.pos.z);
     g.fillStyle = '#25d3ff'; g.strokeStyle = '#001b26'; g.lineWidth = 3;
