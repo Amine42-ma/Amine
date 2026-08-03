@@ -1,0 +1,29 @@
+{
+  "name": "royal-builder",
+  "version": "1.0.0",
+  "description": "محرّك ألعاب باتل رويال يعمل في المتصفح ويُصدّر ملف HTML واحد",
+  "main": "index.js",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "dev": "node tools/build.mjs --dev",
+    "start": "node tools/serve.mjs",
+    "serve": "node tools/serve.mjs",
+    "test:smoke": "node tools/smoke.mjs",
+    "test:play": "node tools/playtest.mjs",
+    "test:export": "node tools/exporttest.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://local_proxy@127.0.0.1:41729/git/Amine42-ma/Amine"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "playwright": "^1.62.1",
+    "three": "^0.160.1"
+  },
+  "private": true,
+  "type": "module"
+}
