@@ -7,6 +7,7 @@ import { importFile, assetURL } from '../core/assets.js';
 
 export function mountStage1(view, side, ctx) {
   let sel = null;
+  let sbodyIcons = null;
 
   // ---------------- معاينة الجهاز ----------------
   const wrap = el('div', { class: 'device-wrap' });
@@ -133,6 +134,54 @@ export function mountStage1(view, side, ctx) {
   function buildSide() {
     body.innerHTML = '';
 
+    // ---- 2️⃣ لوحة الأيقونات: صورة من جهازك لكل زر ----
+    const si = el('div', { class: 'sec' }, el('h4', {}, '2️⃣ اختر أيقونة كل زر من جهازك'));
+    si.append(el('div', { class: 'hint', style: { marginBottom: '9px' } },
+      'اضغط على أي زر بالأسفل لترفع له صورة من هاتفك. الصورة تُحفظ داخل اللعبة، '
+      + 'فيراها كل من يفتحها. (عصا التحرك بلا أيقونة لأنها متحرّكة.)'));
+    const ig = el('div', { class: 'icon-grid' });
+    for (const c of P().controls.layout) {
+      if (CONTROL_DEFS[c.id]?.kind === 'stick') continue;      // العصي بلا أيقونة
+      const thumb = el('div', { class: 'ic-th' });
+      if (c.icon && assetURL(c.icon)) thumb.append(el('img', { src: assetURL(c.icon) }));
+      else thumb.append(el('span', {}, c.emoji || '•'));
+      const card = el('div', { class: 'ic-card' + (c.icon ? ' has' : '') + (sel === c ? ' on' : '') },
+        thumb,
+        el('b', {}, CONTROL_DEFS[c.id].label),
+        el('div', { class: 'ic-actions' },
+          el('button', { class: 'btn sm c', onclick: async (e) => {
+            e.stopPropagation();
+            const f = await pickFile('image/*');
+            if (!f) return;
+            const a = await importFile(f, 'image');
+            store.edit('أيقونة ' + CONTROL_DEFS[c.id].label, () => { c.icon = a.id; });
+            build(); buildSide();
+            toast('تم وضع الأيقونة على «' + CONTROL_DEFS[c.id].label + '»', 'ok');
+          } }, '📂 صورة'),
+          c.icon ? el('button', { class: 'btn sm r', onclick: (e) => {
+            e.stopPropagation();
+            store.edit('حذف أيقونة', () => { c.icon = null; });
+            build(); buildSide();
+          } }, '✕') : null));
+      card.onclick = () => select(c, false);
+      ig.append(card);
+    }
+    si.append(ig);
+    si.append(el('button', { class: 'btn ghost sm', style: { width: '100%', marginTop: '9px' },
+      onclick: async () => {
+        const fs = await pickFile('image/*', true);
+        if (!fs || !fs.length) return;
+        const targets = P().controls.layout.filter((c) => CONTROL_DEFS[c.id]?.kind !== 'stick');
+        for (let i = 0; i < Math.min(fs.length, targets.length); i++) {
+          const a = await importFile(fs[i], 'image');
+          targets[i].icon = a.id;
+        }
+        store.snap('رفع أيقونات متعدّدة');
+        build(); buildSide();
+        toast('تم رفع ' + Math.min(fs.length, targets.length) + ' أيقونة بالترتيب', 'ok');
+      } }, '🖼️ رفع عدة صور دفعة واحدة'));
+    sbodyIcons = si;
+
     // ---- قائمة الأزرار ----
     const s1 = el('div', { class: 'sec' }, el('h4', {}, '1️⃣ رتّب الأزرار (اسحبها على الشاشة)'));
     const list = el('div', { class: 'list' });
@@ -152,6 +201,7 @@ export function mountStage1(view, side, ctx) {
     }
     s1.append(list);
     body.append(s1);
+    body.append(sbodyIcons);
 
     // ---- خصائص المحدّد ----
     if (sel) {

@@ -96,14 +96,10 @@ export class Character {
       this.tilt.add(this.outline);
     }
 
-    // شريط صدر أنيق بدل البطن البارز — مظهر أنظف وأكثر احترافية
-    const bandGeo = new THREE.CylinderGeometry(R * 1.015, R * 1.015, L * 0.30, ...seg(26, 1), true);
-    const bandMat = new THREE.MeshStandardMaterial({
-      color: o.belly, roughness: 0.42, metalness: 0.06, side: THREE.DoubleSide,
-    });
-    this.belly = new THREE.Mesh(bandGeo, bandMat);
-    this.belly.position.set(0, R + L * 0.30, 0);
-    this.tilt.add(this.belly);
+    // بلا شريط ولا بطن — جسم نظيف تماماً
+    const bandMat = new THREE.MeshStandardMaterial({ color: o.belly, visible: false });
+    this.belly = new THREE.Mesh(new THREE.BufferGeometry(), bandMat);
+    this.belly.visible = false;
     this.bellyMat = bandMat;
     // خطّ إضاءة خفيف على الصدر
     const visorMat = new THREE.MeshStandardMaterial({

@@ -83,6 +83,14 @@ const gs = await page2.evaluate(() => {
     pathPts: g.path.length, dropWindow: [+g.dropFrom.toFixed(2), +g.dropTo.toFixed(2)],
     zone: g.zone ? { r: Math.round(g.zone.r), phases: g.zone.phases, on: g.zone.cfg.enabled } : null,
     heroes: g.P.lobby.heroes.length,
+    weapons: g.wdefs.length,
+    weaponModels: g.wdefs.filter((w) => {
+      const m = g.wmeshCache.get(w.id);
+      // النموذج الحقيقي له عدة أجزاء وأسماء من الملف؛ البرمجي مجرد صناديق
+      return !!w.assetId && !!m;
+    }).length,
+    thumbs: Object.values(g.wthumbs || {}).filter((u) => u && u.length > 500).length,
+    assetsPresent: g.wdefs.filter((w) => w.assetId && !!g.__assetURL(w.assetId)).length,
     dropAllLand: (() => {
       for (let i = 0; i < 30; i++) {
         const f = g.dropFrom + Math.random() * (g.dropTo - g.dropFrom);
@@ -95,6 +103,11 @@ const gs = await page2.evaluate(() => {
 });
 console.log('exported game state:', JSON.stringify(gs));
 if (!gs.dropAllLand) { console.log('❌ نافذة القفز تمرّ فوق الماء في الملف المُصدَّر'); }
+if (gs.assetsPresent < gs.weapons) {
+  console.log(`❌ نماذج الأسلحة ناقصة في الملف المُصدَّر: ${gs.assetsPresent}/${gs.weapons}`);
+} else { console.log(`✅ كل نماذج الأسلحة مضمّنة: ${gs.assetsPresent}/${gs.weapons}`); }
+if (gs.thumbs < gs.weapons) console.log(`❌ صور الشريط ناقصة: ${gs.thumbs}/${gs.weapons}`);
+else console.log(`✅ صور شريط الأسلحة: ${gs.thumbs}/${gs.weapons}`);
 if (!gs.zone?.on) { console.log('❌ الزون غير مفعّل في الملف المُصدَّر'); }
 if (gs.heroes < 5) { console.log('❌ الأبطال ناقصون في الملف المُصدَّر'); }
 

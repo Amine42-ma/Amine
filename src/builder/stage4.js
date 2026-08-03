@@ -18,7 +18,11 @@ export function usedAssetIds(p = P()) {
   for (const it of p.lobby.shop) add(it.icon);
   for (const h of p.lobby.heroes || []) {
     add(h.icon);
+    add(h.decal);                                  // الرسم اليدوي على الشخصية
     for (const a of h.attachments || []) add(a.assetId);
+  }
+  for (const w of p.weapons || []) {               // نماذج الأسلحة — كانت مفقودة
+    add(w.assetId); add(w.icon);
   }
   return s;
 }
@@ -55,6 +59,9 @@ export function mountStage4(view, side, ctx) {
     row('أزرار التحكم الظاهرة', P().controls.layout.filter((c) => c.visible).length),
     row('أزرار القائمة', P().lobby.buttons.filter((b) => b.visible).length),
     row('الأصدقاء', P().lobby.friends.length),
+    row('الأسلحة', (P().weapons || []).length),
+    row('نماذج الأسلحة المضمّنة',
+      (P().weapons || []).filter((w) => w.assetId && getAsset(w.assetId)).length),
     row('الأبطال', (P().lobby.heroes || []).length),
     row('نماذج الأبطال',
       (P().lobby.heroes || []).reduce((n, h) => n + (h.attachments || []).length, 0)),

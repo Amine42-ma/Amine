@@ -461,23 +461,35 @@ input[type=color]{width:44px;height:34px;padding:2px;border:1px solid var(--line
 
 
 /* ============================================================
-   بطاقة السلاح والذخيرة
+   شريط الأسلحة أسفل وسط الشاشة (كما في ببجي)
    ============================================================ */
-#ammobox{position:absolute;right:12px;bottom:12px;display:none;flex-direction:column;
-  align-items:flex-end;gap:5px;pointer-events:auto;direction:ltr;
-  background:linear-gradient(180deg,rgba(10,6,32,.86),rgba(10,6,32,.62));
-  border:1.5px solid rgba(255,255,255,.22);border-radius:14px;padding:8px 12px;min-width:150px}
+#ammobox{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);
+  display:none;align-items:stretch;gap:6px;pointer-events:auto;direction:ltr;z-index:3}
 #ammobox.on{display:flex}
-#ammobox .slots{display:flex;gap:6px}
-#ammobox .slot{width:36px;height:26px;border-radius:8px;display:grid;place-items:center;
-  font-size:12px;font-weight:900;background:rgba(255,255,255,.08);
-  border:1.5px solid rgba(255,255,255,.2);cursor:pointer;color:var(--ink-3)}
-#ammobox .slot.has{color:#fff}
-#ammobox .slot.on{background:linear-gradient(180deg,var(--acc),var(--acc-d));color:#3a2400;border-color:transparent}
-#ammobox .wname{font-size:12.5px;font-weight:800;direction:rtl;white-space:nowrap}
-#ammobox .wammo{font-size:24px;font-weight:900;line-height:1;letter-spacing:.5px}
-#ammobox .wammo .mag{color:var(--acc)}
-#ammobox .wammo .res{font-size:15px;color:var(--ink-3)}
+.wslot{position:relative;width:clamp(96px,15vw,152px);height:clamp(40px,6.4vw,58px);
+  border-radius:11px;cursor:pointer;overflow:hidden;
+  background:linear-gradient(180deg,rgba(12,8,34,.9),rgba(12,8,34,.66));
+  border:1.5px solid rgba(255,255,255,.2);display:flex;align-items:center;
+  padding:0 6px 0 20px;transition:.12s}
+.wslot.on{border-color:var(--acc);background:linear-gradient(180deg,rgba(60,44,8,.92),rgba(24,16,4,.8));
+  box-shadow:0 0 0 1.5px rgba(255,194,26,.5)}
+.wslot:not(.has){opacity:.45}
+.wslot>u{position:absolute;left:4px;top:3px;font-size:10px;font-weight:900;
+  color:var(--ink-3);text-decoration:none}
+.wslot.on>u{color:var(--acc)}
+.wslot .th{flex:1;height:100%;display:flex;align-items:center;justify-content:center}
+.wslot .th img{width:100%;height:100%;object-fit:contain;
+  filter:drop-shadow(0 2px 3px rgba(0,0,0,.6))}
+.wslot .th .emo{font-size:22px}
+.wslot .nm{position:absolute;right:6px;bottom:1px;font-size:9.5px;font-weight:800;
+  direction:rtl;color:var(--ink-2);max-width:70%;overflow:hidden;white-space:nowrap;
+  text-overflow:ellipsis;text-shadow:0 1px 2px #000}
+#ammobox .wammo{display:flex;align-items:baseline;gap:3px;padding:0 12px;
+  border-radius:11px;background:linear-gradient(180deg,rgba(12,8,34,.9),rgba(12,8,34,.66));
+  border:1.5px solid rgba(255,255,255,.2);font-weight:900;line-height:1}
+#ammobox .wammo .mag{font-size:clamp(20px,3.4vw,30px);color:var(--acc)}
+#ammobox .wammo .sep{font-size:14px;color:var(--ink-3)}
+#ammobox .wammo .res{font-size:clamp(12px,1.8vw,16px);color:var(--ink-3)}
 #ammobox.empty .wammo .mag{color:var(--rd);animation:blink .5s infinite}
 @keyframes blink{50%{opacity:.35}}
 
@@ -514,8 +526,8 @@ input[type=color]{width:44px;height:34px;padding:2px;border:1px solid var(--line
 .bag-row .f{flex:1;font-weight:800}
 
 @media (max-height:430px){
-  #ammobox{padding:5px 9px;min-width:126px}
-  #ammobox .wammo{font-size:19px}
+  #ammobox{bottom:6px;gap:4px}
+  .wslot{height:36px;width:clamp(80px,13vw,120px)}
 }
 
 #waypoint{position:absolute;left:50%;top:8%;transform:translateX(-50%);display:none;
@@ -564,3 +576,17 @@ input[type=color]{width:44px;height:34px;padding:2px;border:1px solid var(--line
 #scope .zx{position:absolute;left:50%;bottom:14%;transform:translateX(-50%);
   color:#fff;font-weight:900;font-size:14px;direction:ltr}
 .crosshair.hidden-by-scope{opacity:0 !important}
+
+/* شبكة اختيار أيقونات الأزرار */
+.icon-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ic-card{display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 6px;
+  border-radius:13px;cursor:pointer;background:rgba(255,255,255,.06);
+  border:1.5px solid var(--line);transition:.12s}
+.ic-card.on{border-color:var(--acc);background:rgba(255,194,26,.13)}
+.ic-card.has{border-color:var(--gr)}
+.ic-th{width:46px;height:46px;border-radius:12px;background:rgba(0,0,0,.35);
+  display:grid;place-items:center;font-size:24px;overflow:hidden}
+.ic-th img{width:100%;height:100%;object-fit:contain}
+.ic-card>b{font-size:11px;font-weight:800;text-align:center;line-height:1.25}
+.ic-actions{display:flex;gap:4px;flex-wrap:wrap;justify-content:center}
+.ic-actions .btn{padding:4px 8px;font-size:11px}

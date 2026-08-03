@@ -247,8 +247,21 @@ r = await page.evaluate(() => {
   }
   return out;
 });
-check('كل الأسلحة الخمسة محمّلة بنماذجها', r.length === 5 && r.every((w) => w.has),
+check('كل الأسلحة محمّلة بنماذجها', r.length === 6 && r.every((w) => w.has),
   r.map((w) => w.n).join(' '));
+
+// ---- الصور المصغّرة لشريط الأسلحة ----
+r = await page.evaluate(() => {
+  const g = window.__game;
+  const n = Object.keys(g.wthumbs || {}).length;
+  const ok = Object.values(g.wthumbs || {}).filter((u) => u && u.startsWith('data:image')).length;
+  const bar = document.getElementById('ammobox');
+  const imgs = bar.querySelectorAll('.wslot .th img').length;
+  const cs = getComputedStyle(bar);
+  return { n, ok, imgs, bottom: cs.bottom, left: cs.left };
+});
+check('صور نماذج الأسلحة في الشريط', r.ok >= 6, `${r.ok}/${r.n} صورة، في الشريط=${r.imgs}`);
+check('الشريط أسفل وسط الشاشة', r.imgs >= 1, `bottom=${r.bottom}`);
 
 // ---- جدار الحدود مخفي ----
 r = await page.evaluate(() => ({ wall: !!window.__game.wall, zone: !!window.__game.zoneMesh }));

@@ -10,6 +10,7 @@ export const AMMO_KINDS = {
   smg: { label: 'ذخيرة 9مم',  color: '#ffc21a', emo: '🟨' },
   sg:  { label: 'خرطوش',      color: '#ff4d5e', emo: '🟥' },
   sr:  { label: 'ذخيرة 7.62', color: '#25d3ff', emo: '🟦' },
+  rpg: { label: 'صاروخ',      color: '#ff8a1e', emo: '🚀' },
 };
 
 /** الأسلحة الافتراضية — تستخدم النماذج المرفقة، وتوجَّه تلقائياً في اليد */
@@ -39,6 +40,10 @@ export function defaultWeapons() {
         assetId: 'bundled_w_m4', len: 0.98,
         damage: 25, rpm: 720, mag: 30, reload: 2.1, spread: 0.022, adsSpread: 0.0045,
         range: 260, recoil: 0.85, auto: true, adsFov: 42 }),
+    W({ id: 'w_rpg', name: 'قاذف RPG-7', short: 'RPG', kind: 'rpg', ammo: 'rpg', emo: '🚀',
+        assetId: 'bundled_w_rpg', len: 1.35,
+        damage: 130, splash: 6, rpm: 26, mag: 1, reload: 3.6, spread: 0.02, adsSpread: 0.004,
+        range: 300, recoil: 3.4, auto: false, adsFov: 46, rocket: true }),
     W({ id: 'w_sniper', name: 'بندقية قنص', short: 'SR', kind: 'sniper', ammo: 'sr', emo: '🎯',
         assetId: 'bundled_w_sniper', len: 1.25,
         damage: 92, rpm: 48, mag: 5, reload: 3.2, spread: 0.016, adsSpread: 0.0006,
@@ -226,7 +231,7 @@ export class Inventory {
     this.defs = defs;
     this.slots = [null, null];          // {def, mag}
     this.active = 0;
-    this.reserve = { ar: 0, smg: 0, sg: 0, sr: 0 };
+    this.reserve = { ar: 0, smg: 0, sg: 0, sr: 0, rpg: 0 };
     this.items = { heal: 0, shield: 0, boost: 0 };
     this.capacity = { heal: 6, shield: 6, boost: 4 };
   }
@@ -308,6 +313,46 @@ export class Inventory {
       mag: g.mag, res: this.reserve[g.def.ammo] || 0,
       icon: g.def.icon,
     };
+  }
+}
+
+/**
+ * يولّد صورة مصغّرة لنموذج السلاح الحقيقي (لشريط الأسلحة كما في ببجي).
+ * يستخدم عارضاً صغيراً منفصلاً ويعيد dataURL.
+ */
+export function makeWeaponThumb(mesh, w = 220, h = 90) {
+  try {
+    const rnd2 = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    rnd2.setSize(w, h, false);
+    rnd2.outputColorSpace = THREE.SRGBColorSpace;
+    rnd2.toneMapping = THREE.ACESFilmicToneMapping;
+    const sc = new THREE.Scene();
+    const obj = mesh.clone(true);
+    obj.position.set(0, 0, 0);
+    obj.rotation.set(0, 0, 0);
+    sc.add(obj);
+    sc.add(new THREE.HemisphereLight(0xffffff, 0x445066, 2.4));
+    const d1 = new THREE.DirectionalLight(0xffffff, 2.2); d1.position.set(2, 3, 4); sc.add(d1);
+    const d2 = new THREE.DirectionalLight(0x9fc4ff, 1.1); d2.position.set(-3, 1, -2); sc.add(d2);
+
+    const bb = new THREE.Box3().setFromObject(obj);
+    const c = bb.getCenter(new THREE.Vector3());
+    const sz = bb.getSize(new THREE.Vector3());
+    const span = Math.max(sz.x, sz.y, sz.z) || 1;
+    const cam = new THREE.OrthographicCamera(-span * 0.62, span * 0.62,
+      span * 0.28, -span * 0.28, 0.01, span * 12);
+    // زاوية ثلاثة أرباع لتبدو مجسّمة
+    cam.position.set(c.x + span * 1.1, c.y + span * 0.55, c.z + span * 1.6);
+    cam.lookAt(c);
+    cam.updateProjectionMatrix();
+    rnd2.render(sc, cam);
+    const url = rnd2.domElement.toDataURL('image/png');
+    rnd2.dispose();
+    rnd2.forceContextLoss?.();
+    return url;
+  } catch (e) {
+    console.warn('thumb fail', e);
+    return null;
   }
 }
 

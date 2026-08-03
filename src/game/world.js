@@ -178,7 +178,7 @@ export async function analyzeMap(renderer, mapRoot, { res = 1024, onStep } = {})
 
   // ---------- تمريرات التقشير: إعادة بناء أعمدة المادة/الهواء ----------
   step('كشف المباني والأرضيات', 0.2);
-  const LAYERS = 6;
+  const LAYERS = 8;
   const PLAYER_H = 1.7;
   const layH = [], layF = [];
   let prevRT = null;
@@ -524,7 +524,8 @@ export function makeQuery(an) {
     const f = heightAt(x, z);
     const r = roofAt(x, z);
     if (r - f < 1.2) return r;                 // لا فراغ: سطح واحد
-    return y > r - 1.3 ? r : f;
+    // لا تُعتبر «فوق السطح» إلا إن كنتَ فعلاً عنده — فلا صعود عرَضي للمباني
+    return y > r - 0.5 ? r : f;
   }
 
   return {
@@ -914,20 +915,65 @@ export function buildSky(scene, { dayTime = 0.42, fog = 0.55, radius = 3000 } = 
 
 /** بحر لا نهائي بسيط حول الجزيرة */
 export function buildOcean(y, size = 6000) {
-  const geo = new THREE.PlaneGeometry(size, size, 1, 1);
+  const geo = new THREE.PlaneGeometry(size, size, 64, 64);
   const mat = new THREE.ShaderMaterial({
-    uniforms: { t: { value: 0 }, cA: { value: new THREE.Color(0x0d3f75) }, cB: { value: new THREE.Color(0x1b8fc4) } },
-    vertexShader: `varying vec2 vUv; void main(){ vUv = uv*40.0; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0);} `,
+    uniforms: {
+      t: { value: 0 },
+      cA: { value: new THREE.Color(0x06294f) },     // العميق
+      cB: { value: new THREE.Color(0x1c93c9) },     // الضحل
+      cS: { value: new THREE.Color(0x9fe4ff) },     // انعكاس السماء
+      uCam: { value: new THREE.Vector3() },
+    },
+    vertexShader: `
+      varying vec2 vUv; varying vec3 vW;
+      void main(){
+        vUv = uv*40.0;
+        vec4 wp = modelMatrix*vec4(position,1.0);
+        vW = wp.xyz;
+        gl_Position = projectionMatrix*viewMatrix*wp;
+      }`,
     fragmentShader: `
-      uniform float t; uniform vec3 cA,cB; varying vec2 vUv;
+      uniform float t; uniform vec3 cA,cB,cS; uniform vec3 uCam;
+      varying vec2 vUv; varying vec3 vW;
       float h(vec2 p){ return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453); }
       float n(vec2 p){ vec2 i=floor(p),f=fract(p); f=f*f*(3.0-2.0*f);
         return mix(mix(h(i),h(i+vec2(1,0)),f.x),mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x),f.y); }
+      float fbm(vec2 p){
+        float v=0.0, a=0.5;
+        for(int i=0;i<4;i++){ v+=a*n(p); p*=2.02; a*=0.5; }
+        return v;
+      }
       void main(){
-        float w = n(vUv*2.0+vec2(t*0.05,t*0.03))*0.6 + n(vUv*5.0-vec2(t*0.08,0.0))*0.4;
-        vec3 c = mix(cA,cB,smoothstep(0.35,0.75,w));
-        c += pow(smoothstep(0.72,0.95,w),3.0)*0.5;
-        gl_FragColor = vec4(c,1.0);
+        vec2 q = vUv;
+        float w1 = fbm(q*1.3 + vec2(t*0.045, t*0.028));
+        float w2 = fbm(q*3.4 - vec2(t*0.075, t*0.05));
+        float w  = w1*0.65 + w2*0.35;
+
+        // ميل السطح التقريبي لإضاءة لامعة
+        float e = 0.55;
+        float dx = fbm((q+vec2(e,0.0))*1.3 + vec2(t*0.045,t*0.028)) - w1;
+        float dz = fbm((q+vec2(0.0,e))*1.3 + vec2(t*0.045,t*0.028)) - w1;
+        vec3 nrm = normalize(vec3(-dx*3.0, 1.0, -dz*3.0));
+
+        vec3 V = normalize(uCam - vW);
+        float fres = pow(1.0 - max(dot(nrm, V), 0.0), 3.0);
+
+        // عمق: قريب من الكاميرا أفتح، بعيد أعمق
+        float dist = length(vW.xz - uCam.xz);
+        float deep = smoothstep(60.0, 900.0, dist);
+        vec3 c = mix(cB, cA, deep);
+        c = mix(c, cS, fres*0.55);
+
+        // لمعان الشمس
+        vec3 L = normalize(vec3(0.55, 0.72, 0.42));
+        float spec = pow(max(dot(reflect(-L, nrm), V), 0.0), 90.0);
+        c += vec3(1.0,0.97,0.9) * spec * 0.9;
+
+        // زبد على قمم الموج
+        float foam = smoothstep(0.72, 0.88, w);
+        c = mix(c, vec3(0.92,0.97,1.0), foam*0.35);
+
+        gl_FragColor = vec4(c, 1.0);
       }`,
   });
   const m = new THREE.Mesh(geo, mat);

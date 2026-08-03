@@ -6,7 +6,8 @@ import { assetURL } from '../core/assets.js';
 import { CONTROL_DEFS, STAT_DEFS } from '../core/store.js';
 
 const REF_H = 720;
-const AMMO_LABEL = { ar: '🟩 ذخيرة 5.56', smg: '🟨 ذخيرة 9مم', sg: '🟥 خرطوش', sr: '🟦 ذخيرة 7.62' };
+const AMMO_LABEL = { ar: '🟩 ذخيرة 5.56', smg: '🟨 ذخيرة 9مم', sg: '🟥 خرطوش',
+                     sr: '🟦 ذخيرة 7.62', rpg: '🚀 صاروخ' };
 const ITEM_LABEL = { heal: '❤️ عدّة إسعاف', shield: '🛡️ درع', boost: '⚡ مُعزّز' };
 
 export class HUD {
@@ -96,12 +97,15 @@ export class HUD {
     this.hp = el('div', { id: 'hpbar' }, el('i'), el('span'));
     this.endcard = el('div', { id: 'endcard' });
     this.hitm = el('div', { id: 'hitmark' }, el('i'), el('i'), el('i'), el('i'));
+    // شريط الأسلحة أسفل وسط الشاشة — بصور النماذج الحقيقية كما في ببجي
     this.ammoBox = el('div', { id: 'ammobox' },
-      el('div', { class: 'slots' },
-        el('b', { class: 'slot on', data: { i: '0' } }, '1'),
-        el('b', { class: 'slot', data: { i: '1' } }, '2')),
-      el('div', { class: 'wname' }, 'بلا سلاح'),
-      el('div', { class: 'wammo' }, el('span', { class: 'mag' }, '0'), ' / ',
+      el('div', { class: 'wslot', data: { i: '0' } },
+        el('u', {}, '1'), el('div', { class: 'th' }), el('div', { class: 'nm' }, '—')),
+      el('div', { class: 'wslot', data: { i: '1' } },
+        el('u', {}, '2'), el('div', { class: 'th' }), el('div', { class: 'nm' }, '—')),
+      el('div', { class: 'wammo' },
+        el('span', { class: 'mag' }, '0'),
+        el('span', { class: 'sep' }, '/'),
         el('span', { class: 'res' }, '0')));
     this.bag = el('div', { id: 'bagpanel' });
     this.wp = el('div', { id: 'waypoint' }, el('b', {}, '📍'), el('span', {}, ''));
@@ -110,7 +114,7 @@ export class HUD {
       el('span', { class: 'zx' }, ''));
     this.node.append(this.cross, this.hitm, this.flash, this.oob, this.prompt, this.killfeed,
       this.dropinfo, this.hp, this.ammoBox, this.wp, this.scopeEl, this.bag, this.endcard);
-    for (const b of this.ammoBox.querySelectorAll('.slot')) {
+    for (const b of this.ammoBox.querySelectorAll('.wslot')) {
       b.addEventListener('pointerdown', (e) => {
         e.stopPropagation();
         this.input.pressed['slot' + (+b.dataset.i + 1)] = true;
@@ -294,17 +298,26 @@ export class HUD {
   /** بطاقة السلاح والذخيرة */
   setAmmo(h) {
     if (!h) return;
-    this.ammoBox.querySelector('.wname').textContent = (h.emo || '') + ' ' + h.name;
     this.ammoBox.querySelector('.mag').textContent = h.mag;
     this.ammoBox.querySelector('.res').textContent = h.res;
     this.ammoBox.classList.toggle('empty', h.mag === 0);
   }
+  /** صور مصغّرة لنماذج الأسلحة */
+  setThumbs(map) { this.thumbs = map || {}; }
   setSlots(slots, active) {
-    const b = this.ammoBox.querySelectorAll('.slot');
+    const b = this.ammoBox.querySelectorAll('.wslot');
     slots.forEach((sl, i) => {
-      b[i].classList.toggle('on', i === active);
-      b[i].classList.toggle('has', !!sl);
-      b[i].textContent = sl ? (sl.def.short || String(i + 1)) : String(i + 1);
+      const n = b[i];
+      n.classList.toggle('on', i === active);
+      n.classList.toggle('has', !!sl);
+      const th = n.querySelector('.th');
+      const nm = n.querySelector('.nm');
+      if (!sl) { th.innerHTML = ''; nm.textContent = 'فارغة'; return; }
+      const url = this.thumbs?.[sl.def.id];
+      th.innerHTML = '';
+      th.append(url ? el('img', { src: url, alt: '' })
+        : el('span', { class: 'emo' }, sl.def.emo || '🔫'));
+      nm.textContent = sl.def.name;
     });
   }
 

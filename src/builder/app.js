@@ -31,6 +31,7 @@ const BUNDLED_WEAPONS = [
   { id: 'bundled_w_ak47', url: 'assets/wpn_ak47.glb', name: 'AK-47' },
   { id: 'bundled_w_m4', url: 'assets/wpn_m4.glb', name: 'M4' },
   { id: 'bundled_w_sniper', url: 'assets/wpn_sniper.glb', name: 'بندقية قنص' },
+  { id: 'bundled_w_rpg', url: 'assets/wpn_rpg7.glb', name: 'قاذف RPG-7' },
 ];
 
 export class BuilderApp {

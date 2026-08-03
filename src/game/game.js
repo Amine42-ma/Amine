@@ -12,7 +12,8 @@ import {
   autoFlightPath, mapView,
 } from './world.js';
 import { currentHero, MODES } from '../core/store.js';
-import { Inventory, buildWeaponMesh, autoOrientWeapon, crateLoot, AMMO_KINDS } from './weapons.js';
+import { Inventory, buildWeaponMesh, autoOrientWeapon, crateLoot, AMMO_KINDS,
+         makeWeaponThumb } from './weapons.js';
 import { Character, buildChute, nameTag } from './character.js';
 import { HUD, Minimap } from './hud.js';
 
@@ -149,6 +150,7 @@ export class Game {
 
     this.stats = { kills: 0, alive: P.match.bots + 1, rank: P.match.bots + 1, hp: 100, maxHp: 100,
                    shield: 0 };
+    this.hud.setThumbs(this.wthumbs);
     this.refreshGunModel();
     this.hud.setHP(100, 100, 0);
     this.hud.setStat('kills', 0);
@@ -474,6 +476,14 @@ export class Game {
       this.wmeshCache.set(def.id, mesh || buildWeaponMesh(def));
     }
 
+    // صور مصغّرة من النماذج الحقيقية لشريط الأسلحة
+    this.wthumbs = {};
+    for (const def of this.wdefs) {
+      const m = this.wmeshCache.get(def.id);
+      if (m) this.wthumbs[def.id] = makeWeaponThumb(m);
+    }
+
+    this.__assetURL = assetURL;      // للتشخيص من الاختبارات
     this.inv = new Inventory(this.wdefs);
     // سلاح البداية: مسدس بذخيرة قليلة (مثل الهبوط بلا شيء تقريباً)
     const pistol = this.wdefs.find((w) => w.kind === 'pistol');
@@ -774,7 +784,12 @@ export class Game {
   update(dt) {
     const t = this.clock.elapsedTime;
     if (this.wall) this.wall.material.uniforms.t.value = t;
-    if (this.ocean) this.ocean.material.uniforms.t.value = t;
+    if (this.ocean) {
+      this.ocean.material.uniforms.t.value = t;
+      this.ocean.material.uniforms.uCam.value.copy(this.camera.position);
+      this.ocean.position.x = this.camera.position.x;   // بحر لا نهائي يتبع الكاميرا
+      this.ocean.position.z = this.camera.position.z;
+    }
 
     switch (this.phase) {
       case 'flight': this.updFlight(dt); break;
