@@ -24,6 +24,15 @@ const BUNDLED = [
   { id: 'bundled_crate', url: 'assets/crate_military.glb', name: 'الصندوق العسكري', kind: 'glb', field: 'crateAssetId' },
 ];
 
+// نماذج الأسلحة المرفقة — تُربط بتعريفات الأسلحة بمعرّفها الثابت
+const BUNDLED_WEAPONS = [
+  { id: 'bundled_w_shotgun', url: 'assets/wpn_shotgun.glb', name: 'بندقية خرطوش' },
+  { id: 'bundled_w_pistol', url: 'assets/wpn_pistol.glb', name: 'مسدس' },
+  { id: 'bundled_w_ak47', url: 'assets/wpn_ak47.glb', name: 'AK-47' },
+  { id: 'bundled_w_m4', url: 'assets/wpn_m4.glb', name: 'M4' },
+  { id: 'bundled_w_sniper', url: 'assets/wpn_sniper.glb', name: 'بندقية قنص' },
+];
+
 export class BuilderApp {
   constructor(root) {
     this.root = root;
@@ -49,6 +58,11 @@ export class BuilderApp {
       }
     }
 
+    for (const w of BUNDLED_WEAPONS) {
+      if (getAsset(w.id)) continue;
+      try { await fetchBundled(w.url, w.name, 'glb', w.id); }
+      catch (e) { console.warn('weapon asset missing:', w.url); }
+    }
     A.applySettings(P().match);
     loader?.('بناء الواجهة…', 0.8);
     this.render();

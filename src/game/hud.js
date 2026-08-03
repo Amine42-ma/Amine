@@ -105,8 +105,11 @@ export class HUD {
         el('span', { class: 'res' }, '0')));
     this.bag = el('div', { id: 'bagpanel' });
     this.wp = el('div', { id: 'waypoint' }, el('b', {}, '📍'), el('span', {}, ''));
+    this.scopeEl = el('div', { id: 'scope' },
+      el('i', { class: 'ring' }), el('i', { class: 'v' }), el('i', { class: 'h' }),
+      el('span', { class: 'zx' }, ''));
     this.node.append(this.cross, this.hitm, this.flash, this.oob, this.prompt, this.killfeed,
-      this.dropinfo, this.hp, this.ammoBox, this.wp, this.bag, this.endcard);
+      this.dropinfo, this.hp, this.ammoBox, this.wp, this.scopeEl, this.bag, this.endcard);
     for (const b of this.ammoBox.querySelectorAll('.slot')) {
       b.addEventListener('pointerdown', (e) => {
         e.stopPropagation();
@@ -311,6 +314,16 @@ export class HUD {
     this.wp.classList.add('on');
     this.wp.querySelector('span').textContent = Math.round(dist) + 'م';
     this.wp.querySelector('b').style.transform = `rotate(${ang}rad)`;
+  }
+
+  /** منظار القنص: 0 = مغلق، غير ذلك = قوّة التقريب */
+  setScope(zoom) {
+    const on = zoom > 0;
+    if (on === this._scopeOn) return;
+    this._scopeOn = on;
+    this.scopeEl.classList.toggle('on', on);
+    this.cross.classList.toggle('hidden-by-scope', on);
+    if (on) this.scopeEl.querySelector('.zx').textContent = zoom + '×';
   }
 
   hitMark() {

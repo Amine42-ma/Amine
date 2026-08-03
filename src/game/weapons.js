@@ -12,30 +12,38 @@ export const AMMO_KINDS = {
   sr:  { label: 'ذخيرة 7.62', color: '#25d3ff', emo: '🟦' },
 };
 
-/** أسلحة افتراضية — نماذجها مبنية برمجياً حتى ترفع ملفاتك */
+/** الأسلحة الافتراضية — تستخدم النماذج المرفقة، وتوجَّه تلقائياً في اليد */
 export function defaultWeapons() {
   const W = (o) => ({
     id: uid('w'), assetId: null, icon: null, scale: 1,
     hold: { px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
-    fps:  { px: 0.26, py: -0.24, pz: -0.52, rx: 0, ry: 0, rz: 0 },
+    fps:  { px: 0.24, py: -0.20, pz: -0.42, rx: 0, ry: 0, rz: 0 },
+    len: 1.0, adsFov: 42, zoom: 1,
     ...o,
   });
   return [
-    W({ name: 'رشاش هجومي', short: 'AR', kind: 'ar', ammo: 'ar', emo: '🔫',
-        damage: 26, rpm: 640, mag: 30, reload: 2.1, spread: 0.024, adsSpread: 0.005,
-        range: 240, recoil: 0.9, auto: true }),
-    W({ name: 'رشاش خفيف', short: 'SMG', kind: 'smg', ammo: 'smg', emo: '🔫',
-        damage: 19, rpm: 900, mag: 35, reload: 1.8, spread: 0.036, adsSpread: 0.011,
-        range: 130, recoil: 0.6, auto: true }),
-    W({ name: 'بندقية قنص', short: 'SR', kind: 'sniper', ammo: 'sr', emo: '🎯',
-        damage: 88, rpm: 55, mag: 5, reload: 3.0, spread: 0.014, adsSpread: 0.0008,
-        range: 480, recoil: 2.6, auto: false, scoped: true }),
-    W({ name: 'بندقية خرطوش', short: 'SG', kind: 'shotgun', ammo: 'sg', emo: '💥',
-        damage: 14, pellets: 8, rpm: 90, mag: 6, reload: 2.6, spread: 0.075, adsSpread: 0.05,
-        range: 55, recoil: 2.0, auto: false }),
-    W({ name: 'مسدس', short: 'PT', kind: 'pistol', ammo: 'smg', emo: '🔫',
-        damage: 22, rpm: 320, mag: 12, reload: 1.5, spread: 0.03, adsSpread: 0.01,
-        range: 90, recoil: 0.7, auto: false }),
+    W({ id: 'w_shotgun', name: 'بندقية خرطوش', short: 'SG', kind: 'shotgun', ammo: 'sg', emo: '💥',
+        assetId: 'bundled_w_shotgun', len: 1.05,
+        damage: 13, pellets: 9, rpm: 78, mag: 6, reload: 2.7, spread: 0.085, adsSpread: 0.055,
+        range: 48, recoil: 2.4, auto: false, adsFov: 52 }),
+    W({ id: 'w_pistol', name: 'مسدس', short: 'PT', kind: 'pistol', ammo: 'smg', emo: '🔫',
+        assetId: 'bundled_w_pistol', len: 0.34,
+        damage: 24, rpm: 340, mag: 12, reload: 1.5, spread: 0.028, adsSpread: 0.009,
+        range: 95, recoil: 0.8, auto: false, adsFov: 50,
+        fps: { px: 0.19, py: -0.19, pz: -0.34, rx: 0, ry: 0, rz: 0 } }),
+    W({ id: 'w_ak47', name: 'AK-47', short: 'AK', kind: 'ar', ammo: 'ar', emo: '🔫',
+        assetId: 'bundled_w_ak47', len: 1.0,
+        damage: 30, rpm: 600, mag: 30, reload: 2.3, spread: 0.030, adsSpread: 0.007,
+        range: 250, recoil: 1.5, auto: true, adsFov: 44 }),
+    W({ id: 'w_m4', name: 'M4', short: 'M4', kind: 'ar', ammo: 'ar', emo: '🔫',
+        assetId: 'bundled_w_m4', len: 0.98,
+        damage: 25, rpm: 720, mag: 30, reload: 2.1, spread: 0.022, adsSpread: 0.0045,
+        range: 260, recoil: 0.85, auto: true, adsFov: 42 }),
+    W({ id: 'w_sniper', name: 'بندقية قنص', short: 'SR', kind: 'sniper', ammo: 'sr', emo: '🎯',
+        assetId: 'bundled_w_sniper', len: 1.25,
+        damage: 92, rpm: 48, mag: 5, reload: 3.2, spread: 0.016, adsSpread: 0.0006,
+        range: 520, recoil: 3.0, auto: false, scoped: true, adsFov: 14, zoom: 4,
+        fps: { px: 0.20, py: -0.20, pz: -0.55, rx: 0, ry: 0, rz: 0 } }),
   ];
 }
 
@@ -99,6 +107,108 @@ export function buildWeaponMesh(def) {
   }
   g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   return g;
+}
+
+/**
+ * يوجّه أي نموذج سلاح تلقائياً: الفوهة نحو -Z، القبضة للأسفل،
+ * الحجم موحّد، ونقطة المسك عند مبدأ الإحداثيات — فيلتصق باليد كما ينبغي
+ * مهما كان اتجاه النموذج الأصلي.
+ */
+export function autoOrientWeapon(obj, targetLen = 1.0) {
+  obj.updateMatrixWorld(true);
+  const pts = [];
+  const v = new THREE.Vector3();
+  obj.traverse((o) => {
+    if (!o.isMesh || !o.geometry?.attributes?.position) return;
+    const pa = o.geometry.attributes.position;
+    const step = Math.max(1, Math.floor(pa.count / 2500));
+    for (let i = 0; i < pa.count; i += step) {
+      v.fromBufferAttribute(pa, i).applyMatrix4(o.matrixWorld);
+      pts.push(v.x, v.y, v.z);
+    }
+  });
+  const holder = new THREE.Group();
+  if (pts.length < 9) { holder.add(obj); return holder; }
+
+  const n = pts.length / 3;
+  const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < n; i++) for (let a = 0; a < 3; a++) {
+    const q = pts[i * 3 + a];
+    if (q < mn[a]) mn[a] = q;
+    if (q > mx[a]) mx[a] = q;
+  }
+  const size = [mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]];
+
+  // 1) المحور الطولي = الأكبر، ومحور الأعلى = الثاني
+  const order = [0, 1, 2].sort((a, b) => size[b] - size[a]);
+  const L = order[0], U = order[1];
+
+  // 2) الفوهة = الطرف الأنحف على المحور الطولي
+  const NB = 16, thick = new Float32Array(NB), cnt = new Float32Array(NB);
+  const rest = [0, 1, 2].filter((a) => a !== L);
+  const bmin = [Infinity, Infinity], bmax = [-Infinity, -Infinity];
+  const perBin = Array.from({ length: NB }, () => [Infinity, -Infinity, Infinity, -Infinity]);
+  for (let i = 0; i < n; i++) {
+    const t = (pts[i * 3 + L] - mn[L]) / (size[L] || 1);
+    const b = Math.min(NB - 1, Math.max(0, Math.floor(t * NB)));
+    const p0 = pts[i * 3 + rest[0]], p1 = pts[i * 3 + rest[1]];
+    const e = perBin[b];
+    if (p0 < e[0]) e[0] = p0; if (p0 > e[1]) e[1] = p0;
+    if (p1 < e[2]) e[2] = p1; if (p1 > e[3]) e[3] = p1;
+    cnt[b]++;
+  }
+  for (let b = 0; b < NB; b++) {
+    const e = perBin[b];
+    thick[b] = cnt[b] > 2 ? ((e[1] - e[0]) + (e[3] - e[2])) / 2 : NaN;
+  }
+  const avg = (from, to) => {
+    let s2 = 0, c = 0;
+    for (let b = from; b < to; b++) if (!Number.isNaN(thick[b])) { s2 += thick[b]; c++; }
+    return c ? s2 / c : 0;
+  };
+  const muzzleAtMin = avg(0, 4) < avg(NB - 4, NB);
+
+  // 3) القبضة = الجهة الأبعد عن الوسيط على محور الأعلى (نتوء غير متماثل)
+  const ups = new Float32Array(n);
+  for (let i = 0; i < n; i++) ups[i] = pts[i * 3 + U];
+  const sorted = Float32Array.from(ups).sort();
+  const med = sorted[(n / 2) | 0];
+  const gripAtMin = (med - mn[U]) > (mx[U] - med);
+
+  // 4) ابنِ أساساً: a = اتجاه الفوهة، b = الأعلى
+  const ax = [0, 0, 0]; ax[L] = muzzleAtMin ? -1 : 1;
+  const bx = [0, 0, 0]; bx[U] = gripAtMin ? 1 : -1;
+  const A = new THREE.Vector3(...ax);
+  const B = new THREE.Vector3(...bx);
+  const Z = A.clone().multiplyScalar(-1);          // +Z المحلي ← عكس الفوهة
+  const X = new THREE.Vector3().crossVectors(B, Z).normalize();
+  const Y = new THREE.Vector3().crossVectors(Z, X).normalize();
+  const S = new THREE.Matrix4().makeBasis(X, Y, Z);
+  const R = S.clone().invert();
+
+  const inner = new THREE.Group();
+  inner.quaternion.setFromRotationMatrix(R);
+  inner.add(obj);
+  holder.add(inner);
+
+  // 5) وحّد الطول ثم اجعل نقطة المسك عند المركز
+  holder.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(holder);
+  const bs = bb.getSize(new THREE.Vector3());
+  const k = targetLen / Math.max(bs.z, 0.0001);
+  inner.scale.setScalar(k);
+  holder.updateMatrixWorld(true);
+
+  const bb2 = new THREE.Box3().setFromObject(holder);
+  // المسك: ثلث خلفي، أسفل قليلاً من مركز الجسم
+  const grip = new THREE.Vector3(
+    (bb2.min.x + bb2.max.x) / 2,
+    bb2.min.y + (bb2.max.y - bb2.min.y) * 0.62,
+    bb2.min.z + (bb2.max.z - bb2.min.z) * 0.74
+  );
+  inner.position.sub(grip);
+  holder.userData.length = bb2.max.z - bb2.min.z;
+  return holder;
 }
 
 /** نقطة خروج الطلقة بالنسبة للسلاح */

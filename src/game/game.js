@@ -12,7 +12,7 @@ import {
   autoFlightPath, mapView,
 } from './world.js';
 import { currentHero, MODES } from '../core/store.js';
-import { Inventory, buildWeaponMesh, muzzleOf, crateLoot, AMMO_KINDS } from './weapons.js';
+import { Inventory, buildWeaponMesh, autoOrientWeapon, crateLoot, AMMO_KINDS } from './weapons.js';
 import { Character, buildChute, nameTag } from './character.js';
 import { HUD, Minimap } from './hud.js';
 
@@ -103,7 +103,7 @@ export class Game {
     this.boundary = (P.map.boundary.mode === 'manual' && P.map.boundary.poly?.length > 2)
       ? P.map.boundary.poly
       : autoBoundary(this.an, { inset: 6 });
-    this.buildWall();
+    // الحدود تمنع الخروج لكنها غير مرئية — الزون وحده هو ما يظهر
 
     // ---- الصناديق ----
     this.crates = (P.map.crates?.length ? P.map.crates : autoCrates(this.an, { count: 46 }))
@@ -460,15 +460,14 @@ export class Game {
         if (url) {
           try {
             const g = await loadGLB(url);
-            const bb = new THREE.Box3().setFromObject(g.scene);
-            const sz = bb.getSize(new THREE.Vector3());
-            const k = 0.95 / Math.max(sz.x, sz.y, sz.z || 1);
-            const holder = new THREE.Group();
-            g.scene.scale.setScalar(k);
-            g.scene.position.sub(bb.getCenter(new THREE.Vector3()).multiplyScalar(k));
-            g.scene.traverse((o) => { if (o.isMesh) { o.castShadow = true; } });
-            holder.add(g.scene);
-            mesh = holder;
+            g.scene.traverse((o) => {
+              if (o.isMesh) {
+                o.castShadow = true;
+                const ms = Array.isArray(o.material) ? o.material : [o.material];
+                for (const m of ms) if (m) { m.side = THREE.FrontSide; }
+              }
+            });
+            mesh = autoOrientWeapon(g.scene, def.len || 1);
           } catch (e) { console.warn('weapon glb', def.name, e); }
         }
       }
@@ -548,7 +547,37 @@ export class Game {
     o.rotation.x = smooth(o.rotation.x, d.fps.rx - this._kick * 0.22, 18, dt);
   }
 
+  // ---------- أرقام الضرر العائمة ----------
+  updDamageNumbers(dt) {
+    const list = this.damageNumbers;
+    if (!list.length && !this._dnHost) return;
+    if (!this._dnHost) {
+      this._dnHost = el('div', { id: 'dmgnums' });
+      this.hud.node.append(this._dnHost);
+    }
+    const v = new THREE.Vector3();
+    for (let i = list.length - 1; i >= 0; i--) {
+      const d = list[i];
+      d.t += dt;
+      if (d.t > 1.05) { d.el?.remove(); list.splice(i, 1); continue; }
+      if (!d.el) {
+        d.el = el('div', { class: 'dmgnum' + (d.kill ? ' kill' : '') }, String(d.v));
+        this._dnHost.append(d.el);
+      }
+      v.copy(d.pos);
+      v.y += d.t * 1.5;
+      v.project(this.camera);
+      if (v.z > 1) { d.el.style.display = 'none'; continue; }
+      d.el.style.display = '';
+      d.el.style.left = (v.x * 0.5 + 0.5) * 100 + '%';
+      d.el.style.top = (-v.y * 0.5 + 0.5) * 100 + '%';
+      d.el.style.opacity = String(Math.max(0, 1 - d.t / 1.05));
+      d.el.style.transform = `translate(-50%,-50%) scale(${1 + (d.kill ? 0.35 : 0.15) * Math.min(d.t * 4, 1)})`;
+    }
+  }
+
   buildEffects() {
+    this.damageNumbers = [];
     // آثار الطلقات
     const g = new THREE.BufferGeometry();
     const N = 40;
@@ -591,18 +620,16 @@ export class Game {
       };
       path.unshift(ext(path[0], path[1], this.an.span * 0.3));
       path.push(ext(path[path.length - 1], path[path.length - 2], this.an.span * 0.3));
-      const w = this.landWindow(path);
+      const w = this.landWindow(path, fl.landMargin ?? 12);
       dropFrom = w.from; dropTo = w.to;
     } else {
       // المحرّك يولّد مساراً جديداً كل مباراة — 3 نقاط، لا يعبر إلا فوق اليابسة
       const g = autoFlightPath(this.an, { margin: fl.landMargin ?? 12 });
       path = g.points.slice();
-      dropFrom = g.dropFrom; dropTo = g.dropTo;
-      if (Math.random() < 0.5) {                 // يبدأ من أي طرف
-        path.reverse();
-        const a = 1 - dropTo, b = 1 - dropFrom;
-        dropFrom = a; dropTo = b;
-      }
+      if (Math.random() < 0.5) path.reverse();    // يبدأ من أي طرف
+      // احسب النافذة على المسار الفعلي (بنقطته الوسطى المزاحة) لا على الخط النظري
+      const w = this.landWindow(path, fl.landMargin ?? 12);
+      dropFrom = w.from; dropTo = w.to;
     }
     this.dropFrom = clamp(dropFrom, 0.02, 0.94);
     this.dropTo = clamp(Math.max(dropTo, dropFrom + 0.05), 0.06, 0.96);
@@ -648,8 +675,8 @@ export class Game {
   }
 
   /** أطول قطعة من المسار تمرّ فوق يابسة صالحة → نافذة قفز آمنة */
-  landWindow(path) {
-    const N = 200;
+  landWindow(path, margin = 10) {
+    const N = 240;
     const seg = [];
     let tot = 0;
     for (let i = 1; i < path.length; i++)
@@ -669,16 +696,16 @@ export class Game {
     let run = 0, start = -1, bestRun = 0, bs = 0, be = N;
     for (let i = 0; i <= N; i++) {
       const p = at(i / N);
-      const ok = this.Q.isLand(p.x, p.z) && this.Q.edgeAt(p.x, p.z) >= 10;
+      const ok = this.Q.isLand(p.x, p.z) && this.Q.edgeAt(p.x, p.z) >= margin;
       if (ok) {
         if (run === 0) start = i;
         run++;
         if (run > bestRun) { bestRun = run; bs = start; be = i; }
       } else run = 0;
     }
-    if (bestRun < 6) return { from: 0.3, to: 0.7 };
+    if (bestRun < 6) return { from: 0.45, to: 0.55 };
     const w = (be - bs) / N;
-    return { from: bs / N + w * 0.1, to: be / N - w * 0.1 };
+    return { from: bs / N + w * 0.12, to: be / N - w * 0.12 };
   }
 
   pathAt(t) {
@@ -729,7 +756,9 @@ export class Game {
     for (const b of this.bots) { b.ch.group.visible = true; b.landed = true; }
   }
 
-  groundY(x, z) { return this.Q.heightAt(x, z); }
+  /** سطح الوقوف عند ارتفاع معيّن (يدعم داخل المباني وفوق السطوح) */
+  groundY(x, z, y) { return this.Q.groundFor(x, z, y === undefined ? (this.pos?.y ?? 1e5) : y); }
+  floorY(x, z) { return this.Q.heightAt(x, z); }
 
   // =========================================================
   //  الحلقة الرئيسية
@@ -755,6 +784,7 @@ export class Game {
     }
 
     this.updZone(dt);
+    this.updDamageNumbers(dt);
     this.updFpsGun(dt);
     this.updGunVisibility();
     this.updBots(dt);
@@ -849,7 +879,7 @@ export class Game {
 
     this.pos.addScaledVector(this.vel, dt);
     const overSea = !this.Q.isLand(this.pos.x, this.pos.z);
-    const gy = overSea ? this.an.waterY - 60 : this.groundY(this.pos.x, this.pos.z);
+    const gy = overSea ? this.an.waterY - 60 : this.Q.roofAt(this.pos.x, this.pos.z);
     const alt = this.pos.y - gy;
 
     A.windSound.set(clamp(Math.abs(this.vel.y) / 55, 0, 1));
@@ -861,7 +891,7 @@ export class Game {
       // ضمان نهائي: انقل إلى أقرب يابسة آمنة قبل ملامسة الأرض
       const L = this.Q.nearestLand(this.pos.x, this.pos.z, 6);
       this.pos.x = L.x; this.pos.z = L.z;
-      this.pos.y = this.groundY(L.x, L.z);
+      this.pos.y = this.Q.roofAt(L.x, L.z);
       this.vel.set(0, 0, 0);
       this.hud.showOOB(null);
       this.land();
@@ -913,20 +943,24 @@ export class Game {
     }
     this.vel.y -= 26 * dt;
 
-    // حركة مع فحص المنحدرات
-    const step = 0.75;
+    // حركة: خطوة قصيرة واقعية — لا تسلّق للجدران ولا صعود فوق المنازل.
+    // إن كان هناك باب أو فتحة فالأرضية خلفه بنفس المستوى فيدخل بسلاسة.
+    const step = 0.55;
     const nx = this.pos.x + this.vel.x * dt;
     const nz = this.pos.z + this.vel.z * dt;
-    const curG = this.groundY(this.pos.x, this.pos.z);
-    let gx = this.groundY(nx, this.pos.z), gz = this.groundY(this.pos.x, nz);
-    if (gx - curG <= step) this.pos.x = nx; else this.vel.x *= -0.15;
-    if (gz - curG <= step) this.pos.z = nz; else this.vel.z *= -0.15;
+    const y = this.pos.y;
+    const curG = this.groundY(this.pos.x, this.pos.z, y);
+    const gx = this.groundY(nx, this.pos.z, y), gz = this.groundY(this.pos.x, nz, y);
+    const okX = gx - curG <= step && !this.Q.isBlocked(nx, this.pos.z);
+    const okZ = gz - curG <= step && !this.Q.isBlocked(this.pos.x, nz);
+    if (okX) this.pos.x = nx; else this.vel.x *= -0.08;
+    if (okZ) this.pos.z = nz; else this.vel.z *= -0.08;
 
     // حدّ صلب: لا يمكن تجاوز مضلّع الحدود ولا النزول في الماء
     this.clampToIsland();
 
     this.pos.y += this.vel.y * dt;
-    const gy = this.groundY(this.pos.x, this.pos.z);
+    const gy = this.groundY(this.pos.x, this.pos.z, this.pos.y);
     if (this.pos.y <= gy) {
       if (!this.grounded && this.vel.y < -12) A.sfx.land();
       this.pos.y = gy; this.vel.y = 0; this.grounded = true;
@@ -938,14 +972,14 @@ export class Game {
     if (this.grounded && this._stepT > 2.1) { this._stepT = 0; A.sfx.step(); }
 
     this.player.group.position.copy(this.pos);
-    // في المنظور الأول أو أثناء التصويب: الجسم يتبع الكاميرا دائماً.
-    // خارج ذلك: يتبع اتجاه الحركة — فلا يلتفت يميناً ويساراً بلا سبب.
-    const facingCam = this.view === 'fps' || inp.aiming || inp.shoot;
-    const yawTarget = facingCam ? this.yaw + Math.PI
-      : (sp > 0.6 ? Math.atan2(this.vel.x, this.vel.z) : undefined);
+    // الجذع ينظر دائماً حيث تنظر الكاميرا (مثل ببجي/فري فاير)،
+    // والأرجل تتبع اتجاه الحركة — فتتحرك للأمام وأنت تنظر للخلف بسلاسة.
+    const yawTarget = this.yaw + Math.PI;
+    const moveYaw = sp > 0.6 ? Math.atan2(this.vel.x, this.vel.z) : undefined;
     this.player.update(dt, {
       speed: sp, grounded: this.grounded, crouch, aim: inp.aiming || inp.shoot, vy: this.vel.y,
-      yaw: yawTarget, turnSnap: facingCam, groundY: gy, look: this._lookV ||= new THREE.Vector2(0, 0),
+      yaw: yawTarget, moveYaw, turnSnap: this.view === 'fps' || inp.aiming,
+      groundY: gy, look: this._lookV ||= new THREE.Vector2(0, 0),
     });
     // إخفاء جسم اللاعب في المنظور الأول (يبقى الظل)
     this.player.tilt.visible = this.view !== 'fps';
@@ -960,10 +994,13 @@ export class Game {
     if (this.view === 'fps') this.updCameraFPS(dt);
     else this.updCamera(dt, this.camDist * (inp.aiming ? 0.72 : 1) * (run ? 1.12 : 1), inp.aiming ? 1.7 : 2.1);
 
-    // FOV ديناميكي
-    const scoped = inp.scope;
-    const wantFov = (this.view === 'fps' ? 74 : 62) + (run ? 7 : 0)
-      - (inp.aiming ? 9 : 0) - (scoped ? 28 : 0);
+    // تقريب احترافي مختلف لكل سلاح
+    const gunDef = this.inv?.gun?.def;
+    const scoped = inp.scope || inp.aiming;
+    const baseFov = this.view === 'fps' ? 74 : 62;
+    const adsFov = gunDef ? (gunDef.adsFov || 42) : 46;
+    const wantFov = scoped ? adsFov : baseFov + (run ? 7 : 0);
+    this.hud.setScope(scoped && gunDef?.scoped ? (gunDef.zoom || 4) : 0);
     if (Math.abs(this.camera.fov - wantFov) > 0.05) {
       this.camera.fov = smooth(this.camera.fov, wantFov, 7, dt);
       this.camera.updateProjectionMatrix();
@@ -1185,9 +1222,15 @@ export class Game {
     this.addTracer(from.clone().addScaledVector(dir, 1.4), end);
     if (hit) {
       A.sfx.hit();
-      hit.hp -= d.damage;
+      const dmg = d.damage;
+      hit.hp -= dmg;
       hit.aggro = this.pos.clone();
       this.hud.hitMark();
+      // رقم الضرر يظهر لك وحدك فوق العدو
+      const wp = hit.pos.clone();
+      wp.y += hit.ch.totalH * (0.6 + Math.random() * 0.25);
+      this.damageNumbers.push({ pos: wp, v: Math.round(dmg), t: 0,
+                                kill: hit.hp <= 0, el: null });
       if (hit.hp <= 0) this.killBot(hit, true);
     }
   }
@@ -1493,11 +1536,12 @@ export class Game {
       const wx = (dx / dl) * spd, wz = (dz / dl) * spd;
       b.vel.x = smooth(b.vel.x, wx, 8, dt);
       b.vel.z = smooth(b.vel.z, wz, 8, dt);
-      const cg = this.groundY(b.pos.x, b.pos.z);
+      const by = b.pos.y;
+      const cg = this.groundY(b.pos.x, b.pos.z, by);
       const nx = b.pos.x + b.vel.x * dt, nz = b.pos.z + b.vel.z * dt;
-      if (this.groundY(nx, b.pos.z) - cg <= 0.8) b.pos.x = nx; else b.vel.x *= -0.4;
-      if (this.groundY(b.pos.x, nz) - cg <= 0.8) b.pos.z = nz; else b.vel.z *= -0.4;
-      b.pos.y = this.groundY(b.pos.x, b.pos.z);
+      if (this.groundY(nx, b.pos.z, by) - cg <= 0.55) b.pos.x = nx; else b.vel.x *= -0.4;
+      if (this.groundY(b.pos.x, nz, by) - cg <= 0.55) b.pos.z = nz; else b.vel.z *= -0.4;
+      b.pos.y = this.groundY(b.pos.x, b.pos.z, by);
 
       const s = Math.hypot(b.vel.x, b.vel.z);
       b.ch.group.position.copy(b.pos);
@@ -1567,11 +1611,12 @@ export class Game {
     const spd = dp > 16 ? 8 : 4;
     b.vel.x = smooth(b.vel.x, (dx / dl) * spd, 8, dt);
     b.vel.z = smooth(b.vel.z, (dz / dl) * spd, 8, dt);
-    const cg = this.groundY(b.pos.x, b.pos.z);
+    const by = b.pos.y;
+    const cg = this.groundY(b.pos.x, b.pos.z, by);
     const nx = b.pos.x + b.vel.x * dt, nz = b.pos.z + b.vel.z * dt;
-    if (this.groundY(nx, b.pos.z) - cg <= 0.8) b.pos.x = nx;
-    if (this.groundY(b.pos.x, nz) - cg <= 0.8) b.pos.z = nz;
-    b.pos.y = this.groundY(b.pos.x, b.pos.z);
+    if (this.groundY(nx, b.pos.z, by) - cg <= 0.55) b.pos.x = nx;
+    if (this.groundY(b.pos.x, nz, by) - cg <= 0.55) b.pos.z = nz;
+    b.pos.y = this.groundY(b.pos.x, b.pos.z, by);
     const sp = Math.hypot(b.vel.x, b.vel.z);
     b.ch.group.position.copy(b.pos);
     b.ch.update(dt, { speed: sp, grounded: true, groundY: b.pos.y,

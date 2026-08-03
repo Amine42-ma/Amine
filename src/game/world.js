@@ -52,6 +52,44 @@ const isWaterMat = (m) => !!m && /water|ocean|sea\b|river|lake/i.test(m.name || 
 // ------------------------------------------------------------
 //  تحليل الخريطة بالـ GPU: 3 تمريرات من الأعلى
 // ------------------------------------------------------------
+/**
+ * شادر تقشير الطبقات: يرسم أعلى سطح لم تلتقطه الطبقة السابقة،
+ * ويسجّل معه اتجاه الوجه (أعلى = دخول مادة، أسفل = خروج منها).
+ * بهذا نعيد بناء أعمدة «مادة/هواء» فنعرف أرضية كل غرفة وأين الجدران.
+ */
+const peelMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uMin: { value: 0 }, uMax: { value: 1 },
+    uPrev: { value: null }, uHasPrev: { value: 0 }, uRes: { value: 1024 },
+  },
+  vertexShader: `
+    varying vec3 vW;
+    void main(){
+      vec4 wp = modelMatrix * vec4(position,1.0);
+      vW = wp.xyz;
+      gl_Position = projectionMatrix * viewMatrix * wp;
+    }`,
+  fragmentShader: `
+    uniform float uMin,uMax,uHasPrev,uRes;
+    uniform sampler2D uPrev;
+    varying vec3 vW;
+    void main(){
+      if (uHasPrev > 0.5) {
+        vec4 p = texture2D(uPrev, gl_FragCoord.xy / uRes);
+        if (p.a > 0.5) {
+          float ph = uMin + ((p.r*255.0*256.0 + p.g*255.0)/65535.0)*(uMax-uMin);
+          if (vW.y > ph - 0.03) discard;      // هذه الطبقة أُخذت سابقاً
+        }
+      }
+      float t = clamp((vW.y-uMin)/max(uMax-uMin,0.0001),0.0,1.0);
+      float e = t*65535.0;
+      float hi = floor(e/256.0);
+      float lo = floor(e - hi*256.0);
+      gl_FragColor = vec4(hi/255.0, lo/255.0, gl_FrontFacing ? 1.0 : 0.0, 1.0);
+    }`,
+  side: THREE.DoubleSide,
+});
+
 const heightMat = new THREE.ShaderMaterial({
   uniforms: { uMin: { value: 0 }, uMax: { value: 1 } },
   vertexShader: `
@@ -138,6 +176,51 @@ export async function analyzeMap(renderer, mapRoot, { res = 1024, onStep } = {})
     M[i] = 1;
   }
 
+  // ---------- تمريرات التقشير: إعادة بناء أعمدة المادة/الهواء ----------
+  step('كشف المباني والأرضيات', 0.2);
+  const LAYERS = 6;
+  const PLAYER_H = 1.7;
+  const layH = [], layF = [];
+  let prevRT = null;
+  const peelRTs = [];
+  peelMat.uniforms.uMin.value = min.y;
+  peelMat.uniforms.uMax.value = max.y;
+  peelMat.uniforms.uRes.value = res;
+  scene.overrideMaterial = peelMat;
+  for (let L = 0; L < LAYERS; L++) {
+    const trt = new THREE.WebGLRenderTarget(res, res, {
+      minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+      format: THREE.RGBAFormat, type: THREE.UnsignedByteType,
+      colorSpace: THREE.NoColorSpace, depthBuffer: true,
+    });
+    peelMat.uniforms.uPrev.value = prevRT ? prevRT.texture : null;
+    peelMat.uniforms.uHasPrev.value = L === 0 ? 0 : 1;
+    renderer.setRenderTarget(trt);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear(true, true, true);
+    renderer.render(scene, cam);
+    const buf = new Uint8Array(res * res * 4);
+    renderer.readRenderTargetPixels(trt, 0, 0, res, res, buf);
+    const hArr = new Float32Array(res * res);
+    const fArr = new Uint8Array(res * res);
+    let any = 0;
+    for (let i = 0; i < res * res; i++) {
+      if (buf[i * 4 + 3] < 8) { fArr[i] = 2; continue; }        // 2 = لا يوجد سطح
+      hArr[i] = min.y + ((buf[i * 4] * 256 + buf[i * 4 + 1]) / 65535) * (max.y - min.y);
+      fArr[i] = buf[i * 4 + 2] > 127 ? 1 : 0;                    // 1 = وجه علوي
+      any++;
+    }
+    layH.push(hArr); layF.push(fArr);
+    peelRTs.push(trt);
+    prevRT = trt;
+    if (!any) break;
+    step('كشف المباني والأرضيات', 0.2 + (L / LAYERS) * 0.12);
+  }
+  scene.overrideMaterial = null;
+  // أعد الهدف إلى مخزن التحليل قبل التمريرات التالية، وإلا رسمت في المكان الخطأ
+  renderer.setRenderTarget(rt);
+  for (const t of peelRTs) t.dispose();
+
   // ---------- تمريرة 2: قناع الماء ----------
   step('كشف البحر', 0.35);
   const swap = [];
@@ -195,12 +278,62 @@ export async function analyzeMap(renderer, mapRoot, { res = 1024, onStep } = {})
   }
 
   step('تحليل الأرض', 0.85);
+
+  // من أعمدة المادة/الهواء: أدنى سطح يمكن الوقوف عليه + هل هو داخل مبنى
+  const nL = layH.length;
+  const floorH = new Float32Array(res * res);
+  const indoorM = new Uint8Array(res * res);
+  const blockM = new Uint8Array(res * res);
+  for (let i = 0; i < res * res; i++) {
+    // اجمع أسطح هذا العمود مرتّبة من الأعلى للأسفل
+    let best = null, bestCeil = 0;
+    let airTop = Infinity;          // ارتفاع بداية الهواء القادم من الأعلى
+    let haveAny = false;
+    for (let L = 0; L < nL; L++) {
+      const f = layF[L][i];
+      if (f === 2) continue;
+      haveAny = true;
+      const h = layH[L][i];
+      if (f === 0) {
+        airTop = h;                 // وجه سفلي: هنا يبدأ الهواء نزولاً
+      } else {
+        // وجه علوي: سطح صلب — هل فوقه هواء كافٍ؟
+        const gap = airTop - h;
+        if (gap >= PLAYER_H) { best = h; bestCeil = airTop; }
+        airTop = -Infinity;         // دخلنا مادة
+      }
+    }
+    if (!haveAny) { floorH[i] = min.y; blockM[i] = 0; continue; }
+    if (best === null) {
+      // عمود مصمت بلا مكان للوقوف = جدار/صخرة
+      blockM[i] = 1;
+      floorH[i] = layH[0][i];
+    } else {
+      floorH[i] = best;
+      indoorM[i] = bestCeil < Infinity && bestCeil - best < 9 ? 1 : 0;
+    }
+  }
+  // اقلب الصفوف كما نفعل مع بقية المصفوفات
+  const floorF = new Float32Array(res * res);
+  const indoorF = new Uint8Array(res * res);
+  const blockF = new Uint8Array(res * res);
+  for (let y = 0; y < res; y++) {
+    const sIdx = (res - 1 - y) * res, d = y * res;
+    floorF.set(floorH.subarray(sIdx, sIdx + res), d);
+    indoorF.set(indoorM.subarray(sIdx, sIdx + res), d);
+    blockF.set(blockM.subarray(sIdx, sIdx + res), d);
+  }
+
   const an = {
     res, span,
     minX: cx - span / 2, minZ: cz - span / 2,
     maxX: cx + span / 2, maxZ: cz + span / 2,
     yMin: min.y, yMax: max.y,
     height: H2, mask: M2, color,
+    roof: H2,                 // أعلى سطح (للخريطة المصغّرة)
+    floor: floorF,            // أرضية المشي: تدخل المباني بدل تسلّق السطوح
+    indoor: indoorF,          // 1 = تحت سقف
+    blocked: blockF,          // 1 = عمود مصمت (جدار)
     box: { min: [min.x, min.y, min.z], max: [max.x, max.y, max.z] },
   };
   computeDerived(an);
@@ -329,7 +462,8 @@ export const mapView = (an) => an.view || { x0: an.minX, z0: an.minZ, size: an.m
 //  استعلامات
 // ------------------------------------------------------------
 export function makeQuery(an) {
-  const { res, height, island, slope, edgeDist } = an;
+  const { res, island, slope, edgeDist } = an;
+  const height = an.floor || an.height;          // نمشي على الأرضية الحقيقية
   const w = an.maxX - an.minX, h = an.maxZ - an.minZ;
   const toU = (x) => ((x - an.minX) / w) * (res - 1);
   const toV = (z) => ((z - an.minZ) / h) * (res - 1);
@@ -372,8 +506,32 @@ export function makeQuery(an) {
     };
   }
 
+  const blocked = an.blocked, indoor = an.indoor, roofA = an.roof;
+  const roofAt = (x, z) => {
+    if (!roofA) return heightAt(x, z);
+    const u = clamp(toU(x), 0, res - 1.001), v = clamp(toV(z), 0, res - 1.001);
+    const x0 = u | 0, y0 = v | 0, fx = u - x0, fy = v - y0;
+    const i = y0 * res + x0;
+    const a = roofA[i], b = roofA[i + 1], c = roofA[i + res], d = roofA[i + res + 1];
+    return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+  };
+  /**
+   * السطح الذي يقف عليه شيء موجود عند ارتفاع y:
+   * إن كان قريباً من السقف يقف عليه، وإلا فعلى أرضية الطابق الأول —
+   * فيدخل المنازل من الأبواب بدل تسلّق سطوحها.
+   */
+  function groundFor(x, z, y) {
+    const f = heightAt(x, z);
+    const r = roofAt(x, z);
+    if (r - f < 1.2) return r;                 // لا فراغ: سطح واحد
+    return y > r - 1.3 ? r : f;
+  }
+
   return {
-    an, toU, toV, heightAt, cellAt, nearestLand,
+    an, toU, toV, heightAt, cellAt, nearestLand, roofAt, groundFor,
+    /** جدار مصمت لا يمكن اجتيازه */
+    isBlocked: (x, z) => (blocked ? blocked[cellAt(x, z)] === 1 : false),
+    isIndoor: (x, z) => (indoor ? indoor[cellAt(x, z)] === 1 : false),
     isLand: (x, z) => island[cellAt(x, z)] === 1,
     slopeAt: (x, z) => slope[cellAt(x, z)],
     edgeAt: (x, z) => edgeDist[cellAt(x, z)],
@@ -514,8 +672,10 @@ export function closestOnPoly(x, z, poly) {
 //  المعايير: أرض مستوية + بعيدة عن البحر + قرب المباني/التضاريس
 //  المميّزة + تباعد منتظم + تغطية كل مناطق الجزيرة
 // ------------------------------------------------------------
-export function autoCrates(an, { count = 46, minGapWorld = 26, edgeMin = 10 } = {}) {
-  const { res, island, slope, height, edgeDist, color } = an;
+export function autoCrates(an, { count = 46, minGapWorld = 26, edgeMin = 10, indoorBias = 2.4 } = {}) {
+  const { res, island, slope, edgeDist, color } = an;
+  const height = an.floor || an.height;
+  const indoor = an.indoor;
   const cell = an.span / res;
   const gap = Math.max(3, minGapWorld / cell);
 
@@ -541,7 +701,8 @@ export function autoCrates(an, { count = 46, minGapWorld = 26, edgeMin = 10 } = 
       // سطوع اللون: نتجنّب الأسطح شديدة الظلمة (داخل المباني)
       const lum = (color[i * 4] + color[i * 4 + 1] + color[i * 4 + 2]) / 765;
       const open = clamp((lum - 0.09) / 0.3, 0, 1);
-      score[i] = flat * 1.25 + variety * 1.5 + safe * 0.7 + open * 0.5;
+      const inside = indoor && indoor[i] ? indoorBias : 0;   // الأفضلية للصناديق داخل المنازل
+      score[i] = flat * 1.25 + variety * 1.5 + safe * 0.7 + open * 0.5 + inside;
     }
   }
 
@@ -552,16 +713,27 @@ export function autoCrates(an, { count = 46, minGapWorld = 26, edgeMin = 10 } = 
 
   const chosen = [];
   const g2 = gap * gap;
-  for (const i of cand) {
-    if (chosen.length >= count) break;
-    const x = i % res, y = (i / res) | 0;
-    let ok = true;
+  const fits = (x, y, g) => {
     for (const c of chosen) {
       const dx = c.cx - x, dy = c.cy - y;
-      if (dx * dx + dy * dy < g2) { ok = false; break; }
+      if (dx * dx + dy * dy < g) return false;
     }
-    if (ok) chosen.push({ cx: x, cy: y, i });
-  }
+    return true;
+  };
+  // ثلثان داخل المباني وثلث في العراء — مزيج طبيعي كما في الألعاب
+  const wantIn = indoor ? Math.round(count * 0.62) : 0;
+  const inList = indoor ? cand.filter((i) => indoor[i]) : [];
+  const outList = cand.filter((i) => !indoor || !indoor[i]);
+  const take = (list, limit) => {
+    for (const i of list) {
+      if (chosen.length >= limit) break;
+      const x = i % res, y = (i / res) | 0;
+      if (fits(x, y, g2)) chosen.push({ cx: x, cy: y, i });
+    }
+  };
+  take(inList, wantIn);
+  take(outList, count);
+  take(cand, count);
 
   // تمريرة ثانية بتباعد أقل لملء النقص
   if (chosen.length < count) {
@@ -673,7 +845,8 @@ export function autoFlightPath(an, { margin = 12, tries = 60 } = {}) {
 
 /** نقاط ظهور اللاعبين/الروبوتات */
 export function spawnPoints(an, n = 40) {
-  const { res, island, slope, edgeDist, height } = an;
+  const { res, island, slope, edgeDist } = an;
+  const height = an.floor || an.height;
   const out = [];
   const w = an.maxX - an.minX, h = an.maxZ - an.minZ;
   let guard = 0;

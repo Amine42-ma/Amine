@@ -96,14 +96,26 @@ export class Character {
       this.tilt.add(this.outline);
     }
 
-    // بطن أفتح
-    const bellyGeo = new THREE.SphereGeometry(R * 0.86, ...seg(20, 16));
-    const bellyMat = new THREE.MeshStandardMaterial({ color: o.belly, roughness: 0.55, metalness: 0 });
-    this.belly = new THREE.Mesh(bellyGeo, bellyMat);
-    this.belly.scale.set(0.78, 1.02, 0.55);
-    this.belly.position.set(0, R + L * 0.34, R * 0.62);
+    // شريط صدر أنيق بدل البطن البارز — مظهر أنظف وأكثر احترافية
+    const bandGeo = new THREE.CylinderGeometry(R * 1.015, R * 1.015, L * 0.30, ...seg(26, 1), true);
+    const bandMat = new THREE.MeshStandardMaterial({
+      color: o.belly, roughness: 0.42, metalness: 0.06, side: THREE.DoubleSide,
+    });
+    this.belly = new THREE.Mesh(bandGeo, bandMat);
+    this.belly.position.set(0, R + L * 0.30, 0);
     this.tilt.add(this.belly);
-    this.bellyMat = bellyMat;
+    this.bellyMat = bandMat;
+    // خطّ إضاءة خفيف على الصدر
+    const visorMat = new THREE.MeshStandardMaterial({
+      color: 0x101018, roughness: 0.18, metalness: 0.5,
+      emissive: new THREE.Color(o.belly).multiplyScalar(0.25),
+    });
+    const visor = new THREE.Mesh(new THREE.SphereGeometry(R * 0.99, ...seg(24, 14),
+      0, Math.PI * 2, Math.PI * 0.30, Math.PI * 0.16), visorMat);
+    visor.position.set(0, R + L * 0.80, 0);
+    visor.scale.set(1, 1.1, 0.92);
+    this.tilt.add(visor);
+    this.visor = visor;
 
     // العينان
     this.eyes = new THREE.Group();
@@ -201,6 +213,7 @@ export class Character {
     this.bodyMat.emissive.copy(bodyCol).multiplyScalar(0.06);
     this.bodyMat.needsUpdate = true;
     this.bellyMat.color.set(o.belly);
+    if (this.visor) this.visor.material.emissive.set(o.belly).multiplyScalar(0.25);
     this.footL.material.color.copy(dark);
     if (this.outline) this.outline.material.color.set(o.outline);
     for (const g of [this.eyeL, this.eyeR]) g.userData.pupil.material.color.set(o.eye);
@@ -265,7 +278,8 @@ export class Character {
       this.outline.position.copy(this.body.position);
       this.outline.scale.copy(this.body.scale).multiplyScalar(1.055);
     }
-    this.belly.position.y = this.R + this.L * 0.34 + bob * 0.8 - st.crouch * this.R * 0.42;
+    this.belly.position.y = this.R + this.L * 0.30 + bob * 0.8 - st.crouch * this.R * 0.42;
+    if (this.visor) this.visor.position.y = this.R + this.L * 0.80 + bob * 1.05 - st.crouch * this.R * 0.5;
     this.eyes.position.y = this.R + this.L * 0.82 + bob * 1.1 - st.crouch * this.R * 0.5;
 
     // ميل للأمام حسب السرعة + انحناء جانبي عند الالتفاف
@@ -274,11 +288,23 @@ export class Character {
     this.tilt.rotation.x = smooth(this.tilt.rotation.x, lean, 9, dt);
     this.tilt.rotation.z = smooth(this.tilt.rotation.z, side, 9, dt);
 
-    // القدمان
+    // القدمان تتبعان اتجاه الحركة الحقيقي حتى لو كان الجذع ينظر لجهة أخرى
+    if (s.moveYaw !== undefined && Number.isFinite(s.moveYaw)) {
+      let fd = s.moveYaw - st.yaw;
+      while (fd > Math.PI) fd -= Math.PI * 2;
+      while (fd < -Math.PI) fd += Math.PI * 2;
+      st.legYaw = smooth(st.legYaw || 0, clamp(fd, -1.05, 1.05), 12, dt);
+    } else st.legYaw = smooth(st.legYaw || 0, 0, 10, dt);
+    this.footL.rotation.y = this.footR.rotation.y = st.legYaw;
     const sw = st.grounded ? Math.sin(cyc) * 0.3 * run : 0.12;
     const lift = st.grounded ? Math.max(0, Math.sin(cyc)) * 0.16 * run : 0.1;
-    this.footL.position.set(-this.R * 0.46, this.R * 0.22 + lift - st.crouch * .1, sw);
-    this.footR.position.set(this.R * 0.46, this.R * 0.22 + Math.max(0, -Math.sin(cyc)) * 0.16 * run - st.crouch * .1, -sw);
+    const lc = Math.cos(st.legYaw || 0), ls = Math.sin(st.legYaw || 0);
+    const place = (f, sx, sz, ly) => {
+      const ox = sx * this.R * 0.46, oz = sz;
+      f.position.set(ox * lc + oz * ls, ly, -ox * ls + oz * lc);
+    };
+    place(this.footL, -1, sw, this.R * 0.22 + lift - st.crouch * .1);
+    place(this.footR, 1, -sw, this.R * 0.22 + Math.max(0, -Math.sin(cyc)) * 0.16 * run - st.crouch * .1);
 
     // الرمش
     st.blink -= dt;

@@ -174,6 +174,127 @@ r = await page.evaluate(() => {
 });
 check('وضع علامة وجهة على الخريطة', r.okSet && r.wp && r.on);
 
+// ---- المباني: أرضيات داخلية + لا تسلّق للجدران ----
+r = await page.evaluate(() => {
+  const g = window.__game, an = g.an;
+  let indoor = 0, gaps = 0;
+  for (let i = 0; i < an.indoor.length; i++) if (an.indoor[i]) indoor++;
+  // خلايا فيها فرق كبير بين السقف والأرضية = مبانٍ لها داخل
+  for (let i = 0; i < an.roof.length; i++) if (an.roof[i] - an.floor[i] > 2.2) gaps++;
+  return { indoor, gaps, total: an.indoor.length,
+           pct: +(100 * indoor / an.indoor.length).toFixed(2) };
+});
+check('كشف الأماكن المسقوفة (داخل المباني)', r.indoor > 500,
+  `${r.indoor} خليّة (${r.pct}%) وفراغات=${r.gaps}`);
+
+r = await page.evaluate(() => {
+  const g = window.__game, an = g.an;
+  // اختبر: هل يمكن للاعب أن يتسلّق فوق مبنى بالمشي فقط؟
+  let climbs = 0, tries = 0;
+  const res = an.res;
+  for (let n = 0; n < 400; n++) {
+    const i = (Math.random() * res * res) | 0;
+    if (an.roof[i] - an.floor[i] < 2.5) continue;      // ليست منطقة مبنى
+    const V = an.view;
+    const x = an.minX + ((i % res) / (res - 1)) * (an.maxX - an.minX);
+    const z = an.minZ + (((i / res) | 0) / (res - 1)) * (an.maxZ - an.minZ);
+    const fy = g.Q.groundFor(x, z, an.floor[i] + 0.2);
+    tries++;
+    // إن أعاد السقف بينما اللاعب عند مستوى الأرضية = تسلّق خاطئ
+    if (Math.abs(fy - an.roof[i]) < 0.05 && an.roof[i] - an.floor[i] > 2.5) climbs++;
+  }
+  return { climbs, tries };
+});
+check('لا يقفز اللاعب فوق المبنى وهو على الأرض', r.climbs === 0,
+  `${r.tries} عيّنة، تسلّق=${r.climbs}`);
+
+r = await page.evaluate(() => {
+  const g = window.__game, an = g.an;
+  // وإن كان فوق السطح فعلاً فيجب أن يبقى عليه
+  let onRoof = 0, tries = 0;
+  const res = an.res;
+  for (let n = 0; n < 400; n++) {
+    const i = (Math.random() * res * res) | 0;
+    if (an.roof[i] - an.floor[i] < 2.5) continue;
+    const x = an.minX + ((i % res) / (res - 1)) * (an.maxX - an.minX);
+    const z = an.minZ + (((i / res) | 0) / (res - 1)) * (an.maxZ - an.minZ);
+    tries++;
+    if (Math.abs(g.Q.groundFor(x, z, an.roof[i] + 0.5) - an.roof[i]) < 0.05) onRoof++;
+  }
+  return { onRoof, tries, pct: tries ? Math.round(100 * onRoof / tries) : 0 };
+});
+check('من يهبط على السطح يبقى عليه', r.pct > 90, `${r.pct}% من ${r.tries}`);
+
+// ---- الصناديق داخل المباني ----
+r = await page.evaluate(() => {
+  const g = window.__game, an = g.an;
+  let inside = 0;
+  for (const c of g.crates) if (g.Q.isIndoor(c.x, c.z)) inside++;
+  return { inside, total: g.crates.length };
+});
+check('مزيج: صناديق داخل المنازل وخارجها',
+  r.inside > r.total * 0.3 && r.inside < r.total * 0.9, `${r.inside} داخل من ${r.total}`);
+
+// ---- توجيه نماذج الأسلحة ----
+r = await page.evaluate(() => {
+  const g = window.__game;
+  const out = [];
+  for (const def of g.wdefs) {
+    const m = g.wmeshCache.get(def.id);
+    if (!m) { out.push({ n: def.name, ok: false }); continue; }
+    const bb = new (window.__THREE_Box3 || Object)();
+    out.push({ n: def.short, has: !!def.assetId });
+  }
+  return out;
+});
+check('كل الأسلحة الخمسة محمّلة بنماذجها', r.length === 5 && r.every((w) => w.has),
+  r.map((w) => w.n).join(' '));
+
+// ---- جدار الحدود مخفي ----
+r = await page.evaluate(() => ({ wall: !!window.__game.wall, zone: !!window.__game.zoneMesh }));
+check('خطوط نهاية الماب لا تظهر، والزون يظهر', !r.wall && r.zone);
+
+// ---- أرقام الضرر ----
+r = await page.evaluate(() => {
+  const g = window.__game;
+  const foe = g.bots.find((b) => b.alive && !b.ally);
+  if (!foe) return { n: 0 };
+  foe.landed = true;
+  foe.alive = true;
+  foe.hp = 500;
+  foe.pos.set(g.pos.x + 6, g.pos.y, g.pos.z);
+  g.damageNumbers.length = 0;
+  const from = g.pos.clone(); from.y += 1.2;
+  const tgt = foe.pos.clone(); tgt.y += foe.ch.totalH * 0.55;
+  const dir = tgt.clone().sub(from).normalize();
+  g.shootRay(from, dir, { damage: 33, range: 200 });
+  g.updDamageNumbers(0.016);
+  return { n: g.damageNumbers.length, el: document.querySelectorAll('.dmgnum').length,
+           txt: document.querySelector('.dmgnum')?.textContent,
+           phase: g.phase, foeHp: foe.hp, dist: foe.pos.distanceTo(g.pos),
+           landed: foe.landed, alive: foe.alive };
+});
+check('رقم الضرر يظهر للضارب', r.n > 0 && r.el > 0, JSON.stringify(r));
+
+// ---- ضغط: 60 مباراة، هل تبقى نافذة القفز فوق اليابسة دائماً؟ ----
+r = await page.evaluate(() => {
+  const g = window.__game;
+  let bad = 0, total = 0, minW = 1;
+  for (let m = 0; m < 60; m++) {
+    g.beginFlight();
+    minW = Math.min(minW, g.dropTo - g.dropFrom);
+    for (let k = 0; k <= 20; k++) {
+      const f = g.dropFrom + (k / 20) * (g.dropTo - g.dropFrom);
+      const q = g.pathAt(f);
+      total++;
+      if (!g.Q.isLand(q.x, q.z)) bad++;
+    }
+  }
+  return { bad, total, minW: +minW.toFixed(3) };
+});
+check('60 مباراة: نافذة القفز كلها فوق اليابسة', r.bad === 0,
+  `${r.total} عيّنة، خارج=${r.bad}، أضيق نافذة=${r.minW}`);
+
 // ---- أزرار نهاية المباراة ----
 r = await page.evaluate(() => {
   const g = window.__game;
