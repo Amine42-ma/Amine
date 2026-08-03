@@ -1,7 +1,7 @@
 // ============================================================
 //  نقطة الدخول — تحدّد الوضع: محرّر أم لعبة مُصدَّرة
 // ============================================================
-import { el, $ } from './core/util.js';
+import { el, b64ToAb } from './core/util.js';
 import { hydrateFromPayload, setEmbeddedMode } from './core/assets.js';
 import { store } from './core/store.js';
 import { BuilderApp } from './builder/app.js';
@@ -31,10 +31,27 @@ function loaderUI(title, sub) {
 async function main() {
   const app = document.getElementById('app') || document.body;
   let payload = null;
+  const gzTag = document.getElementById('royal-payload-gz');
   try {
-    const raw = document.getElementById('royal-payload')?.textContent?.trim();
-    if (raw && raw !== 'null') payload = JSON.parse(raw);
-  } catch (e) { console.warn('payload parse failed', e); }
+    if (gzTag) {
+      if (typeof DecompressionStream !== 'function') {
+        throw new Error('متصفحك لا يدعم فكّ ضغط gzip — استخدم متصفحاً أحدث');
+      }
+      const bytes = b64ToAb(gzTag.textContent.trim());
+      const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+      payload = JSON.parse(await new Response(stream).text());
+    } else {
+      const raw = document.getElementById('royal-payload')?.textContent?.trim();
+      if (raw && raw !== 'null') payload = JSON.parse(raw);
+    }
+  } catch (e) {
+    console.error('payload load failed', e);
+    if (gzTag) {
+      const ld = loaderUI('👑 بطل رويال', '');
+      ld.fail('تعذّر فتح اللعبة: ' + e.message);
+      return;
+    }
+  }
 
   // ---------------- وضع اللعبة المُصدَّرة ----------------
   if (payload && payload.mode === 'game') {

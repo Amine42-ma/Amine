@@ -29,6 +29,8 @@ export function mountStage4(view, side, ctx) {
 
   const used = usedAssetIds();
   const bytes = totalAssetBytes(used);
+  const gzipSupported = typeof CompressionStream === 'function';
+  let gzipOn = gzipSupported;
 
   const card = el('div', { class: 'card', style: { padding: '24px', width: 'min(680px,100%)' } },
     el('div', { style: { fontSize: '22px', fontWeight: '900', marginBottom: '6px' } }, '📦 تصدير اللعبة'),
@@ -53,8 +55,19 @@ export function mountStage4(view, side, ctx) {
     row('إكسسوارات الشخصية', (P().lobby.character.attachments || []).length),
     row('عدد الخصوم', P().match.bots),
     row('حجم الأصول', fmtBytes(bytes)),
-    row('الحجم المتوقع للملف', fmtBytes(bytes * 1.37 + 900 * 1024)));
+    row('الحجم المتوقع للملف',
+      fmtBytes(gzipOn ? bytes * 0.62 + 900 * 1024 : bytes * 1.37 + 900 * 1024)));
   card.append(rows);
+  const sizeRow = rows.lastChild.querySelector('b');
+  if (gzipSupported) {
+    card.append(toggleRow('ضغط الملف بلا فقدان جودة (gzip)', gzipOn, (v) => {
+      gzipOn = v;
+      sizeRow.textContent = fmtBytes(v ? bytes * 0.62 + 900 * 1024 : bytes * 1.37 + 900 * 1024);
+    }));
+    card.append(el('div', { class: 'hint', style: { marginBottom: '14px' } },
+      'الضغط لا يمسّ النماذج ولا الصور — البيانات نفسها بالضبط، تُفكّ داخل المتصفح عند الفتح. ' +
+      'أطفئه فقط إن أردت فتح اللعبة في متصفح قديم جداً.'));
+  }
 
   card.append(el('div', { class: 'row wrap', style: { gap: '10px' } },
     el('button', { class: 'btn g xl', onclick: () => test() }, '▶️ تجربة اللعبة الآن'),
@@ -149,12 +162,31 @@ export function mountStage4(view, side, ctx) {
         parts.push('"}');
       }
       parts.push(']}');
+
+      // ---- ضغط الحمولة بلا أي فقدان للجودة (gzip) ----
+      const canGzip = typeof CompressionStream === 'function' && gzipOn;
+      let payloadTag;
+      if (canGzip) {
+        msg.textContent = 'ضغط الحمولة (بلا فقدان جودة)…';
+        bar.style.width = '86%';
+        await yield_();
+        const raw = new Blob(parts.slice(1));          // كل شيء عدا ترويسة HTML
+        const gz = await new Response(
+          raw.stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+        msg.textContent = 'ترميز الحمولة المضغوطة…';
+        bar.style.width = '90%';
+        await yield_();
+        payloadTag = ['<script id="royal-payload-gz" type="text/plain">', abToB64(gz)];
+        parts.length = 1;                              // أبقِ الترويسة فقط
+        parts[0] = parts[0].replace('<script id="royal-payload" type="application/json">', '');
+        parts.push(...payloadTag);
+      }
       parts.push('<\/script>\n<script id="royal-engine">');
       parts.push(engine);
       parts.push('<\/script>\n</body>\n</html>\n');
 
       msg.textContent = 'تجهيز الملف…';
-      bar.style.width = '92%';
+      bar.style.width = '94%';
       await yield_();
       const blob = new Blob(parts, { type: 'text/html;charset=utf-8' });
       bar.style.width = '100%';
