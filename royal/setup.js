@@ -227,12 +227,16 @@
     aimCone: 0.9,        /* اتساع مخروط المساعدة (0.9 ≈ 25°) */
     aimPow: 1,           /* 1 = قفل كامل على العدو */
     fireBtnOnly: true,   /* لا إطلاق إلا بالضغط على زرّ الضرب */
+    parallax: true,      /* الرصاصة تذهب حيث تشير علامة التصويب بالضبط */
+    shotFx: true,        /* خيط رصاص لامع وصاروخ RPG حقيقي */
     meshMove: true,      /* حركة تصطدم بمضلّعات الخريطة فعلياً */
     chuteAcc: 34,        /* تسارع التحرّك تحت المظلّة */
     chuteDamp: 2.2,      /* كبح التحرّك تحت المظلّة */
     customSfx: true,     /* أصوات المطوّر بدل المولّدة */
     sfxPistolSec: 1.0,   /* طول مقطع طلقة المسدّس */
     sfxRifleSec: 0.3,    /* طول مقطع طلقة الرشّاش */
+    sfxSniperSec: 1.6,   /* طول مقطع طلقة القنص */
+    sfxRpgSec: 2.4,      /* طول مقطع انطلاق الـ RPG */
     menuVol: 0.45,       /* مستوى موسيقى القائمة */
     thumbSide: true,     /* صورة السلاح: منظر جانبي كامل */
     meshGround: true,    /* الوقوف على الجسور وأرضيات البيوت الحقيقية */
@@ -424,6 +428,8 @@
       headMul: OPT.headMul, directAim: OPT.directAim, meshMove: OPT.meshMove,
       aimAssist: OPT.aimAssist, aimAdsOnly: OPT.aimAdsOnly, aimCone: OPT.aimCone,
       aimPow: OPT.aimPow, fireBtnOnly: OPT.fireBtnOnly,
+      parallax: OPT.parallax, shotFx: OPT.shotFx,
+      sfxSniperSec: OPT.sfxSniperSec, sfxRpgSec: OPT.sfxRpgSec,
       chuteAcc: OPT.chuteAcc, chuteDamp: OPT.chuteDamp, customSfx: OPT.customSfx,
       sfxPistolSec: OPT.sfxPistolSec, sfxRifleSec: OPT.sfxRifleSec, menuVol: OPT.menuVol,
       thumbSide: OPT.thumbSide, meshGround: OPT.meshGround,
@@ -842,7 +848,7 @@
   }
 
   /* قسم الأيقونة — صورك أنت أولاً، ثم الرموز الجاهزة */
-  function iconSection(cfg, onChange) {
+  function iconSection(cfg, onChange, noFrameOpt) {
     var box = el("div", {});
     box.appendChild(el("h4", { class: "rs-h4", text: "🖼️ أيقونتك الخاصة" }));
     box.appendChild(el("div", { class: "rs-hint", text: "ارفع أي صورة من جهازك (PNG بخلفية شفافة أفضل). تُحفظ في مكتبتك لتستعملها لأي زر آخر." }));
@@ -850,7 +856,7 @@
       upload("📁 ارفع صورة من جهازك", function (url) { cfg.icon = url; cfg.bare = true; addMyIcon(url); onChange(); }, true),
       isUrl(cfg.icon) ? el("button", { class: "rs-chip dz", text: "🗑️ أزل الصورة", onclick: function () { cfg.icon = null; onChange(); } }) : null
     ]));
-    if (cfg.id !== "move" && cfg.id !== "aim") {
+    if (!noFrameOpt && cfg.id !== "move" && cfg.id !== "aim") {
       box.appendChild(el("div", { class: "rs-row" }, [
         el("span", { class: "rs-lab", text: "إطار الزر" }),
         el("button", {
@@ -984,7 +990,8 @@
     OPT.gunFlip = true; OPT.exactWalls = true; OPT.matchMin = 22;
     OPT.ctxButtons = true; OPT.botDrop = true; OPT.headMul = 2.2; OPT.directAim = false;
     OPT.aimAssist = true; OPT.aimAdsOnly = true; OPT.aimCone = 0.9; OPT.aimPow = 1;
-    OPT.fireBtnOnly = true;
+    OPT.fireBtnOnly = true; OPT.parallax = true; OPT.shotFx = true;
+    OPT.sfxSniperSec = 1.6; OPT.sfxRpgSec = 2.4;
     OPT.meshMove = true; OPT.chuteAcc = 34; OPT.chuteDamp = 2.2;
     OPT.customSfx = true; OPT.sfxPistolSec = 1.0; OPT.sfxRifleSec = 0.3; OPT.menuVol = 0.45;
     OPT.thumbSide = true; OPT.meshGround = true; OPT.stickRun = true; OPT.stickRunAt = 0.86;
@@ -1135,7 +1142,7 @@
       id: b.kind,
       get icon() { return b.icon; }, set icon(v) { b.icon = v; },
       get emoji() { return b.emoji; }, set emoji(v) { b.emoji = v; }
-    }, redraw));
+    }, redraw, true));
   }
 
   /* ============================================================
@@ -1172,7 +1179,7 @@
         get icon() { return w.icon; }, set icon(v) { w.icon = v; },
         get emoji() { return w.emo; }, set emoji(v) { w.emo = v; }
       };
-      card.appendChild(iconSection(proxy, function () { persist(); renderWeapons(); }));
+      card.appendChild(iconSection(proxy, function () { persist(); renderWeapons(); }, true));
 
       var cw = el("div", { class: "rs-cols" });
       PALETTE.concat([AMMO_COL[w.ammo] || "#ffc21a"]).forEach(function (c) {
@@ -1444,6 +1451,8 @@
       ]),
       row("طلقة المسدّس (ث)", slider(0.15, 2, 0.05, OPT.sfxPistolSec, function (v) { OPT.sfxPistolSec = v; persist(); })),
       row("طلقة الرشّاش (ث)", slider(0.08, 1, 0.02, OPT.sfxRifleSec, function (v) { OPT.sfxRifleSec = v; persist(); })),
+      row("طلقة القنص (ث)", slider(0.3, 2, 0.1, OPT.sfxSniperSec, function (v) { OPT.sfxSniperSec = v; persist(); })),
+      row("انطلاق الـ RPG (ث)", slider(0.5, 2.6, 0.1, OPT.sfxRpgSec, function (v) { OPT.sfxRpgSec = v; persist(); })),
       row("موسيقى القائمة", slider(0, 1, 0.05, OPT.menuVol, function (v) { OPT.menuVol = v; persist(); if (SFX.menuGain) SFX.menuGain.gain.value = v; }))
     ]));
 
@@ -1546,6 +1555,16 @@
           class: "rs-chip " + (OPT.aimAdsOnly ? "ok" : ""),
           text: OPT.aimAdsOnly ? "🔭 عند التصويب فقط" : "♾️ في كل الأوقات",
           onclick: function () { OPT.aimAdsOnly = !OPT.aimAdsOnly; persist(); renderPlay(); }
+        }),
+        el("button", {
+          class: "rs-chip " + (OPT.parallax ? "ok" : "dz"),
+          text: OPT.parallax ? "✅ الرصاصة تذهب حيث تشير العلامة" : "🚫 اتجاه الكاميرا الخام",
+          onclick: function () { OPT.parallax = !OPT.parallax; persist(); renderPlay(); }
+        }),
+        el("button", {
+          class: "rs-chip " + (OPT.shotFx ? "ok" : "dz"),
+          text: OPT.shotFx ? "✨ خيط رصاص وصاروخ RPG" : "▫️ الخط الرفيع الأصلي",
+          onclick: function () { OPT.shotFx = !OPT.shotFx; persist(); renderPlay(); }
         })
       ]),
       row("قوّة القفل", slider(0, 1, 0.05, OPT.aimPow, function (v) { OPT.aimPow = v; persist(); })),
@@ -2749,9 +2768,223 @@
     return false;
   }
 
+  /* ------- أقرب عدوّ يقطعه الشعاع (للتصحيح البصري للتصويب) ------- */
+  function nearestBotAlong(game, ox, oy, oz, dx, dy, dz, maxD) {
+    var best = null, i, b, H, dh, db, d;
+    for (i = 0; i < game.bots.length; i++) {
+      b = game.bots[i];
+      if (!b.alive || !b.landed || b.ally) continue;
+      H = (b.ch && b.ch.totalH) || 1.7;
+      dh = sphereHit(ox, oy, oz, dx, dy, dz, b.pos.x, b.pos.y + H * 0.88, b.pos.z, 0.34, maxD);
+      db = sphereHit(ox, oy, oz, dx, dy, dz, b.pos.x, b.pos.y + H * 0.48, b.pos.z, 0.62, maxD);
+      d = (dh > 0 && (db < 0 || dh < db)) ? dh : db;
+      if (d > 0 && (best == null || d < best)) best = d;
+    }
+    return best;
+  }
+
+  /* ------------------------------------------------------------------
+     تصحيح فرق المنظور: الرصاصة تنطلق من صدر اللاعب بينما التصويب من
+     الكاميرا التي تبعد عنه أمتاراً في منظور الشخص الثالث. الشعاعان
+     متوازيان فيمرّ الرصاص بجانب العدو رغم أن التصويب على وجهه.
+     الحلّ: نحسب أين ينظر مركز الشاشة فعلاً، ثم نصوّب من الصدر إلى
+     تلك النقطة — مع الحفاظ على انتشار الطلقة كما هو. */
+  function parallaxFix(game, o, dir, range) {
+    var cam = game.camera; if (!cam) return dir;
+    cam.updateWorldMatrix(true, false);
+    var e = cam.matrixWorld.elements;
+    var fx = -e[8], fy = -e[9], fz = -e[10];
+    var fl = Math.sqrt(fx * fx + fy * fy + fz * fz) || 1; fx /= fl; fy /= fl; fz /= fl;
+    var cx = e[12], cy = e[13], cz = e[14];
+    var d = nearestBotAlong(game, cx, cy, cz, fx, fy, fz, range);
+    var w = wallHit(game, cx, cy, cz, fx, fy, fz, d == null ? range : d);
+    if (w != null && (d == null || w < d)) d = w;
+    if (d == null || d > range) d = range;
+    if (d < 2) d = 2;
+    var vx = (cx + fx * d) - o.x, vy = (cy + fy * d) - o.y, vz = (cz + fz * d) - o.z;
+    var L = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1; vx /= L; vy /= L; vz /= L;
+    /* أزِح القاعدة فقط، فيبقى تشتّت الطلقة كما ولّده المحرّك */
+    var nx = dir.x + (vx - fx), ny = dir.y + (vy - fy), nz = dir.z + (vz - fz);
+    var n = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+    dir.set(nx / n, ny / n, nz / n);
+    return dir;
+  }
+
+  /* ============================================================
+     6.39) مؤثّرات الطلقة: خيط رصاص لامع + صاروخ RPG حقيقي
+     ============================================================ */
+  var FX = { list: [], game: null, pool: [] };
+
+  function fxMat(color, opacity) {
+    var T = window.__ROYAL_THREE__;
+    return new T.Basic({ color: color, transparent: true, opacity: opacity, depthWrite: false });
+  }
+  function fxAdd(game, obj) { game.scene.add(obj); return obj; }
+  function fxKill(o) {
+    try {
+      if (o.parent) o.parent.remove(o);
+      o.traverse && o.traverse(function (m) {
+        if (m.geometry) m.geometry.dispose();
+        if (m.material) m.material.dispose();
+      });
+    } catch (e) { }
+  }
+
+  /* صاروخ الـ RPG: جسم + رأس حربي + زعانف + لهب خلفي */
+  function makeRocket() {
+    var T = window.__ROYAL_THREE__, g = new T.Group();
+    var body = new T.Mesh(new T.Cyl(0.055, 0.055, 0.34, 10, 1), new T.Std({ color: 0x2f3a2a, roughness: 0.7 }));
+    body.rotation.x = Math.PI / 2;
+    var nose = new T.Mesh(new T.Cyl(0.005, 0.082, 0.20, 10, 1), new T.Std({ color: 0x6b2b1f, roughness: 0.6 }));
+    nose.rotation.x = -Math.PI / 2; nose.position.z = 0.26;
+    var ring = new T.Mesh(new T.Cyl(0.085, 0.085, 0.05, 10, 1), new T.Std({ color: 0x1b1b1b, roughness: 0.8 }));
+    ring.rotation.x = Math.PI / 2; ring.position.z = 0.13;
+    var i, fin;
+    for (i = 0; i < 4; i++) {
+      fin = new T.Mesh(new T.Box(0.012, 0.13, 0.13), new T.Std({ color: 0x232823, roughness: 0.8 }));
+      fin.position.z = -0.16;
+      fin.rotation.z = i * Math.PI / 2;
+      fin.position.x = Math.cos(i * Math.PI / 2) * 0.07;
+      fin.position.y = Math.sin(i * Math.PI / 2) * 0.07;
+      g.add(fin);
+    }
+    var flame = new T.Mesh(new T.Cyl(0.015, 0.07, 0.5, 10, 1), fxMat(0xff8a2b, 0.55));
+    flame.rotation.x = -Math.PI / 2; flame.position.z = -0.44;
+    var core = new T.Mesh(new T.Cyl(0.008, 0.036, 0.28, 8, 1), fxMat(0xfff0b8, 0.85));
+    core.rotation.x = -Math.PI / 2; core.position.z = -0.32;
+    g.add(body); g.add(nose); g.add(ring); g.add(flame); g.add(core);
+    g.__flame = flame; g.__core = core;
+    return g;
+  }
+
+  function faceAlong(obj, dx, dy, dz) {
+    /* يوجّه المحور +Z للجسم نحو الاتجاه المعطى */
+    var yaw = Math.atan2(dx, dz);
+    var pitch = Math.atan2(-dy, Math.sqrt(dx * dx + dz * dz));
+    obj.rotation.set(pitch, yaw, 0, "YXZ");
+  }
+
+  window.__ROYAL_SHOT__ = function (game, from, to, def) {
+    if (!OPT.shotFx || !window.__ROYAL_THREE__) return false;
+    try {
+      FX.game = game;
+      var T = window.__ROYAL_THREE__;
+      var dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
+      var dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.001;
+      dx /= dist; dy /= dist; dz /= dist;
+
+      /* ومضة الفوّهة — دائماً */
+      var mz = new T.Mesh(new T.Sph(def.kind === "rpg" ? 0.17 : 0.1, 10, 8),
+        fxMat(def.kind === "rpg" ? 0xffc06a : 0xffe9a0, 0.75));
+      mz.position.set(from.x, from.y, from.z);
+      fxAdd(game, mz);
+      FX.list.push({ o: mz, k: "flash", t: 0, life: 0.06, s0: 1, s1: 1.9 });
+
+      if (def.kind === "rpg") {
+        var rk = makeRocket();
+        rk.position.set(from.x, from.y, from.z);
+        faceAlong(rk, dx, dy, dz);
+        fxAdd(game, rk);
+        FX.list.push({
+          o: rk, k: "rocket", t: 0, life: dist / 200 + 0.02,
+          fx: from.x, fy: from.y, fz: from.z, dx: dx, dy: dy, dz: dz,
+          dist: dist, spd: 200, smoke: 0
+        });
+        return true;
+      }
+
+      /* خيط الرصاصة: أسطوانة رفيعة لامعة تنطلق نحو نقطة الإصابة */
+      var len = Math.min(dist, def.kind === "sniper" ? 26 : 11);
+      var rad = def.kind === "sniper" ? 0.035 : def.kind === "shotgun" ? 0.018 : 0.026;
+      var tr = new T.Mesh(new T.Cyl(rad, rad, len, 6, 1),
+        fxMat(def.kind === "sniper" ? 0xcfe6ff : 0xffe27a, 0.95));
+      tr.rotation.x = Math.PI / 2;                 /* المحور صار +Z */
+      var wrap = new T.Group(); wrap.add(tr);
+      wrap.position.set(from.x, from.y, from.z);
+      faceAlong(wrap, dx, dy, dz);
+      tr.position.z = len * 0.5;
+      fxAdd(game, wrap);
+      var spd = def.kind === "sniper" ? 900 : 560;
+      FX.list.push({
+        o: wrap, k: "tracer", t: 0, life: Math.min(0.5, dist / spd + 0.03),
+        fx: from.x, fy: from.y, fz: from.z, dx: dx, dy: dy, dz: dz,
+        dist: dist, spd: spd
+      });
+
+      /* شرارة الارتطام */
+      var sp = new T.Mesh(new T.Sph(0.1, 6, 5), fxMat(0xfff3c4, 0.9));
+      sp.position.set(to.x - dx * 0.06, to.y - dy * 0.06, to.z - dz * 0.06);
+      fxAdd(game, sp);
+      FX.list.push({ o: sp, k: "flash", t: 0, life: 0.16, s0: 0.6, s1: 2.4, delay: dist / spd });
+      return true;
+    } catch (e) { console.warn("shot fx", e); return false; }
+  };
+
+  function boom(game, x, y, z) {
+    var T = window.__ROYAL_THREE__;
+    var core = new T.Mesh(new T.Sph(0.8, 12, 10), fxMat(0xffd27a, 0.95));
+    core.position.set(x, y, z); fxAdd(game, core);
+    FX.list.push({ o: core, k: "flash", t: 0, life: 0.42, s0: 0.5, s1: 5.4 });
+    var sm = new T.Mesh(new T.Sph(1.1, 10, 8), fxMat(0x3a3630, 0.75));
+    sm.position.set(x, y, z); fxAdd(game, sm);
+    FX.list.push({ o: sm, k: "flash", t: 0, life: 1.1, s0: 0.7, s1: 4.2 });
+    try { game.flash.position.set(x, y, z); game.flash.intensity = 60; } catch (e) { }
+  }
+
+  window.__ROYAL_FX__ = function (game, dt) {
+    var L = FX.list; if (!L.length) return;
+    var T = window.__ROYAL_THREE__;
+    for (var i = L.length - 1; i >= 0; i--) {
+      var f = L[i];
+      f.t += dt;
+      if (f.delay) { if (f.t < f.delay) continue; }
+      var age = f.t - (f.delay || 0);
+      var p = age / f.life;
+      if (f.k === "flash") {
+        if (p >= 1) { fxKill(f.o); L.splice(i, 1); continue; }
+        var s = f.s0 + (f.s1 - f.s0) * p;
+        f.o.scale.set(s, s, s);
+        f.o.material.opacity = (1 - p) * 0.95;
+        continue;
+      }
+      if (f.k === "tracer") {
+        var d = Math.min(f.dist, f.spd * age);
+        f.o.position.set(f.fx + f.dx * d, f.fy + f.dy * d, f.fz + f.dz * d);
+        if (p >= 1) { fxKill(f.o); L.splice(i, 1); }
+        else f.o.children[0].material.opacity = 0.95 * (1 - p * p);
+        continue;
+      }
+      if (f.k === "rocket") {
+        var rd = Math.min(f.dist, f.spd * age);
+        f.o.position.set(f.fx + f.dx * rd, f.fy + f.dy * rd, f.fz + f.dz * rd);
+        if (f.o.__flame) {
+          var k = 0.75 + Math.random() * 0.6;
+          f.o.__flame.scale.set(k, 0.85 + Math.random() * 0.4, k);
+          f.o.__flame.material.opacity = 0.4 + Math.random() * 0.3;
+          if (f.o.__core) f.o.__core.material.opacity = 0.7 + Math.random() * 0.3;
+        }
+        f.smoke -= dt;
+        if (f.smoke <= 0 && L.length < 90) {
+          f.smoke = 0.022;
+          var pf = new T.Mesh(new T.Sph(0.15, 8, 6), fxMat(0x9a978f, 0.34));
+          pf.position.copy(f.o.position);
+          fxAdd(game, pf);
+          L.push({ o: pf, k: "flash", t: 0, life: 0.9, s0: 0.5, s1: 3.4 });
+        }
+        if (rd >= f.dist - 0.01) {
+          boom(game, f.fx + f.dx * f.dist, f.fy + f.dy * f.dist, f.fz + f.dz * f.dist);
+          fxKill(f.o); L.splice(i, 1);
+        }
+        continue;
+      }
+      fxKill(f.o); L.splice(i, 1);
+    }
+  };
+
   /* ------- مساعد التصويب: يقفل على العدو عند تفعيل وضع التصويب ------- */
   window.__ROYAL_AIM__ = function (game, o, dir, range, pellets) {
     try {
+      if (OPT.parallax) parallaxFix(game, o, dir, range);
       if (OPT.directAim || !OPT.aimAssist || pellets !== 1) return dir;
       var inp = game.hud && game.hud.input;
       if (OPT.aimAdsOnly && !(inp && (inp.aiming || inp.scopeOn))) return dir;
@@ -2829,8 +3062,10 @@
   window.__ROYAL_GUNSFX__ = function (kind) {
     if (!OPT.customSfx) return false;
     initSfx();
-    var pistolLike = (kind === "pistol" || kind === "shotgun" || kind === "sniper" || kind === "rpg");
-    if (pistolLike) return playClip("pistol", OPT.sfxPistolSec, 0.85);
+    if (kind === "sniper" && playClip("sniper", OPT.sfxSniperSec, 0.95)) return true;
+    if (kind === "rpg" && playClip("rpg", OPT.sfxRpgSec, 1)) return true;
+    if (kind === "pistol" || kind === "shotgun" || kind === "sniper" || kind === "rpg")
+      return playClip("pistol", OPT.sfxPistolSec, 0.85);
     return playClip("rifle", OPT.sfxRifleSec, 0.75);      /* رشّاش: جزء قصير لكل طلقة */
   };
 

@@ -28,6 +28,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # نماذج ثلاثية الأبعاد تُستبدَل داخل الحمولة: معرّف الأصل -> ملف .glb
 ASSET_SWAPS = {
     "bundled_w_pistol": os.path.join(HERE, "assets", "pistol.glb"),
+    "bundled_w_rpg": os.path.join(HERE, "assets", "rpg.glb"),
 }
 
 # مقاطع صوتية تُدمَج داخل الملف: الاسم -> ملف mp3
@@ -36,6 +37,8 @@ SFX_FILES = {
     "rifle":  os.path.join(HERE, "assets", "sfx", "rifle.mp3"),
     "reload": os.path.join(HERE, "assets", "sfx", "reload.mp3"),
     "menu":   os.path.join(HERE, "assets", "sfx", "menu.mp3"),
+    "sniper": os.path.join(HERE, "assets", "sfx", "sniper.mp3"),
+    "rpg":    os.path.join(HERE, "assets", "sfx", "rpg.mp3"),
 }
 
 
@@ -544,6 +547,22 @@ ENGINE_PATCHES = [
         '(window.__ROYAL_AIM__?(y=window.__ROYAL_AIM__(this,c,y,s.range,d)):'
         '(d===1&&!(window.__ROYAL_OPT__&&window.__ROYAL_OPT__.directAim)&&(y=this.aimAssist(c,y,s.range)))),'
         'this.shootRay(c,y,s)}',
+    ),
+
+    # 45) مؤثّرات الطلقة: خيط رصاص لامع وصاروخ RPG حقيقي بدل الخط الرفيع.
+    (
+        'shot-fx',
+        'if(this.addTracer(t.clone().addScaledVector(e,1.4),c),this.net){',
+        'if((window.__ROYAL_SHOT__&&window.__ROYAL_SHOT__(this,t.clone().addScaledVector(e,1.4),c,n))'
+        '||this.addTracer(t.clone().addScaledVector(e,1.4),c),this.net){',
+    ),
+
+    # 46) نبضة إطار دائمة للمؤثّرات (تعمل في اللعب وفي وضع البناء معاً).
+    (
+        'fx-update',
+        'update(t){if(window.__ROYAL_FLY__&&window.__ROYAL_FLY__(this,t))return;',
+        'update(t){if(window.__ROYAL_FX__)try{window.__ROYAL_FX__(this,t)}catch(_e){}'
+        'if(window.__ROYAL_FLY__&&window.__ROYAL_FLY__(this,t))return;',
     ),
 
     # 44) لا إطلاق نار إلا بالضغط على زرّ الضرب — لا لمسة الشاشة ولا التلقائي.
