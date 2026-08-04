@@ -163,15 +163,15 @@
     doorFix: true,       /* لا يقفز فوق سطح البيت عند محاولة الدخول */
     freeWater: true,     /* السماح بدخول الأودية والماء الداخلي */
     stickyAim: true,     /* التصويب يبقى مثبّتاً حتى تضغط ثانيةً */
-    faceMove: false,     /* false = تتبع الكاميرا دائماً (الوضع الاحترافي) */
-    faceFlip: true,      /* تصحيح دوران الشخصية 180° (كانت تنظر للكاميرا) */
+    faceMove: true,      /* أثناء الحركة تنظر لجهة سيرها؛ وهي واقفة ظهرها للكاميرا */
+    faceFlip: false,     /* قلب 180° — النموذج أمامه +Z فالمحرّك صحيح بدونه */
     zoneBotMul: 3,       /* سرعة تأذّي البوتات خارج الزون */
     zoneRamp: 4,         /* ثوانٍ حتى يصل ضرر الزون لكامله */
     playerWall: true,    /* رصاص اللاعب لا يخترق الجدران */
     sens: 1,             /* حساسية النظر */
     adsSens: 0.55,       /* حساسية النظر أثناء التصويب */
     smooth: 0.35,        /* تنعيم حركة النظر */
-    gunFlip: true,       /* تصحيح اتجاه السلاح مع قلب الشخصية */
+    gunFlip: false,      /* يتبع faceFlip */
     ctxButtons: true,    /* أزرار الفتح/الالتقاط تظهر عند الحاجة فقط */
     botDrop: true,       /* الأعداء يُسقطون غنائمهم */
     headMul: 2.2,        /* مضاعف ضرر إصابة الرأس */
@@ -179,6 +179,10 @@
     meshMove: true,      /* حركة تصطدم بمضلّعات الخريطة فعلياً */
     chuteAcc: 34,        /* تسارع التحرّك تحت المظلّة */
     chuteDamp: 2.2,      /* كبح التحرّك تحت المظلّة */
+    customSfx: true,     /* أصوات المطوّر بدل المولّدة */
+    sfxPistolSec: 1.0,   /* طول مقطع طلقة المسدّس */
+    sfxRifleSec: 0.3,    /* طول مقطع طلقة الرشّاش */
+    menuVol: 0.45,       /* مستوى موسيقى القائمة */
     exactWalls: true,    /* اصطدام دقيق بمضلّعات الخريطة */
     matchMin: 22,        /* مدة المباراة بالدقائق */
     voice: true,         /* الميكروفون مع الأصدقاء */
@@ -348,7 +352,8 @@
       zoneRamp: OPT.zoneRamp, playerWall: OPT.playerWall, gunFlip: OPT.gunFlip,
       exactWalls: OPT.exactWalls, ctxButtons: OPT.ctxButtons, botDrop: OPT.botDrop,
       headMul: OPT.headMul, directAim: OPT.directAim, meshMove: OPT.meshMove,
-      chuteAcc: OPT.chuteAcc, chuteDamp: OPT.chuteDamp,
+      chuteAcc: OPT.chuteAcc, chuteDamp: OPT.chuteDamp, customSfx: OPT.customSfx,
+      sfxPistolSec: OPT.sfxPistolSec, sfxRifleSec: OPT.sfxRifleSec, menuVol: OPT.menuVol,
       matchMin: OPT.matchMin, voice: OPT.voice,
       voiceMic: OPT.voiceMic, perOrient: OPT.perOrient, sens: OPT.sens,
       adsSens: OPT.adsSens, smooth: OPT.smooth, online: OPT.online,
@@ -808,12 +813,13 @@
     });
     P.map.crates = clone(FACTORY.crates);
     OPT.climb = "strict"; OPT.stepH = 0.28; OPT.doorStep = 0.75; OPT.doorFix = true;
-    OPT.freeWater = true; OPT.stickyAim = true; OPT.faceMove = false; OPT.botLOS = true;
-    OPT.faceFlip = true; OPT.zoneBotMul = 3; OPT.zoneRamp = 4; OPT.playerWall = true;
+    OPT.freeWater = true; OPT.stickyAim = true; OPT.faceMove = true; OPT.botLOS = true;
+    OPT.faceFlip = false; OPT.zoneBotMul = 3; OPT.zoneRamp = 4; OPT.playerWall = true;
     OPT.sens = 1; OPT.adsSens = 0.55; OPT.smooth = 0.35;
-    OPT.gunFlip = true; OPT.exactWalls = true; OPT.matchMin = 22;
+    OPT.gunFlip = false; OPT.exactWalls = true; OPT.matchMin = 22;
     OPT.ctxButtons = true; OPT.botDrop = true; OPT.headMul = 2.2; OPT.directAim = true;
     OPT.meshMove = true; OPT.chuteAcc = 34; OPT.chuteDamp = 2.2;
+    OPT.customSfx = true; OPT.sfxPistolSec = 1.0; OPT.sfxRifleSec = 0.3; OPT.menuVol = 0.45;
     OPT.voice = true; OPT.voiceMic = true; OPT.perOrient = true;
     OPT.online = false; OPT.netTarget = 25; OPT.netWait = 300;
     P.lobby.buttons = clone(FACTORY.lobby);
@@ -1236,6 +1242,21 @@
       el("div", { class: "rs-chips" }, [
         el("button", { class: "rs-chip " + (OPT.stickyAim ? "ok" : "dz"), text: OPT.stickyAim ? "✅ مثبّت (اضغط / اضغط)" : "🚫 عادي (اضغط واستمر)", onclick: function () { OPT.stickyAim = !OPT.stickyAim; persist(); renderPlay(); } })
       ])
+    ]));
+
+    s.appendChild(el("div", { class: "rs-card" }, [
+      el("h4", { text: "🎵 أصواتك المرفوعة" }),
+      el("div", { class: "rs-hint", text: "طلقة المسدّس/الشوزن/القنّاص، رشقة الرشّاش، صوت التعبئة لكل الأسلحة، وموسيقى القائمة — كلها من ملفاتك. لكل طلقة يُقتطع جزء قصير من المقطع ويُعاد من أوله، فلا يكمل المقطع للنهاية." }),
+      el("div", { class: "rs-chips" }, [
+        el("button", {
+          class: "rs-chip " + (OPT.customSfx ? "ok" : "dz"),
+          text: OPT.customSfx ? "✅ أصواتي مُفعَّلة" : "🚫 الأصوات المولَّدة",
+          onclick: function () { OPT.customSfx = !OPT.customSfx; persist(); renderPlay(); }
+        })
+      ]),
+      row("طلقة المسدّس (ث)", slider(0.15, 2, 0.05, OPT.sfxPistolSec, function (v) { OPT.sfxPistolSec = v; persist(); })),
+      row("طلقة الرشّاش (ث)", slider(0.08, 1, 0.02, OPT.sfxRifleSec, function (v) { OPT.sfxRifleSec = v; persist(); })),
+      row("موسيقى القائمة", slider(0, 1, 0.05, OPT.menuVol, function (v) { OPT.menuVol = v; persist(); if (SFX.menuGain) SFX.menuGain.gain.value = v; }))
     ]));
 
     s.appendChild(el("div", { class: "rs-card" }, [
@@ -2327,6 +2348,100 @@
     }
     return { d: dist, head: head };
   };
+
+  /* ============================================================
+     6.38) أصوات مرفوعة: طلقات، تعبئة، وموسيقى القائمة
+     ============================================================ */
+  var SFX = { buf: {}, ready: {}, ctx: null, menuSrc: null, menuGain: null };
+
+  function sfxCtx() {
+    if (SFX.ctx) return SFX.ctx;
+    var A = window.__ROYAL_AUDIO__;
+    try { SFX.ctx = (A && A.init && A.init()) || (A && A.ctx && A.ctx()) || null; } catch (e) { }
+    return SFX.ctx;
+  }
+
+  function loadSfx(name, dataUrl) {
+    var ctx = sfxCtx(); if (!ctx || SFX.ready[name]) return;
+    SFX.ready[name] = "loading";
+    fetch(dataUrl).then(function (r) { return r.arrayBuffer(); })
+      .then(function (ab) { return ctx.decodeAudioData(ab); })
+      .then(function (buf) { SFX.buf[name] = buf; SFX.ready[name] = "ok"; })
+      .catch(function (e) { console.warn("sfx " + name, e); SFX.ready[name] = "fail"; });
+  }
+
+  function initSfx() {
+    var B = window.__ROYAL_SFXDATA__; if (!B) return;
+    if (!sfxCtx()) return;
+    for (var k in B) loadSfx(k, B[k]);
+  }
+
+  /* يشغّل جزءاً من المقطع فقط ويقطعه عند الطلقة التالية */
+  function playClip(name, seconds, gain) {
+    var ctx = sfxCtx(), buf = SFX.buf[name];
+    if (!ctx || !buf) return false;
+    var t = ctx.currentTime;
+    var src = ctx.createBufferSource(); src.buffer = buf;
+    var g = ctx.createGain();
+    g.gain.setValueAtTime(gain == null ? 0.9 : gain, t);
+    var dur = Math.min(seconds || 1, buf.duration);
+    g.gain.setValueAtTime(g.gain.value, t + dur - 0.04);
+    g.gain.linearRampToValueAtTime(0.0001, t + dur);      /* قطع ناعم بلا طقطقة */
+    src.connect(g); g.connect(ctx.destination);
+    src.start(t, 0, dur + 0.02);
+    src.stop(t + dur + 0.03);
+    return true;
+  }
+
+  window.__ROYAL_GUNSFX__ = function (kind) {
+    if (!OPT.customSfx) return false;
+    initSfx();
+    var pistolLike = (kind === "pistol" || kind === "shotgun" || kind === "sniper" || kind === "rpg");
+    if (pistolLike) return playClip("pistol", OPT.sfxPistolSec, 0.85);
+    return playClip("rifle", OPT.sfxRifleSec, 0.75);      /* رشّاش: جزء قصير لكل طلقة */
+  };
+
+  window.__ROYAL_RELSFX__ = function (phase) {
+    if (!OPT.customSfx || phase !== "start") return false;
+    initSfx();
+    return playClip("reload", 2.5, 0.9);
+  };
+
+  /* موسيقى القائمة الرئيسية */
+  window.__ROYAL_MENU__ = function () {
+    if (!OPT.customSfx) return false;
+    initSfx();
+    var ctx = sfxCtx(), buf = SFX.buf.menu;
+    if (!ctx || !buf) {
+      /* لم تُفكّ بعد — أعِد المحاولة بعد قليل واكتم المولّد الأصلي */
+      setTimeout(function () { try { window.__ROYAL_MENU__(); } catch (e) { } }, 700);
+      return true;
+    }
+    if (SFX.menuSrc) return true;
+    var g = ctx.createGain(); g.gain.value = 0;
+    var src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+    src.connect(g); g.connect(ctx.destination); src.start();
+    g.gain.linearRampToValueAtTime(OPT.menuVol, ctx.currentTime + 1.2);
+    SFX.menuSrc = src; SFX.menuGain = g;
+    return true;
+  };
+
+  function stopMenuMusic() {
+    if (!SFX.menuSrc) return;
+    try {
+      var ctx = sfxCtx();
+      SFX.menuGain.gain.linearRampToValueAtTime(0.0001, ctx.currentTime + 0.5);
+      var s2 = SFX.menuSrc;
+      setTimeout(function () { try { s2.stop(); } catch (e) { } }, 700);
+    } catch (e) { }
+    SFX.menuSrc = null; SFX.menuGain = null;
+  }
+
+  /* أوقف موسيقى القائمة عند بدء المباراة */
+  setInterval(function () {
+    if (SFX.menuSrc && document.getElementById("gameroot")) stopMenuMusic();
+  }, 600);
+  addEventListener("pointerdown", function () { initSfx(); }, { once: true });
 
   /* ---- 6.4 شارة السلاح ---- */
   function badgeEl(hud) {

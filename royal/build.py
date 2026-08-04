@@ -30,6 +30,33 @@ ASSET_SWAPS = {
     "bundled_w_pistol": os.path.join(HERE, "assets", "pistol.glb"),
 }
 
+# مقاطع صوتية تُدمَج داخل الملف: الاسم -> ملف mp3
+SFX_FILES = {
+    "pistol": os.path.join(HERE, "assets", "sfx", "pistol.mp3"),
+    "rifle":  os.path.join(HERE, "assets", "sfx", "rifle.mp3"),
+    "reload": os.path.join(HERE, "assets", "sfx", "reload.mp3"),
+    "menu":   os.path.join(HERE, "assets", "sfx", "menu.mp3"),
+}
+
+
+def sfx_block():
+    """يبني كتلة <script> فيها المقاطع الصوتية كـ data:URI."""
+    parts = []
+    for name, path in SFX_FILES.items():
+        if not os.path.exists(path):
+            continue
+        with open(path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("ascii")
+        parts.append('%s:"data:audio/mpeg;base64,%s"' % (_json_key(name), b64))
+        print("  \u2714 \u0635\u0648\u062A %s (%.0f \u0643\u0628)" % (name, len(b64) / 1365.0))
+    if not parts:
+        return ""
+    return '<script id="royal-sfx">window.__ROYAL_SFXDATA__={%s};</script>\n' % ",".join(parts)
+
+
+def _json_key(k):
+    return '"%s"' % k
+
 
 class PatchError(RuntimeError):
     pass
@@ -140,6 +167,11 @@ ENGINE_PATCHES = [
         'window.__ROYAL_AUDIO__={init:function(){try{return us()}catch(e){return null}},'
         'ctx:function(){try{return Pt}catch(e){return null}},'
         'sfx:function(){try{return gi}catch(e){return null}}};'
+        '(function(){var _g=jt.gun,_r=jt.reload,_rd=jt.reloadDone;'
+        'jt.gun=function(k){if(window.__ROYAL_GUNSFX__&&window.__ROYAL_GUNSFX__(k))return;_g.call(jt,k)};'
+        'jt.reload=function(){if(window.__ROYAL_RELSFX__&&window.__ROYAL_RELSFX__("start"))return;_r.call(jt)};'
+        'jt.reloadDone=function(){if(window.__ROYAL_RELSFX__&&window.__ROYAL_RELSFX__("done"))return;_rd.call(jt)}})();'
+        'window.__ROYAL_MENUMUSIC__=function(on){try{on?null:(Ia&&(clearInterval(Ia),Ia=null))}catch(e){}};'
         'document.readyState==="loading"?addEventListener("DOMContentLoaded",ep):ep()',
     ),
 
@@ -301,9 +333,8 @@ ENGINE_PATCHES = [
         'Math.hypot(this.vel.x,this.vel.z)>.4&&(this.player.st.yaw=Math.atan2(this.vel.x,this.vel.z)),'
         'this.player.root.rotation.y=this.player.st.yaw',
 
-        'Math.hypot(this.vel.x,this.vel.z)>.4&&(this.player.st.yaw=Math.atan2(this.vel.x,this.vel.z)'
-        '+((window.__ROYAL_OPT__&&window.__ROYAL_OPT__.faceFlip)?Math.PI:0)),'
-        'this.player.root.rotation.y=this.player.st.yaw',
+        'Math.hypot(this.vel.x,this.vel.z)>.4&&(this.player.st.yaw=Math.atan2(this.vel.x,this.vel.z)),'
+        'this.player.root.rotation.y=this.player.st.yaw+((window.__ROYAL_OPT__&&window.__ROYAL_OPT__.faceFlip)?Math.PI:0)',
     ),
 
     # 24) زرّ التقريب يُخرجك من التصويب أيضاً (كان يعلق مع تثبيت التصويب).
@@ -408,6 +439,14 @@ ENGINE_PATCHES = [
         'if(i){jt.hit();let l=n.damage;',
         'if(i){jt.hit();let l=n.damage*(this._hs?((window.__ROYAL_OPT__&&window.__ROYAL_OPT__.headMul)||2.2):1);'
         'this._hs&&this.hud.feed("\\u{1F3AF} \\u0625\\u0635\\u0627\\u0628\\u0629 \\u0631\\u0623\\u0633!");',
+    ),
+
+    # 38) موسيقى القائمة: أعطِ الأولوية للمقطوعة التي رفعها المطوّر.
+    (
+        'menu-music',
+        'function lh(){if(!us()||Ia||!Vn.music)return;',
+        'function lh(){if(!us()||Ia||!Vn.music)return;'
+        'if(window.__ROYAL_MENU__&&window.__ROYAL_MENU__())return;',
     ),
 
     # 36) المظلّة: تسارع وكبح قابلان للضبط ليكون التحرّك سلساً وسريعاً.
@@ -531,7 +570,7 @@ def build(src_path, out_path):
     html = html[:i + len(tag)] + engine + html[j:]
 
     # ---- 3) احقن سكربت الإعداد قبل المحرّك
-    prefs = '<script id="royal-prefs" type="application/json">null</script>\n'
+    prefs = '<script id="royal-prefs" type="application/json">null</script>\n' + sfx_block()
     setup_tag = '<script id="royal-setup">\n' + js + '\n</script>\n'
     html = html.replace(tag, prefs + setup_tag + tag, 1)
 
