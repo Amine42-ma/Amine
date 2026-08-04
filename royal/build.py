@@ -441,6 +441,29 @@ ENGINE_PATCHES = [
         'this._hs&&this.hud.feed("\\u{1F3AF} \\u0625\\u0635\\u0627\\u0628\\u0629 \\u0631\\u0623\\u0633!");',
     ),
 
+    # 41) الطائرة تكمل مسيرها بعد القفز حتى تختفي في الأفق.
+    (
+        'plane-flyaway',
+        'jumpOut(){if(this.phase!=="flight")return;this.phase="freefall";',
+        'jumpOut(){if(this.phase!=="flight")return;this.phase="freefall";'
+        'window.__ROYAL_SHIP__&&window.__ROYAL_SHIP__(this);',
+    ),
+
+    # 42) دفع عصا التحرّك للنهاية = جري (بإصبع واحد).
+    (
+        'stick-run',
+        'i.x=f/x,i.y=y/x,t.id==="aim"',
+        'i.x=f/x,i.y=y/x,'
+        't.id==="move"&&window.__ROYAL_STICKRUN__&&window.__ROYAL_STICKRUN__(this,Math.hypot(i.x,i.y)),'
+        't.id==="aim"',
+    ),
+    (
+        'stick-run-reset',
+        'a=()=>{s=!1,o=-1,e.style.transform="translate(0,0)",i.x=0,i.y=0,',
+        'a=()=>{s=!1,o=-1,e.style.transform="translate(0,0)",i.x=0,i.y=0,'
+        't.id==="move"&&window.__ROYAL_STICKRUN__&&window.__ROYAL_STICKRUN__(this,0),',
+    ),
+
     # 40) خريطة فارغة تبقى فارغة (لا يولّد المحرّك 46 صندوقاً تلقائياً).
     (
         'no-auto-crates',

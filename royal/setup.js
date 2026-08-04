@@ -184,6 +184,9 @@
     sfxRifleSec: 0.3,    /* طول مقطع طلقة الرشّاش */
     menuVol: 0.45,       /* مستوى موسيقى القائمة */
     thumbSide: true,     /* صورة السلاح: منظر جانبي كامل */
+    meshGround: true,    /* الوقوف على الجسور وأرضيات البيوت الحقيقية */
+    stickRun: true,      /* دفع العصا للنهاية = جري */
+    stickRunAt: 0.86,    /* عتبة الجري */
     exactWalls: true,    /* اصطدام دقيق بمضلّعات الخريطة */
     matchMin: 22,        /* مدة المباراة بالدقائق */
     voice: true,         /* الميكروفون مع الأصدقاء */
@@ -356,7 +359,8 @@
       headMul: OPT.headMul, directAim: OPT.directAim, meshMove: OPT.meshMove,
       chuteAcc: OPT.chuteAcc, chuteDamp: OPT.chuteDamp, customSfx: OPT.customSfx,
       sfxPistolSec: OPT.sfxPistolSec, sfxRifleSec: OPT.sfxRifleSec, menuVol: OPT.menuVol,
-      thumbSide: OPT.thumbSide,
+      thumbSide: OPT.thumbSide, meshGround: OPT.meshGround,
+      stickRun: OPT.stickRun, stickRunAt: OPT.stickRunAt,
       matchMin: OPT.matchMin, voice: OPT.voice,
       voiceMic: OPT.voiceMic, perOrient: OPT.perOrient, sens: OPT.sens,
       adsSens: OPT.adsSens, smooth: OPT.smooth, online: OPT.online,
@@ -828,7 +832,7 @@
     OPT.ctxButtons = true; OPT.botDrop = true; OPT.headMul = 2.2; OPT.directAim = true;
     OPT.meshMove = true; OPT.chuteAcc = 34; OPT.chuteDamp = 2.2;
     OPT.customSfx = true; OPT.sfxPistolSec = 1.0; OPT.sfxRifleSec = 0.3; OPT.menuVol = 0.45;
-    OPT.thumbSide = true;
+    OPT.thumbSide = true; OPT.meshGround = true; OPT.stickRun = true; OPT.stickRunAt = 0.86;
     OPT.voice = true; OPT.voiceMic = true; OPT.perOrient = true;
     OPT.online = false; OPT.netTarget = 25; OPT.netWait = 300;
     P.lobby.buttons = clone(FACTORY.lobby);
@@ -1305,6 +1309,26 @@
     ]));
 
     s.appendChild(el("div", { class: "rs-card" }, [
+      el("h4", { text: "🏃 الجري بإصبع واحد" }),
+      el("div", { class: "rs-hint", text: "ادفع عصا التحرّك إلى آخرها فيبدأ الجري فوراً بلا حاجة لزر ثانٍ — وإن رجعت قليلاً يعود للمشي." }),
+      el("div", { class: "rs-chips" }, [
+        el("button", {
+          class: "rs-chip " + (OPT.stickRun ? "ok" : "dz"),
+          text: OPT.stickRun ? "✅ دفع العصا للنهاية = جري" : "🚫 زرّ الجري فقط",
+          onclick: function () { OPT.stickRun = !OPT.stickRun; persist(); renderPlay(); }
+        })
+      ]),
+      row("عتبة الجري", slider(0.6, 0.98, 0.02, OPT.stickRunAt, function (v) { OPT.stickRunAt = v; persist(); })),
+      el("div", { class: "rs-chips" }, [
+        el("button", {
+          class: "rs-chip " + (OPT.meshGround ? "ok" : "dz"),
+          text: OPT.meshGround ? "✅ الوقوف على الجسور والأرضيات الحقيقية" : "🚫 أرضية تقريبية",
+          onclick: function () { OPT.meshGround = !OPT.meshGround; persist(); renderPlay(); }
+        })
+      ])
+    ]));
+
+    s.appendChild(el("div", { class: "rs-card" }, [
       el("h4", { text: "🧠 الأعداء والشخصية" }),
       el("div", { class: "rs-chips" }, [
         el("button", { class: "rs-chip " + (OPT.botLOS ? "ok" : "dz"), text: OPT.botLOS ? "✅ لا إطلاق عبر الجدران" : "🚫 الأعداء يخترقون الجدران", onclick: function () { OPT.botLOS = !OPT.botLOS; persist(); renderPlay(); } }),
@@ -1669,6 +1693,14 @@
 
   /* ارتفاع الأرض: لا يقفز فوق سطح البيت عند محاولة الدخول من باب صغير */
   window.__ROYAL_GY__ = function (game, x, z, yArg, g) {
+    /* الأرض الحقيقية من مضلّعات الخريطة: تمنع السقوط من فوق الجسور
+       والمصاعد وأرضيات البيوت التي لا تراها الخريطة الارتفاعية. */
+    if (OPT.meshGround && TRI) {
+      var py = (yArg === undefined) ? (game.pos ? game.pos.y : 1e5) : yArg;
+      var from = py + 1.5;
+      var d = meshHit(x, from, z, 0, -1, 0, 16);
+      if (d != null) return from - d;
+    }
     if (!OPT.doorFix) return g;
     var Q = game.Q, f = Q.heightAt(x, z), rf = Q.roofAt(x, z);
     if (rf - f < 0.35) return g;                       /* أرض مكشوفة */
@@ -2119,7 +2151,13 @@
       var dir = new T.V3();
       game.camera.getWorldDirection(dir);
       var o = game.camera.position, hit = null, d, px, pz, py, gy;
-      for (d = 1.5; d < 30; d += 0.4) {
+      /* الأولوية: اصطدام حقيقي بمضلّعات الخريطة — يسمح بالوضع داخل
+         البيوت وفوق الجسور والأسطح، لا على الأرض المكشوفة فقط. */
+      if (TRI) {
+        var md = meshHit(o.x, o.y, o.z, dir.x, dir.y, dir.z, 34);
+        if (md != null) hit = { x: o.x + dir.x * md, y: o.y + dir.y * md, z: o.z + dir.z * md };
+      }
+      if (!hit) for (d = 1.5; d < 30; d += 0.4) {
         px = o.x + dir.x * d; py = o.y + dir.y * d; pz = o.z + dir.z * d;
         gy = game.Q.groundFor(px, pz, py);
         if (py <= gy) { hit = { x: px, z: pz, y: gy }; break; }
@@ -2128,7 +2166,7 @@
         var fx = game.pos.x - Math.sin(game.yaw) * 4, fz = game.pos.z - Math.cos(game.yaw) * 4;
         hit = { x: fx, z: fz, y: game.Q.groundFor(fx, fz, game.pos.y) };
       }
-      var ok = game.Q.isLand(hit.x, hit.z);
+      var ok = true;
       B.hit = ok ? hit : null;
       B.ghost.visible = true;
       B.ghost.position.set(hit.x, hit.y + B.ghostDims.h * 0.5, hit.z);
@@ -2192,7 +2230,7 @@
   }
   function doPlace() {
     if (!B || !B.hit) { toast("وجّه نظرك إلى الأرض داخل الجزيرة"); return; }
-    B.game.crates.push({ id: "cr_b" + Date.now().toString(36), x: B.hit.x, y: B.hit.y, z: B.hit.z, ry: 0, scale: 1, opened: false });
+    B.game.crates.push({ id: "cr_b" + Date.now().toString(36), x: B.hit.x, y: B.hit.y, z: B.hit.z, ry: 0, scale: 1, opened: false, fixedY: B.hit.y });
     B.sel = B.game.crates.length - 1;
     B.mode = "place";
     rebuildCrates(B.game); syncCrates(); upN();
@@ -2318,6 +2356,38 @@
     voiceBtnSync();
     ensureMic();
   }
+
+  /* ---- الطائرة تواصل طيرانها بعد القفز حتى تختفي ---- */
+  window.__ROYAL_SHIP__ = function (game) {
+    try {
+      if (!game.ship) return;
+      var d = game.shipDir || { x: 0, z: 1 };
+      var L = Math.hypot(d.x, d.z) || 1, dx = d.x / L, dz = d.z / L;
+      var sp = (game.P.map.flight && game.P.map.flight.speed) || 105;
+      var t0 = performance.now(), last = t0;
+      (function step() {
+        if (!game.ship || game.disposed) return;
+        var now = performance.now(), dt = Math.min(0.05, (now - last) / 1000);
+        last = now;
+        game.ship.position.x += dx * sp * dt;
+        game.ship.position.z += dz * sp * dt;
+        game.ship.position.y += 6 * dt;                       /* تصعد قليلاً */
+        game.ship.rotation.z = Math.sin(now * 0.0006) * 0.05;
+        if ((now - t0) / 1000 > 30) {
+          try { game.scene.remove(game.ship); } catch (e) { }
+          game.ship = null; return;
+        }
+        requestAnimationFrame(step);
+      })();
+    } catch (e) { console.warn("ship", e); }
+  };
+
+  /* ---- دفع عصا التحرّك للنهاية = جري ---- */
+  window.__ROYAL_STICKRUN__ = function (hud, mag) {
+    if (!OPT.stickRun) return;
+    if (mag >= OPT.stickRunAt) { hud.input.run = true; hud.__srun = true; }
+    else if (hud.__srun && mag < OPT.stickRunAt - 0.12) { hud.input.run = false; hud.__srun = false; }
+  };
 
   /* ---- أزرار سياقية: فتح الصندوق / الالتقاط ---- */
   function ctxSet(hud, id, on) {
