@@ -369,6 +369,13 @@
       trophies: OPT.trophies, slimHud: OPT.slimHud, badge: OPT.badge
     };
     SAVED = s; save();
+    applyLiveSoon();                 /* أي تعديل ينعكس فوراً على أزرار اللعبة الجارية */
+  }
+
+  var _liveT = 0;
+  function applyLiveSoon() {
+    clearTimeout(_liveT);
+    _liveT = setTimeout(function () { try { applyLive(); } catch (e) { } }, 120);
   }
 
   /* ------------------------------------------------------ الواجهة */
@@ -411,7 +418,26 @@
     ["lobby", "🏠 الواجهة"], ["weap", "🔫 الأسلحة"], ["play", "⚙️ اللعب"]].forEach(function (t) {
       UI.tabs.appendChild(el("button", { class: "rs-tab", "data-t": t[0], text: t[1], onclick: function () { setTab(t[0]); } }));
     });
-    addEventListener("resize", function () { if (UI && UI.root.classList.contains("on")) renderStage(); });
+    var _lastOr = orient();
+    function onResize() {
+      if (!UI || !UI.root.classList.contains("on")) return;
+      if (OPT.perOrient && editOrient === null) {
+        var o = innerWidth >= innerHeight ? "land" : "port";
+        if (o !== _lastOr) {
+          _lastOr = o;
+          var st = load(), src = o === "port" ? st.layoutPort : st.layout;
+          if (!src) src = o === "port" ? st.layout : st.layoutPort;
+          if (src) P.controls.layout.forEach(function (c) {
+            var f = src[c.id]; if (f) for (var k in f) if (f[k] !== undefined) c[k] = f[k];
+          });
+          toast(o === "port" ? "📱 انتقلتَ لترتيب الوضع العمودي" : "🖥️ انتقلتَ لترتيب الوضع الأفقي");
+          renderPanel();
+        }
+      }
+      renderStage();
+    }
+    addEventListener("resize", onResize);
+    addEventListener("orientationchange", function () { setTimeout(onResize, 260); });
     setTab("btn");
   }
 
@@ -2098,7 +2124,11 @@
   var B = null;
 
   function enterBuild(game) {
-    B = { game: game, mode: "place", sel: -1, ghost: null, ghostBox: null, ghostDims: null, hit: null, raf: 0 };
+    B = {
+      game: game, mode: "place", sel: -1, ghost: null, ghostBox: null, ghostDims: null,
+      hit: null, raf: 0, fly: true, flySpeed: 28, up: false, down: false,
+      cam: { x: 0, y: 0, z: 0, yaw: 0, pitch: -0.35 }
+    };
     game.__build = true;
 
     try {
@@ -2118,13 +2148,16 @@
         game.view = "tps";
         game.land();
         game.hud.showOOB(null);
+        B.cam.x = game.pos.x; B.cam.z = game.pos.z;
+        B.cam.y = game.Q.heightAt(game.pos.x, game.pos.z) + 26;
+        if (game.player) game.player.group.visible = false;
       } catch (e) { console.warn(e); }
     }, 80);
 
     makeGhost(game);
     buildBar();
     B.raf = requestAnimationFrame(buildTick);
-    toast("امشِ لأي مكان ثم اضغط «📦 ضع صندوقاً»", 3800);
+    toast("🕊️ كاميرا حرّة — العصا للطيران، 🔼🔽 للارتفاع، ⚡ للسرعة", 4600);
   }
 
   function makeGhost(game) {
@@ -2143,6 +2176,45 @@
     game.scene.add(grp);
     B.ghost = grp; B.ghostBox = mesh; B.ghostDims = d;
   }
+
+  /* ---- كاميرا طائرة حرّة (وضع البناء) ---- */
+  window.__ROYAL_FLY__ = function (game, dt) {
+    if (!B || !B.fly || game.disposed) return false;
+    var hud = game.hud; if (!hud) return false;
+    var c = B.cam;
+    if (!c) return false;
+
+    var sens = 0.0032 * (OPT.sens || 1);
+    var lk = hud.takeLook();
+    c.yaw -= lk.x * sens;
+    c.pitch = clamp(c.pitch + lk.y * sens, -1.45, 1.45);
+    if (Math.abs(hud.input.aim.x) > 0.05 || Math.abs(hud.input.aim.y) > 0.05) {
+      c.yaw -= hud.input.aim.x * 2.6 * dt;
+      c.pitch = clamp(c.pitch + hud.input.aim.y * 1.5 * dt, -1.45, 1.45);
+    }
+
+    var cy = Math.cos(c.pitch);
+    var fx = -Math.sin(c.yaw) * cy, fy = -Math.sin(c.pitch), fz = -Math.cos(c.yaw) * cy;
+    var rx = Math.cos(c.yaw), rz = -Math.sin(c.yaw);
+    var sp = B.flySpeed * (hud.input.run ? 3.2 : 1) * (hud.input.crouch ? 0.28 : 1);
+    var mx = hud.input.move.x, my = -hud.input.move.y;
+    c.x += (fx * my + rx * mx) * sp * dt;
+    c.z += (fz * my + rz * mx) * sp * dt;
+    c.y += (fy * my) * sp * dt;
+    if (B.up) c.y += sp * dt;
+    if (B.down) c.y -= sp * dt;
+    c.y = clamp(c.y, game.an.yMin - 40, game.an.yMax + 500);
+
+    game.camera.position.set(c.x, c.y, c.z);
+    game.camera.lookAt(c.x + fx, c.y + fy, c.z + fz);
+    if (Math.abs(game.camera.fov - 68) > 0.1) { game.camera.fov = 68; game.camera.updateProjectionMatrix(); }
+    game.pos.set(c.x, c.y, c.z);                    /* حتى تتبع الخريطة المصغّرة */
+    if (game.player) game.player.group.visible = false;
+    if (game.mm) try { game.mm.draw(game.pos, c.yaw + Math.PI); } catch (e) { }
+    var lab = document.getElementById("bb-alt");
+    if (lab) lab.textContent = Math.round(c.y - game.Q.heightAt(c.x, c.z)) + "م";
+    return true;
+  };
 
   function buildTick() {
     if (!B || !B.game || B.game.disposed) return;
@@ -2196,13 +2268,45 @@
       el("div", { class: "bb-top" }, [
         el("b", { text: "🏗️ وضع البناء" }),
         el("span", { id: "bb-n", text: "" }),
-        el("i", { id: "bb-pos", text: "" })
+        el("i", { id: "bb-pos", text: "" }),
+        el("i", { id: "bb-alt", text: "", style: "margin-inline-start:8px" })
       ]),
       el("div", { class: "bb-tools" }, [
         el("button", { class: "bb ok", text: "📦 ضع صندوقاً", onclick: doPlace }),
         el("button", { class: "bb", text: "✋ اختر الأقرب", onclick: doPick }),
         el("button", { class: "bb", id: "bb-move", text: "↔️ حرّك", onclick: doMove }),
         el("button", { class: "bb dz", text: "🗑️ احذف", onclick: doDel })
+      ]),
+      el("div", { class: "bb-tools" }, [
+        (function () {
+          var up = el("button", { class: "bb", text: "🔼 اصعد" });
+          up.addEventListener("pointerdown", function (e) { e.preventDefault(); B.up = true; });
+          ["pointerup", "pointercancel", "pointerleave"].forEach(function (ev) { up.addEventListener(ev, function () { B.up = false; }); });
+          return up;
+        })(),
+        (function () {
+          var dn = el("button", { class: "bb", text: "🔽 انزل" });
+          dn.addEventListener("pointerdown", function (e) { e.preventDefault(); B.down = true; });
+          ["pointerup", "pointercancel", "pointerleave"].forEach(function (ev) { dn.addEventListener(ev, function () { B.down = false; }); });
+          return dn;
+        })(),
+        el("button", {
+          class: "bb", id: "bb-spd", text: "⚡ ×1", onclick: function () {
+            var steps = [12, 28, 60, 130];
+            var i = steps.indexOf(B.flySpeed);
+            B.flySpeed = steps[(i + 1) % steps.length];
+            document.getElementById("bb-spd").textContent = "⚡ ×" + (B.flySpeed / 12).toFixed(B.flySpeed < 30 ? 1 : 0);
+          }
+        }),
+        el("button", {
+          class: "bb", id: "bb-fly", text: "🕊️ طيران", onclick: function () {
+            B.fly = !B.fly;
+            document.getElementById("bb-fly").textContent = B.fly ? "🕊️ طيران" : "🚶 مشي";
+            if (!B.fly && B.game.player) B.game.player.group.visible = true;
+            if (B.fly) { B.cam.x = B.game.camera.position.x; B.cam.y = B.game.camera.position.y; B.cam.z = B.game.camera.position.z; }
+            toast(B.fly ? "🕊️ كاميرا طائرة حرّة" : "🚶 وضع المشي بالشخصية");
+          }
+        })
       ]),
       el("div", { class: "bb-tools" }, [
         el("button", { class: "bb", text: "🔄 دوّر", onclick: function () { withSel(function (c) { c.ry = (c.ry || 0) + 0.4; }); } }),

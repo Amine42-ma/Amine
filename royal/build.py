@@ -441,6 +441,14 @@ ENGINE_PATCHES = [
         'this._hs&&this.hud.feed("\\u{1F3AF} \\u0625\\u0635\\u0627\\u0628\\u0629 \\u0631\\u0623\\u0633!");',
     ),
 
+    # 43) وضع البناء: كاميرا طائرة حرّة تتولّى الإطار بالكامل.
+    (
+        'fly-update',
+        'update(t){let e=this.clock.elapsedTime;switch(',
+        'update(t){if(window.__ROYAL_FLY__&&window.__ROYAL_FLY__(this,t))return;'
+        'let e=this.clock.elapsedTime;switch(',
+    ),
+
     # 41) الطائرة تكمل مسيرها بعد القفز حتى تختفي في الأفق.
     (
         'plane-flyaway',
