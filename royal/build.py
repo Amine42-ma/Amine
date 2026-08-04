@@ -16,12 +16,19 @@
     python3 build.py <input.html> <output.html>
 """
 
+import base64
+import gzip
 import io
 import os
 import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# نماذج ثلاثية الأبعاد تُستبدَل داخل الحمولة: معرّف الأصل -> ملف .glb
+ASSET_SWAPS = {
+    "bundled_w_pistol": os.path.join(HERE, "assets", "pistol.glb"),
+}
 
 
 class PatchError(RuntimeError):
@@ -194,7 +201,95 @@ ENGINE_PATCHES = [
         'window.__ROYAL_READY__&&window.__ROYAL_READY__(this),'
         'this.beginFlight(),this.loop()',
     ),
+
+    # 16) ارتفاع الأرض: يمنع القفز فوق أسطح البيوت الصغيرة عند محاولة الدخول.
+    (
+        'ground-hook',
+        'groundY(t,e,n){return this.Q.groundFor(t,e,n===void 0?this.pos?.y??1e5:n)}',
+        'groundY(t,e,n){var _g=this.Q.groundFor(t,e,n===void 0?this.pos?.y??1e5:n);'
+        'return window.__ROYAL_GY__?window.__ROYAL_GY__(this,t,e,n,_g):_g}',
+    ),
+
+    # 17) اتجاه الشخصية: تنظر لجهة حركتها بدل ظهرها للكاميرا.
+    (
+        'face-move',
+        'let O=this.yaw+Math.PI,U=I>.6?Math.atan2(this.vel.x,this.vel.z):void 0;this.player.update(t,{',
+        'let O=this.yaw+Math.PI,U=I>.6?Math.atan2(this.vel.x,this.vel.z):void 0;'
+        'if(window.__ROYAL_FACE__){var _fy=window.__ROYAL_FACE__(this,O,U,e.aiming||e.shoot);'
+        'if(_fy!==void 0){O=_fy;U=void 0}}'
+        'this.player.update(t,{',
+    ),
+
+    # 18) الأعداء لا يطلقون النار عبر الجدران.
+    (
+        'bot-los',
+        's.fire=me(.35,1.1)/(.4+this.P.match.botSkill);let M=s.pos.clone();M.y+=s.ch.totalH*.7;'
+        'let T=this.pos.clone();T.y+=this.player.totalH*.6,this.addTracer(M,T),'
+        'Math.random()<this.P.match.botSkill*wt(1-E/70,.15,1)&&this.damage(me(4,9),s.name)',
+
+        's.fire=me(.35,1.1)/(.4+this.P.match.botSkill);let M=s.pos.clone();M.y+=s.ch.totalH*.7;'
+        'let T=this.pos.clone();T.y+=this.player.totalH*.6;'
+        'if(!window.__ROYAL_LOS__||window.__ROYAL_LOS__(this,M,T)){this.addTracer(M,T),'
+        'Math.random()<this.P.match.botSkill*wt(1-E/70,.15,1)&&this.damage(me(4,9),s.name)}',
+    ),
+
+    # 19) صوت الهبوط/الرياح: طبقتان (هدير منخفض + هسيس هوائي) بدل ضجيج حادّ.
+    (
+        'wind-sound',
+        'start(){if(!us()||this.on||!Vn.sfx)return;this.on=!0;let t=Pt.currentTime,'
+        'e=Pt.createBufferSource();e.buffer=Na(),e.loop=!0;let n=Pt.createBiquadFilter();'
+        'n.type="bandpass",n.frequency.value=900,n.Q.value=.5;let i=Pt.createGain();'
+        'i.gain.setValueAtTime(1e-4,t),i.gain.exponentialRampToValueAtTime(.3,t+.8),'
+        'e.connect(n),n.connect(i),i.connect(gi),e.start(t),this.n={s:e,g:i,bp:n}}'
+        'set(t){if(!this.on)return;let e=Pt.currentTime;'
+        'this.n.g.gain.setTargetAtTime(.06+.34*t,e,.2),'
+        'this.n.bp.frequency.setTargetAtTime(500+1400*t,e,.2)}',
+
+        'start(){if(!us()||this.on||!Vn.sfx)return;this.on=!0;let t=Pt.currentTime,'
+        'e=Pt.createBufferSource();e.buffer=Na(),e.loop=!0;'
+        'let n=Pt.createBiquadFilter();n.type="lowpass",n.frequency.value=300,n.Q.value=.9;'
+        'let r2=Pt.createBiquadFilter();r2.type="bandpass",r2.frequency.value=1100,r2.Q.value=.7;'
+        'let g2=Pt.createGain();g2.gain.value=.30;'
+        'let i=Pt.createGain();'
+        'i.gain.setValueAtTime(1e-4,t),i.gain.exponentialRampToValueAtTime(.26,t+1.1);'
+        'e.connect(n),n.connect(i),e.connect(r2),r2.connect(g2),g2.connect(i),i.connect(gi);'
+        'let l2=Pt.createOscillator();l2.frequency.value=.23;'
+        'let l3=Pt.createGain();l3.gain.value=70;l2.connect(l3),l3.connect(n.frequency),l2.start(t);'
+        'e.start(t),this.n={s:e,g:i,bp:n,air:r2,ag:g2,lfo:l2}}'
+        'set(t){if(!this.on)return;let e=Pt.currentTime;'
+        'this.n.g.gain.setTargetAtTime(.05+.30*t,e,.28),'
+        'this.n.bp.frequency.setTargetAtTime(190+520*t,e,.28),'
+        'this.n.air.frequency.setTargetAtTime(850+1500*t,e,.28),'
+        'this.n.ag.gain.setTargetAtTime(.10+.34*t*t,e,.28)}',
+    ),
 ]
+
+
+def swap_assets(html):
+    """يفك ضغط حمولة اللعبة ويستبدل نماذج .glb المطلوبة ثم يعيد ضغطها."""
+    swaps = {k: v for k, v in ASSET_SWAPS.items() if os.path.exists(v)}
+    if not swaps:
+        return html
+
+    m = re.search(r'(<script id="royal-payload-gz"[^>]*>)(.*?)(</script>)', html, re.S)
+    if not m:
+        raise PatchError("لم أجد كتلة الحمولة royal-payload-gz")
+
+    data = gzip.decompress(base64.b64decode(m.group(2).strip())).decode("utf-8")
+
+    for asset_id, path in swaps.items():
+        with open(path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("ascii")
+        # ‏{"id":"<asset_id>", ... ,"b64":"<data>"}  — نستبدل أول b64 بعد المعرّف فقط
+        pat = r'("id":"%s"(?:(?!"b64").)*?"b64":")[^"]*(")' % re.escape(asset_id)
+        data, n = re.subn(pat, lambda mm: mm.group(1) + b64 + mm.group(2), data, count=1)
+        if n != 1:
+            raise PatchError("استبدال النموذج «%s» فشل (تطابقات=%d)" % (asset_id, n))
+        print("  ✔ نموذج %s ← %s (%.0f كيلوبايت)" % (asset_id, os.path.basename(path), len(b64) / 1365.0))
+
+    packed = base64.b64encode(
+        gzip.compress(data.encode("utf-8"), 9)).decode("ascii")
+    return html[:m.start(2)] + packed + html[m.end(2):]
 
 
 def build(src_path, out_path):
@@ -228,8 +323,12 @@ def build(src_path, out_path):
     html = html[:i + len(tag)] + engine + html[j:]
 
     # ---- 3) احقن سكربت الإعداد قبل المحرّك
+    prefs = '<script id="royal-prefs" type="application/json">null</script>\n'
     setup_tag = '<script id="royal-setup">\n' + js + '\n</script>\n'
-    html = html.replace(tag, setup_tag + tag, 1)
+    html = html.replace(tag, prefs + setup_tag + tag, 1)
+
+    # ---- 4) استبدال النماذج ثلاثية الأبعاد داخل الحمولة
+    html = swap_assets(html)
 
     with io.open(out_path, "w", encoding="utf-8") as f:
         f.write(html)

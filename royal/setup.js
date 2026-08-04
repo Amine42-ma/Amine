@@ -97,7 +97,8 @@
   function isUrl(s) { return typeof s === "string" && /^(data:|blob:|https?:)/.test(s); }
   function toast(msg, ms) {
     var t = el("div", {
-      text: msg, style: "position:fixed;left:50%;top:13%;transform:translateX(-50%);z-index:9999;" +
+      class: "rs-toast", text: msg,
+      style: "position:fixed;left:50%;top:13%;transform:translateX(-50%);z-index:9999;" +
         "background:rgba(10,6,32,.95);border:1.5px solid rgba(255,255,255,.25);border-radius:12px;" +
         "padding:9px 16px;font-weight:900;font-size:13px;color:#fff;pointer-events:none;direction:rtl"
     });
@@ -107,17 +108,35 @@
 
   /* ------------------------------------------------- التخزين */
 
+  /* الإعدادات المدمجة داخل الملف (تُكتَب عند «حمّل اللعبة النهائية») */
+  var BAKED = (function () {
+    try {
+      var n = document.getElementById("royal-prefs");
+      return n ? JSON.parse(n.textContent || "null") : null;
+    } catch (e) { return null; }
+  })();
+  var LOCKED = !!(BAKED && BAKED.locked);
+
   var SAVED = null;
   function load() {
     if (SAVED) return SAVED;
-    try { SAVED = JSON.parse(localStorage.getItem(LS) || "null") || {}; }
-    catch (e) { SAVED = {}; }
+    if (LOCKED) { SAVED = JSON.parse(JSON.stringify(BAKED)); SAVED.myIcons = SAVED.myIcons || []; return SAVED; }
+    try { SAVED = JSON.parse(localStorage.getItem(LS) || "null") || null; }
+    catch (e) { SAVED = null; }
+    if (!SAVED && BAKED) SAVED = JSON.parse(JSON.stringify(BAKED));
+    if (!SAVED) SAVED = {};
     if (!SAVED.myIcons) SAVED.myIcons = [];
     return SAVED;
   }
   function save() {
+    if (LOCKED) return;
     try { localStorage.setItem(LS, JSON.stringify(SAVED)); }
     catch (e) { console.warn("setup save failed", e); toast("تعذّر الحفظ — مساحة التخزين ممتلئة"); }
+  }
+
+  function playerName(v) {
+    if (v !== undefined) { try { localStorage.setItem("royal-player-name", v); } catch (e) { } return v; }
+    try { return localStorage.getItem("royal-player-name") || ""; } catch (e) { return ""; }
   }
   function wipe() { SAVED = null; try { localStorage.removeItem(LS); } catch (e) { } load(); }
 
@@ -127,12 +146,17 @@
     climb: "strict",     /* free | soft | strict */
     stepH: 0.28,
     doorStep: 0.75,      /* تسامح الخطوة عند مداخل المباني */
+    doorFix: true,       /* لا يقفز فوق سطح البيت عند محاولة الدخول */
     freeWater: true,     /* السماح بدخول الأودية والماء الداخلي */
     stickyAim: true,     /* التصويب يبقى مثبّتاً حتى تضغط ثانيةً */
+    faceMove: true,      /* الشخصية تنظر لجهة حركتها */
+    botLOS: true,        /* الأعداء لا يطلقون عبر الجدران */
     ambient: 0.55,       /* مستوى صوت الخلفية */
     ocean: true,         /* بحر واقعي */
+    trophies: false,     /* إظهار الكؤوس والعملات في الواجهة */
+    slimHud: true,       /* خانتا سلاح فقط بلا صندوق ثالث ولا شارة علوية */
     build: false,        /* وضع محرّر البناء */
-    badge: { x: 0.5, y: 0.19, size: 0.85, visible: true }
+    badge: { x: 0.5, y: 0.19, size: 0.85, visible: false }
   };
   window.__ROYAL_OPT__ = OPT;
 
@@ -163,10 +187,46 @@
     applySaved();
     return new Promise(function (res) {
       resolveGo = res;
+      /* النسخة النهائية للاعبين: لا لوحة إعداد — اسم اللاعب ثم اللعب مباشرةً */
+      if (LOCKED) {
+        askName(function () { var b = document.getElementById("rs-boot"); if (b) b.remove(); res(P); });
+        return;
+      }
       buildUI();
       show(true);
       if (load().wantBuild) { SAVED.wantBuild = false; save(); setTab("crate"); toast("تم حفظ الصناديق ✔", 2400); }
     });
+  }
+
+  /* ------------------------------------------- اسم اللاعب أول مرّة */
+  function askName(done) {
+    var cur = playerName();
+    if (cur) { P.player.name = cur; done(); return; }
+    var b = document.getElementById("rs-boot"); if (b) b.remove();
+    var inp = el("input", {
+      id: "rn-inp", type: "text", maxlength: "16", placeholder: "اكتب اسمك هنا",
+      value: (P.player && P.player.name) || ""
+    });
+    var go = el("button", {
+      id: "rn-go", text: "▶️ ابدأ",
+      onclick: function () {
+        var v = (inp.value || "").trim().slice(0, 16);
+        if (!v) { inp.focus(); toast("اكتب اسمك أولاً"); return; }
+        playerName(v); P.player.name = v;
+        box.remove(); done();
+      }
+    });
+    inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go.click(); });
+    var box = el("div", { id: "rname" }, [
+      el("div", { class: "bx" }, [
+        el("div", { class: "k", text: "👑" }),
+        el("div", { class: "t", text: "أهلاً بك في بطل رويال" }),
+        el("div", { class: "s", text: "ما اسمك أيها البطل؟" }),
+        inp, go
+      ])
+    ]);
+    document.body.appendChild(box);
+    setTimeout(function () { try { inp.focus(); } catch (e) { } }, 120);
   }
 
   function applySaved() {
@@ -210,8 +270,10 @@
     for (i = 0; i < P.weapons.length; i++) { w = P.weapons[i]; s.weapons[w.id] = { emo: w.emo, icon: w.icon, color: w.color }; }
     s.crates = P.map.crates;
     s.opt = {
-      climb: OPT.climb, stepH: OPT.stepH, doorStep: OPT.doorStep, freeWater: OPT.freeWater,
-      stickyAim: OPT.stickyAim, ambient: OPT.ambient, ocean: OPT.ocean, badge: OPT.badge
+      climb: OPT.climb, stepH: OPT.stepH, doorStep: OPT.doorStep, doorFix: OPT.doorFix,
+      freeWater: OPT.freeWater, stickyAim: OPT.stickyAim, faceMove: OPT.faceMove,
+      botLOS: OPT.botLOS, ambient: OPT.ambient, ocean: OPT.ocean,
+      trophies: OPT.trophies, slimHud: OPT.slimHud, badge: OPT.badge
     };
     SAVED = s; save();
   }
@@ -625,9 +687,10 @@
     P.controls.scale = FACTORY.scale;
     P.weapons.forEach(function (w, i) { var f = FACTORY.weapons[i]; w.emo = f.emo; w.icon = f.icon; w.color = AMMO_COL[w.ammo] || "#ffc21a"; });
     P.map.crates = clone(FACTORY.crates);
-    OPT.climb = "strict"; OPT.stepH = 0.28; OPT.doorStep = 0.75; OPT.freeWater = true;
-    OPT.stickyAim = true; OPT.ambient = 0.55; OPT.ocean = true;
-    OPT.badge = { x: 0.5, y: 0.19, size: 0.85, visible: true };
+    OPT.climb = "strict"; OPT.stepH = 0.28; OPT.doorStep = 0.75; OPT.doorFix = true;
+    OPT.freeWater = true; OPT.stickyAim = true; OPT.faceMove = true; OPT.botLOS = true;
+    OPT.ambient = 0.55; OPT.ocean = true; OPT.trophies = false; OPT.slimHud = true;
+    OPT.badge = { x: 0.5, y: 0.19, size: 0.85, visible: false };
     sel = null; persist(); setTab(tab);
   }
 
@@ -892,17 +955,38 @@
     ]));
 
     s.appendChild(el("div", { class: "rs-card" }, [
-      el("h4", { text: "🔫 شارة السلاح المحمول" }),
+      el("h4", { text: "🔫 شريط الأسلحة" }),
+      el("div", { class: "rs-hint", text: "الوضع المختصر: خانتا السلاح فقط أسفل الشاشة، والذخيرة داخل خانة السلاح المستعمَل — بلا صندوق ثالث وبلا شارة فوق الشاشة." }),
       el("div", { class: "rs-chips" }, [
-        el("button", { class: "rs-chip " + (OPT.badge.visible ? "ok" : "dz"), text: OPT.badge.visible ? "👁️ ظاهرة" : "🚫 مخفية", onclick: function () { OPT.badge.visible = !OPT.badge.visible; persist(); renderPlay(); } })
+        el("button", { class: "rs-chip " + (OPT.slimHud ? "ok" : ""), text: OPT.slimHud ? "✅ خانتان فقط" : "🔢 مع صندوق الذخيرة", onclick: function () { OPT.slimHud = !OPT.slimHud; persist(); renderPlay(); } }),
+        el("button", { class: "rs-chip " + (OPT.badge.visible ? "ok" : "dz"), text: OPT.badge.visible ? "👁️ الشارة العلوية ظاهرة" : "🚫 الشارة العلوية مخفية", onclick: function () { OPT.badge.visible = !OPT.badge.visible; persist(); renderPlay(); } })
       ]),
-      row("الحجم", slider(0.6, 2, 0.05, OPT.badge.size || 1, function (v) { OPT.badge.size = v; persist(); }))
+      OPT.badge.visible ? row("حجم الشارة", slider(0.6, 2, 0.05, OPT.badge.size || 1, function (v) { OPT.badge.size = v; persist(); })) : null
+    ]));
+
+    s.appendChild(el("div", { class: "rs-card" }, [
+      el("h4", { text: "🧠 الأعداء والشخصية" }),
+      el("div", { class: "rs-chips" }, [
+        el("button", { class: "rs-chip " + (OPT.botLOS ? "ok" : "dz"), text: OPT.botLOS ? "✅ لا إطلاق عبر الجدران" : "🚫 الأعداء يخترقون الجدران", onclick: function () { OPT.botLOS = !OPT.botLOS; persist(); renderPlay(); } }),
+        el("button", { class: "rs-chip " + (OPT.faceMove ? "ok" : "dz"), text: OPT.faceMove ? "✅ الشخصية تنظر لجهة حركتها" : "🚫 تنظر لجهة الكاميرا", onclick: function () { OPT.faceMove = !OPT.faceMove; persist(); renderPlay(); } }),
+        el("button", { class: "rs-chip " + (OPT.doorFix ? "ok" : "dz"), text: OPT.doorFix ? "✅ دخول البيوت بدل الصعود فوقها" : "🚫 السلوك القديم", onclick: function () { OPT.doorFix = !OPT.doorFix; persist(); renderPlay(); } }),
+        el("button", { class: "rs-chip " + (OPT.trophies ? "" : "ok"), text: OPT.trophies ? "🏆 الكؤوس والعملات ظاهرة" : "🚫 الكؤوس والعملات مخفية", onclick: function () { OPT.trophies = !OPT.trophies; persist(); renderPlay(); } })
+      ])
+    ]));
+
+    s.appendChild(el("div", { class: "rs-card hero" }, [
+      el("h4", { text: "⬇️ حمّل اللعبة النهائية" }),
+      el("div", { class: "rs-hint", text: "يُنتج ملفاً واحداً فيه كل ترتيبك وأيقوناتك وصناديقك مدمجة داخله. من يحمّله يجد الأزرار جاهزة كما صمّمتها — لا تظهر له لوحة الإعداد، فقط يكتب اسمه ويلعب. هذه هي النسخة التي توزّعها." }),
+      el("button", { id: "rs-export", class: "rs-big", text: "⬇️ حمّل اللعبة النهائية", onclick: exportGame })
     ]));
 
     s.appendChild(el("div", { class: "rs-card" }, [
       el("h4", { text: "💾 الإعدادات" }),
-      el("div", { class: "rs-hint", text: "كل ما ترتّبه يُحفظ داخل جهازك ويُطبَّق تلقائياً في كل مرة تفتح اللعبة." }),
-      el("div", { class: "rs-chips" }, [el("button", { class: "rs-chip dz", text: "↺ استعادة كل الافتراضي", onclick: resetAll })])
+      el("div", { class: "rs-hint", text: "أثناء التصميم يُحفظ كل شيء في جهازك. اسمك الحالي: " + (playerName() || "—") }),
+      el("div", { class: "rs-chips" }, [
+        el("button", { class: "rs-chip", text: "✏️ غيّر الاسم", onclick: function () { playerName(""); toast("سيُطلب اسمك عند بدء اللعبة"); } }),
+        el("button", { class: "rs-chip dz", text: "↺ استعادة كل الافتراضي", onclick: resetAll })
+      ])
     ]));
   }
 
@@ -917,7 +1001,66 @@
     if (!fab) { fab = el("div", { id: "rs-fab", text: "⚙️", onclick: reopen }); document.body.appendChild(fab); }
     fab.classList.add("on");
     watchFab();
-    if (resolveGo) { var r = resolveGo; resolveGo = null; r(P); }
+    askName(function () { if (resolveGo) { var r = resolveGo; resolveGo = null; r(P); } });
+  }
+
+  /* ---------------------------------------------------------------
+     تصدير نسخة نهائية: كل ترتيبك وأيقوناتك مدمجة داخل الملف نفسه،
+     فمن يحمّلها يجد كل شيء جاهزاً بلا أي إعداد.
+     --------------------------------------------------------------- */
+  function bakedPrefs() {
+    persist();
+    var s = JSON.parse(JSON.stringify(load()));
+    s.locked = true;
+    s.wantBuild = false;
+    delete s.myIcons;                 /* المكتبة خاصة بالمطوّر */
+    return s;
+  }
+
+  function exportGame() {
+    var btn = document.getElementById("rs-export");
+    if (btn) { btn.disabled = true; btn.textContent = "⏳ جارٍ التجهيز…"; }
+    toast("جارٍ تجهيز نسختك النهائية… لا تغلق الصفحة", 6000);
+    setTimeout(function () {
+      var json;
+      try { json = JSON.stringify(bakedPrefs()); }
+      catch (e) { fail("تعذّر تجهيز الإعدادات"); return; }
+
+      /* أخرج كل ما أضفناه للصفحة قبل نسخها، حتى تخرج نسخة نظيفة */
+      var parked = [];
+      function park(n) { if (n && n.parentNode) { parked.push([n, n.parentNode, n.nextSibling]); n.remove(); } }
+      ["rsetup", "rs-fab", "rs-build", "rs-boot", "rname", "rw-weapon"].forEach(function (id) { park(document.getElementById(id)); });
+      Array.prototype.slice.call(document.querySelectorAll(".rs-toast")).forEach(park);
+      var app = document.getElementById("app");
+      if (app) Array.prototype.slice.call(app.childNodes).forEach(park);   /* اللعبة/الواجهة الجارية */
+
+      function restore() { for (var i = parked.length - 1; i >= 0; i--) { try { parked[i][1].insertBefore(parked[i][0], parked[i][2]); } catch (e) { } } }
+
+      var html;
+      try { html = "<!doctype html>\n" + document.documentElement.outerHTML; }
+      catch (e) { restore(); fail("الملف كبير جداً على هذا الجهاز — جرّب من حاسوب"); return; }
+      restore();
+
+      var re = /(<script id="royal-prefs"[^>]*>)[\s\S]*?(<\/script>)/;
+      if (!re.test(html)) { fail("لم أجد كتلة الإعدادات داخل الملف"); return; }
+      html = html.replace(re, function (m, a, c) { return a + json + c; });
+
+      try {
+        var blob = new Blob([html], { type: "text/html;charset=utf-8" });
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "royalbattle-" + new Date().toISOString().slice(0, 10) + ".html";
+        document.body.appendChild(a); a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 8000);
+        toast("✔ تم تحميل نسختك النهائية — وزّعها كما هي", 5000);
+        if (btn) { btn.disabled = false; btn.textContent = "⬇️ حمّل اللعبة النهائية"; }
+      } catch (e) { fail("تعذّر إنشاء الملف: " + e.message); }
+
+      function fail(msg) {
+        toast(msg, 5000);
+        if (btn) { btn.disabled = false; btn.textContent = "⬇️ حمّل اللعبة النهائية"; }
+      }
+    }, 60);
   }
 
   function openBuilder() {
@@ -1023,6 +1166,61 @@
 
   /* الوادي/الماء الداخلي: نسمح بالحركة فيه، ويبقى البحر الخارجي هو الحدّ */
   window.__ROYAL_WATEROK__ = function () { return OPT.freeWater || OPT.build; };
+
+  /* ارتفاع الأرض: لا يقفز فوق سطح البيت عند محاولة الدخول من باب صغير */
+  window.__ROYAL_GY__ = function (game, x, z, yArg, g) {
+    if (!OPT.doorFix) return g;
+    var Q = game.Q, f = Q.heightAt(x, z), rf = Q.roofAt(x, z);
+    if (rf - f < 0.35) return g;                       /* أرض مكشوفة */
+    var y = (yArg === undefined) ? (game.pos ? game.pos.y : 1e5) : yArg;
+    if (y >= rf - 0.12) return rf;                     /* نحن فعلاً فوق السطح */
+    return f;                                          /* غير ذلك: ندخل تحت/داخل المبنى */
+  };
+
+  /* الشخصية تنظر لجهة حركتها بدل أن تُدير ظهرها */
+  window.__ROYAL_FACE__ = function (game, camYaw, moveYaw, aiming) {
+    if (!OPT.faceMove || aiming || game.view === "fps") return undefined;
+    if (moveYaw === undefined) return undefined;
+    return moveYaw;
+  };
+
+  /* خطّ النظر: الأعداء لا يطلقون عبر الجدران والتضاريس */
+  window.__ROYAL_LOS__ = function (game, from, to) {
+    if (!OPT.botLOS) return true;
+    var Q = game.Q;
+    if (!Q || !Q.roofAt) return true;
+    var dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
+    var len = Math.hypot(dx, dz);
+    if (len < 2) return true;
+    var steps = Math.min(64, Math.max(6, Math.ceil(len / 1.2)));
+    for (var i = 1; i < steps; i++) {
+      var k = i / steps;
+      var x = from.x + dx * k, z = from.z + dz * k, y = from.y + dy * k;
+      if (Q.roofAt(x, z) > y + 0.35) return false;
+    }
+    return true;
+  };
+
+  /* إخفاء الكؤوس والعملات من الواجهة */
+  function tidyLobby() {
+    if (OPT.trophies) return;
+    var lb = document.getElementById("lobby");
+    if (!lb || lb.__tidy) return;
+    var rows = [], i;
+    var all = lb.querySelectorAll("div");
+    for (i = 0; i < all.length; i++) {
+      var st = all[i].getAttribute("style") || "";
+      if (st.indexOf("top: 2%") >= 0 && st.indexOf("position: absolute") >= 0) rows.push(all[i]);
+    }
+    if (!rows.length) return;
+    lb.__tidy = true;
+    rows.forEach(function (r) {
+      if (r.querySelector("b")) {                       /* صف الاسم: أبقِ الاسم فقط */
+        for (var j = r.children.length - 1; j >= 1; j--) r.children[j].style.display = "none";
+      } else r.style.display = "none";                  /* صف العملات: أخفِه كاملاً */
+    });
+  }
+  setInterval(tidyLobby, 800);
 
   /* تثبيت التصويب: يُستدعى من عصا التصويب */
   window.__ROYAL_STICK__ = function (hud, cfg, phase) {
@@ -1393,10 +1591,12 @@
   }
   window.__ROYAL_WEAP__ = function (hud, slots, active) {
     try {
+      hud.ammoBox.classList.toggle("slim", !!OPT.slimHud);
       var nodes = hud.ammoBox.querySelectorAll(".wslot");
       for (var i = 0; i < nodes.length; i++) {
         var it = slots[i];
         nodes[i].style.setProperty("--wcol", it ? (it.def.color || AMMO_COL[it.def.ammo] || "#ffc21a") : "rgba(255,255,255,.2)");
+        nodes[i].classList.toggle("cur", i === active);
       }
       var n = badgeEl(hud); placeBadge(hud);
       var cur = slots[active];
@@ -1413,8 +1613,18 @@
   };
   window.__ROYAL_AMMO__ = function (hud, info) {
     try {
-      if (!hud.__rw || !info) return;
-      hud.__rw.querySelector("span").textContent = info.mag + " / " + info.res;
+      if (!info) return;
+      if (hud.__rw) hud.__rw.querySelector("span").textContent = info.mag + " / " + info.res;
+      /* في الوضع المختصر: العدّاد داخل خانة السلاح المستعمَل */
+      if (OPT.slimHud) {
+        var cur = hud.ammoBox.querySelector(".wslot.cur");
+        if (cur) {
+          var a = cur.querySelector("s");
+          if (!a) { a = document.createElement("s"); cur.appendChild(a); }
+          a.textContent = info.mag + "/" + info.res;
+          a.classList.toggle("low", info.mag === 0);
+        }
+      }
     } catch (e) { }
   };
   window.__ROYAL_HUDL__ = function (hud) { try { placeBadge(hud); } catch (e) { } };

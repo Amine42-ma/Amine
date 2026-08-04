@@ -219,3 +219,34 @@
 #rs-build .bb.on{background:linear-gradient(180deg,var(--cy),var(--cy-d));color:#02222e;border-color:transparent}
 #rs-build .bb.save{background:linear-gradient(180deg,var(--acc),var(--acc-d));color:#2a1c00;border-color:transparent}
 #rs-build .bb:active{transform:scale(.96)}
+
+
+/* ---------- العصي تُخفى فعلاً عند إلغاء إظهارها ---------- */
+#hud .stick.hidden{display:none}
+#hud .hud-stat.hidden{display:none}
+
+/* ---------- شريط أسلحة مختصر: خانتان فقط ---------- */
+#ammobox.slim .wammo{display:none}
+#ammobox.slim .wslot{width:clamp(112px,18vw,178px)}
+#ammobox.slim .wslot s{position:absolute;left:4px;bottom:2px;font-size:11px;font-weight:900;
+  color:var(--wcol,#ffc21a);text-decoration:none;direction:ltr;text-shadow:0 1px 2px #000}
+#ammobox.slim .wslot s.low{color:var(--rd);animation:blink .5s infinite}
+#ammobox.slim .wslot:not(.cur) s{display:none}
+
+/* ---------- شاشة إدخال الاسم ---------- */
+#rname{position:fixed;inset:0;z-index:9600;display:grid;place-items:center;direction:rtl;
+  font-family:var(--ff);color:#fff;text-align:center;
+  background:linear-gradient(160deg,#150c38,#0a0620 60%,#060312)}
+#rname .bx{width:min(360px,86vw)}
+#rname .k{font-size:56px;filter:drop-shadow(0 6px 18px rgba(255,194,26,.55))}
+#rname .t{font-size:21px;font-weight:900;margin:8px 0 2px}
+#rname .s{font-size:13px;color:#8b7fc0;margin-bottom:16px}
+#rname input{width:100%;padding:14px 16px;border-radius:14px;font-size:17px;font-weight:800;
+  font-family:inherit;text-align:center;color:#fff;background:rgba(255,255,255,.08);
+  border:2px solid rgba(255,255,255,.25);outline:none}
+#rname input:focus{border-color:var(--acc)}
+#rname button{width:100%;margin-top:12px;border:0;border-radius:15px;padding:14px;cursor:pointer;
+  font-size:17px;font-weight:900;font-family:inherit;color:#04240f;
+  background:linear-gradient(180deg,var(--gr),var(--gr-d));
+  box-shadow:0 6px 0 rgba(0,0,0,.42)}
+#rname button:active{transform:translateY(3px);box-shadow:0 3px 0 rgba(0,0,0,.42)}
