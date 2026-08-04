@@ -183,6 +183,7 @@
     sfxPistolSec: 1.0,   /* طول مقطع طلقة المسدّس */
     sfxRifleSec: 0.3,    /* طول مقطع طلقة الرشّاش */
     menuVol: 0.45,       /* مستوى موسيقى القائمة */
+    thumbSide: true,     /* صورة السلاح: منظر جانبي كامل */
     exactWalls: true,    /* اصطدام دقيق بمضلّعات الخريطة */
     matchMin: 22,        /* مدة المباراة بالدقائق */
     voice: true,         /* الميكروفون مع الأصدقاء */
@@ -298,7 +299,8 @@
         if (f.hold) w.hold = f.hold; if (f.scale) w.scale = f.scale;
       }
     }
-    if (Array.isArray(s.crates) && s.crates.length) P.map.crates = clone(s.crates);
+    if (Array.isArray(s.crates)) P.map.crates = clone(s.crates);
+    else P.map.crates = [];            /* أول تشغيل: خريطة نظيفة تماماً */
     if (s.lobby && P.lobby && P.lobby.buttons) {
       P.lobby.buttons.forEach(function (b) {
         var f = s.lobby[b.uid];
@@ -354,6 +356,7 @@
       headMul: OPT.headMul, directAim: OPT.directAim, meshMove: OPT.meshMove,
       chuteAcc: OPT.chuteAcc, chuteDamp: OPT.chuteDamp, customSfx: OPT.customSfx,
       sfxPistolSec: OPT.sfxPistolSec, sfxRifleSec: OPT.sfxRifleSec, menuVol: OPT.menuVol,
+      thumbSide: OPT.thumbSide,
       matchMin: OPT.matchMin, voice: OPT.voice,
       voiceMic: OPT.voiceMic, perOrient: OPT.perOrient, sens: OPT.sens,
       adsSens: OPT.adsSens, smooth: OPT.smooth, online: OPT.online,
@@ -400,8 +403,8 @@
     UI.grip.onclick = function () { openPanel(panel.classList.contains("min")); };
     panel.classList.add("min");
 
-    [["btn", "🎮 الأزرار"], ["stat", "📊 العدّادات"], ["lobby", "🏠 الواجهة"],
-    ["weap", "🔫 الأسلحة"], ["crate", "📦 الصناديق"], ["play", "⚙️ اللعب"]].forEach(function (t) {
+    [["btn", "1️⃣ الأزرار"], ["crate", "2️⃣ الصناديق"], ["stat", "📊 العدّادات"],
+    ["lobby", "🏠 الواجهة"], ["weap", "🔫 الأسلحة"], ["play", "⚙️ اللعب"]].forEach(function (t) {
       UI.tabs.appendChild(el("button", { class: "rs-tab", "data-t": t[0], text: t[1], onclick: function () { setTab(t[0]); } }));
     });
     addEventListener("resize", function () { if (UI && UI.root.classList.contains("on")) renderStage(); });
@@ -633,6 +636,11 @@
       });
       if (tab === "stat") q.appendChild(el("button", { class: "rs-chip", text: "🔫 شارة السلاح المحمول", onclick: function () { select("badge", "badge"); } }));
       b.appendChild(q);
+      if (tab === "btn") b.appendChild(el("button", {
+        class: "rs-big", style: "margin-top:10px",
+        text: "التالي ← 2️⃣ ترتيب الصناديق على الخريطة",
+        onclick: function () { setTab("crate"); }
+      }));
       return;
     }
 
@@ -820,6 +828,7 @@
     OPT.ctxButtons = true; OPT.botDrop = true; OPT.headMul = 2.2; OPT.directAim = true;
     OPT.meshMove = true; OPT.chuteAcc = 34; OPT.chuteDamp = 2.2;
     OPT.customSfx = true; OPT.sfxPistolSec = 1.0; OPT.sfxRifleSec = 0.3; OPT.menuVol = 0.45;
+    OPT.thumbSide = true;
     OPT.voice = true; OPT.voiceMic = true; OPT.perOrient = true;
     OPT.online = false; OPT.netTarget = 25; OPT.netWait = 300;
     P.lobby.buttons = clone(FACTORY.lobby);
@@ -980,6 +989,11 @@
       el("h4", { text: "🔫 أيقونات وألوان الأسلحة" }),
       el("div", { class: "rs-hint", text: "الرمز أو صورتك تظهر في شريط الأسلحة أسفل الشاشة وفي شارة السلاح المحمول." }),
       el("div", { class: "rs-chips" }, [
+        el("button", {
+          class: "rs-chip " + (OPT.thumbSide ? "ok" : ""),
+          text: OPT.thumbSide ? "🔫 صورة جانبية كاملة (كما في ببجي)" : "🔄 صورة مائلة",
+          onclick: function () { OPT.thumbSide = !OPT.thumbSide; persist(); toast("تُطبَّق عند بدء المباراة القادمة", 2600); renderWeapons(); }
+        }),
         el("button", { class: "rs-chip ok", text: "🎨 استعادة الألوان الأصلية", onclick: function () { P.weapons.forEach(function (w) { w.color = AMMO_COL[w.ammo] || "#ffc21a"; }); persist(); renderWeapons(); } }),
         el("button", { class: "rs-chip", text: "↺ استعادة الرموز الأصلية", onclick: function () { P.weapons.forEach(function (w, i) { w.emo = FACTORY.weapons[i].emo; w.icon = null; }); persist(); renderWeapons(); } })
       ])
@@ -1063,6 +1077,21 @@
   function renderCrates() {
     var s = UI.sheet; s.innerHTML = "";
     MAP.poly = mapPoly();
+
+    s.appendChild(el("div", { class: "rs-card" }, [
+      el("h4", { text: "2️⃣ الخطوة الثانية — وزّع الصناديق على الخريطة" }),
+      el("div", { class: "rs-hint", text: "الخريطة تبدأ فارغة تماماً من الصناديق. ادخل المحرّر ثلاثي الأبعاد وتجوّل فيها بشخصيتك وضع كل صندوق في المكان الذي تريده بالضبط — مثل محرّك ألعاب حقيقي. ثم ارجع واضغط «ابدأ»." }),
+      el("div", { class: "rs-chips" }, [
+        el("button", {
+          class: "rs-chip dz", text: "🧹 امسح كل الصناديق",
+          onclick: function () { P.map.crates = []; MAP.sel = null; persist(); renderCrates(); toast("الخريطة صارت فارغة"); }
+        }),
+        el("button", {
+          class: "rs-chip", text: "📦 أعِد التوزيع الأصلي (" + FACTORY.crates.length + ")",
+          onclick: function () { P.map.crates = clone(FACTORY.crates); MAP.sel = null; persist(); renderCrates(); }
+        })
+      ])
+    ]));
 
     s.appendChild(el("div", { class: "rs-card hero" }, [
       el("h4", { text: "🏗️ محرّر البناء ثلاثي الأبعاد" }),
@@ -2141,6 +2170,11 @@
         el("button", { class: "bb", text: "🔄 دوّر", onclick: function () { withSel(function (c) { c.ry = (c.ry || 0) + 0.4; }); } }),
         el("button", { class: "bb", text: "➕ كبّر", onclick: function () { withSel(function (c) { c.scale = clamp((c.scale || 1) + 0.1, 0.5, 2.5); }); } }),
         el("button", { class: "bb", text: "➖ صغّر", onclick: function () { withSel(function (c) { c.scale = clamp((c.scale || 1) - 0.1, 0.5, 2.5); }); } }),
+        el("button", { class: "bb", text: "🧹 امسح الكل", onclick: function () {
+          if (!B) return;
+          B.game.crates.length = 0; B.sel = -1;
+          rebuildCrates(B.game); syncCrates(); upN(); toast("مُسحت كل الصناديق");
+        } }),
         el("button", { class: "bb save", text: "💾 حفظ وخروج", onclick: doSave })
       ])
     ]);

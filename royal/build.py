@@ -441,6 +441,39 @@ ENGINE_PATCHES = [
         'this._hs&&this.hud.feed("\\u{1F3AF} \\u0625\\u0635\\u0627\\u0628\\u0629 \\u0631\\u0623\\u0633!");',
     ),
 
+    # 40) خريطة فارغة تبقى فارغة (لا يولّد المحرّك 46 صندوقاً تلقائياً).
+    (
+        'no-auto-crates',
+        'this.crates=(e.map.crates?.length?e.map.crates:lr(this.an,{count:46})).map(',
+        'this.crates=(Array.isArray(e.map.crates)?e.map.crates:lr(this.an,{count:46})).map(',
+    ),
+
+    # 39) صورة السلاح في الحقيبة/الخانات: منظر جانبي كامل والفوهة لليمين.
+    (
+        'weapon-thumb',
+        'let h=new Me().setFromObject(o),u=h.getCenter(new P),d=h.getSize(new P),'
+        'f=Math.max(d.x,d.y,d.z)||1,y=t/e,x=f*.6,m=new Kn(-x,x,x/y,-x/y,.01,f*12);'
+        'm.position.set(u.x+f*.9,u.y+f*.45,u.z+f*1.7),m.lookAt(u),m.updateProjectionMatrix(),i.render(s,m);',
+
+        'let h=new Me().setFromObject(o),u=h.getCenter(new P),d=h.getSize(new P),'
+        'f=Math.max(d.x,d.y,d.z)||1,y=t/e,x=f*.6,m=new Kn(-x,x,x/y,-x/y,.01,f*24);'
+        'var _sd=!(window.__ROYAL_OPT__&&window.__ROYAL_OPT__.thumbSide===false);'
+        'if(_sd){m.position.set(u.x+f*3,u.y+f*.34,u.z+f*.22)}'
+        'else{m.position.set(u.x+f*.9,u.y+f*.45,u.z+f*1.7)}'
+        'm.lookAt(u),m.updateMatrixWorld(!0);'
+        'if(_sd){m.matrixWorldInverse.copy(m.matrixWorld).invert();'
+        'var _p=new P(),_ax=1/0,_bx=-1/0,_ay=1/0,_by=-1/0;'
+        'for(var _i=0;_i<8;_i++){'
+        '_p.set(_i&1?h.max.x:h.min.x,_i&2?h.max.y:h.min.y,_i&4?h.max.z:h.min.z)'
+        '.applyMatrix4(m.matrixWorldInverse);'
+        'if(_p.x<_ax)_ax=_p.x;if(_p.x>_bx)_bx=_p.x;'
+        'if(_p.y<_ay)_ay=_p.y;if(_p.y>_by)_by=_p.y}'
+        'var _cx=(_ax+_bx)/2,_cy=(_ay+_by)/2,'
+        '_hw=Math.max((_bx-_ax)/2,((_by-_ay)/2)*y)*1.10;'
+        'm.left=_cx-_hw,m.right=_cx+_hw,m.top=_cy+_hw/y,m.bottom=_cy-_hw/y}'
+        'm.updateProjectionMatrix(),i.render(s,m);',
+    ),
+
     # 38) موسيقى القائمة: أعطِ الأولوية للمقطوعة التي رفعها المطوّر.
     (
         'menu-music',
