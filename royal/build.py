@@ -371,6 +371,52 @@ ENGINE_PATCHES = [
         'this.Q=Ga(this.an),',
         'this.Q=Ga(this.an),window.__ROYAL_MAPMESH__&&window.__ROYAL_MAPMESH__(this),',
     ),
+
+    # 31) زرّا «فتح الصندوق» و«الالتقاط» يظهران فقط عند وجود شيء قريب.
+    (
+        'ctx-buttons',
+        'this.nearCrate=e,',
+        'this.nearCrate=e,window.__ROYAL_CTX__&&window.__ROYAL_CTX__(this,e,i),',
+    ),
+
+    # 32) الأعداء يُسقطون غنائمهم عند مقتلهم.
+    (
+        'bot-drop',
+        'killBot(t,e){t.alive=!1,t.ch.group.visible=!1,this.stats.alive--,',
+        'killBot(t,e){t.alive=!1,'
+        'window.__ROYAL_DROP__&&window.__ROYAL_DROP__(this,t),'
+        't.ch.group.visible=!1,this.stats.alive--,',
+    ),
+
+    # 33) إصابة دقيقة: كرة رأس + كرة جسم بدل كرة واحدة كبيرة.
+    (
+        'precise-hit',
+        'for(let l of this.bots){if(!l.alive||!l.landed||l.ally)continue;'
+        'a.copy(l.pos).sub(t),a.y+=l.ch.totalH*.55;let h=a.dot(e);if(h<.6||h>s)continue;'
+        'a.clone().addScaledVector(e,-h).length()<1.05&&(i=l,s=h)}',
+
+        'this._hs=!1;for(let l of this.bots){if(!l.alive||!l.landed||l.ally)continue;'
+        'if(window.__ROYAL_HIT__){let _r=window.__ROYAL_HIT__(this,t,e,l,s);'
+        'if(_r){i=l,s=_r.d,this._hs=_r.head}continue}'
+        'a.copy(l.pos).sub(t),a.y+=l.ch.totalH*.55;let h=a.dot(e);if(h<.6||h>s)continue;'
+        'a.clone().addScaledVector(e,-h).length()<1.05&&(i=l,s=h)}',
+    ),
+
+    # 34) ضرر إضافي لإصابة الرأس.
+    (
+        'headshot',
+        'if(i){jt.hit();let l=n.damage;',
+        'if(i){jt.hit();let l=n.damage*(this._hs?((window.__ROYAL_OPT__&&window.__ROYAL_OPT__.headMul)||2.2):1);'
+        'this._hs&&this.hud.feed("\\u{1F3AF} \\u0625\\u0635\\u0627\\u0628\\u0629 \\u0631\\u0623\\u0633!");',
+    ),
+
+    # 35) مساعدة التصويب اختيارية (تصويب مباشر عند إطفائها).
+    (
+        'aim-assist',
+        'd===1&&(y=this.aimAssist(c,y,s.range)),this.shootRay(c,y,s)}',
+        'd===1&&!(window.__ROYAL_OPT__&&window.__ROYAL_OPT__.directAim)&&(y=this.aimAssist(c,y,s.range)),'
+        'this.shootRay(c,y,s)}',
+    ),
 ]
 
 
@@ -399,6 +445,35 @@ def swap_assets(html):
     packed = base64.b64encode(
         gzip.compress(data.encode("utf-8"), 9)).decode("ascii")
     return html[:m.start(2)] + packed + html[m.end(2):]
+
+
+def check_syntax(html):
+    """يتأكّد أن كتلتي السكربت صالحتان نحوياً — يمنع شحن ملف مكسور."""
+    import json as _json
+    import subprocess
+    import tempfile
+    blocks = {}
+    for name in ("royal-setup", "royal-engine"):
+        tag = '<script id="%s">' % name
+        i = html.index(tag) + len(tag)
+        j = html.index("</script>", i)
+        blocks[name] = html[i:j]
+    with tempfile.TemporaryDirectory() as d:
+        paths = {}
+        for k, v in blocks.items():
+            fp = os.path.join(d, k + ".js")
+            with io.open(fp, "w", encoding="utf-8") as f:
+                f.write(v)
+            paths[k] = fp
+        script = ";".join(
+            "try{new Function(require('fs').readFileSync(%s,'utf8'))}"
+            "catch(e){console.log('BAD %s: '+e.message);process.exit(3)}" % (_json.dumps(p), k)
+            for k, p in paths.items())
+        r = subprocess.run(["node", "-e", script + ";console.log('syntax ok')"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise PatchError("خطأ صياغة في الملف الناتج:\n" + (r.stdout + r.stderr).strip())
+    print("  ✔ فحص الصياغة")
 
 
 def build(src_path, out_path):
@@ -438,6 +513,9 @@ def build(src_path, out_path):
 
     # ---- 4) استبدال النماذج ثلاثية الأبعاد داخل الحمولة
     html = swap_assets(html)
+
+    # ---- 5) تحقّق من سلامة الصياغة قبل الكتابة
+    check_syntax(html)
 
     with io.open(out_path, "w", encoding="utf-8") as f:
         f.write(html)

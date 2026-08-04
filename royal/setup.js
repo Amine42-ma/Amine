@@ -95,7 +95,20 @@
     return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + a + ")";
   }
   function isUrl(s) { return typeof s === "string" && /^(data:|blob:|https?:)/.test(s); }
-  function orient() { return innerWidth >= innerHeight ? "land" : "port"; }
+  function orient() { return editOrient || (innerWidth >= innerHeight ? "land" : "port"); }
+  var editOrient = null;
+  function setEditOrient(o) {
+    persist();                      /* احفظ الوضع الحالي أولاً */
+    editOrient = o;
+    var st = load(), src = o === "port" ? st.layoutPort : st.layout;
+    if (!src) src = o === "port" ? st.layout : st.layoutPort;
+    if (src) P.controls.layout.forEach(function (c) {
+      var f = src[c.id]; if (f) for (var k in f) if (f[k] !== undefined) c[k] = f[k];
+    });
+    UI.stage.classList.toggle("port", o === "port");
+    renderStage(); renderPanel();
+    toast(o === "port" ? "📱 تُحرّر الآن الوضع العمودي" : "🖥️ تُحرّر الآن الوضع الأفقي");
+  }
   function toast(msg, ms) {
     var t = el("div", {
       class: "rs-toast", text: msg,
@@ -150,7 +163,7 @@
     doorFix: true,       /* لا يقفز فوق سطح البيت عند محاولة الدخول */
     freeWater: true,     /* السماح بدخول الأودية والماء الداخلي */
     stickyAim: true,     /* التصويب يبقى مثبّتاً حتى تضغط ثانيةً */
-    faceMove: true,      /* الشخصية تنظر لجهة حركتها */
+    faceMove: false,     /* false = تتبع الكاميرا دائماً (الوضع الاحترافي) */
     faceFlip: true,      /* تصحيح دوران الشخصية 180° (كانت تنظر للكاميرا) */
     zoneBotMul: 3,       /* سرعة تأذّي البوتات خارج الزون */
     zoneRamp: 4,         /* ثوانٍ حتى يصل ضرر الزون لكامله */
@@ -159,6 +172,10 @@
     adsSens: 0.55,       /* حساسية النظر أثناء التصويب */
     smooth: 0.35,        /* تنعيم حركة النظر */
     gunFlip: true,       /* تصحيح اتجاه السلاح مع قلب الشخصية */
+    ctxButtons: true,    /* أزرار الفتح/الالتقاط تظهر عند الحاجة فقط */
+    botDrop: true,       /* الأعداء يُسقطون غنائمهم */
+    headMul: 2.2,        /* مضاعف ضرر إصابة الرأس */
+    directAim: true,     /* تصويب مباشر بلا مساعدة */
     exactWalls: true,    /* اصطدام دقيق بمضلّعات الخريطة */
     matchMin: 22,        /* مدة المباراة بالدقائق */
     voice: true,         /* الميكروفون مع الأصدقاء */
@@ -326,7 +343,9 @@
       freeWater: OPT.freeWater, stickyAim: OPT.stickyAim, faceMove: OPT.faceMove,
       botLOS: OPT.botLOS, faceFlip: OPT.faceFlip, zoneBotMul: OPT.zoneBotMul,
       zoneRamp: OPT.zoneRamp, playerWall: OPT.playerWall, gunFlip: OPT.gunFlip,
-      exactWalls: OPT.exactWalls, matchMin: OPT.matchMin, voice: OPT.voice,
+      exactWalls: OPT.exactWalls, ctxButtons: OPT.ctxButtons, botDrop: OPT.botDrop,
+      headMul: OPT.headMul, directAim: OPT.directAim,
+      matchMin: OPT.matchMin, voice: OPT.voice,
       voiceMic: OPT.voiceMic, perOrient: OPT.perOrient, sens: OPT.sens,
       adsSens: OPT.adsSens, smooth: OPT.smooth, online: OPT.online,
       netTarget: OPT.netTarget, netWait: OPT.netWait,
@@ -577,9 +596,17 @@
       b.appendChild(el("div", {
         class: "rs-hint",
         text: "اسحب العنصر بإصبعك لتغيير مكانه، أو اضغط عليه لفتح خياراته." +
-          (OPT.perOrient ? ("  •  تُحرّر الآن ترتيب الوضع " + (orient() === "port" ? "العمودي 📱" : "الأفقي 🖥️") + " — أدِر جهازك لتحرير الوضع الآخر.") : "")
+          (OPT.perOrient ? ("  •  تُحرّر الآن ترتيب الوضع " + (orient() === "port" ? "العمودي 📱" : "الأفقي 🖥️") + ".") : "")
       }));
       if (OPT.perOrient) b.appendChild(el("div", { class: "rs-chips" }, [
+        el("button", {
+          class: "rs-chip" + (editOrient === "land" ? " on" : ""), text: "🖥️ أفقي",
+          onclick: function () { setEditOrient("land"); }
+        }),
+        el("button", {
+          class: "rs-chip" + (editOrient === "port" ? " on" : ""), text: "📱 عمودي",
+          onclick: function () { setEditOrient("port"); }
+        }),
         el("button", {
           class: "rs-chip", text: "⇄ انسخ الترتيب من الوضع الآخر", onclick: function () {
             var st = load(), src = orient() === "port" ? st.layout : st.layoutPort;
@@ -777,10 +804,11 @@
     });
     P.map.crates = clone(FACTORY.crates);
     OPT.climb = "strict"; OPT.stepH = 0.28; OPT.doorStep = 0.75; OPT.doorFix = true;
-    OPT.freeWater = true; OPT.stickyAim = true; OPT.faceMove = true; OPT.botLOS = true;
+    OPT.freeWater = true; OPT.stickyAim = true; OPT.faceMove = false; OPT.botLOS = true;
     OPT.faceFlip = true; OPT.zoneBotMul = 3; OPT.zoneRamp = 4; OPT.playerWall = true;
     OPT.sens = 1; OPT.adsSens = 0.55; OPT.smooth = 0.35;
     OPT.gunFlip = true; OPT.exactWalls = true; OPT.matchMin = 22;
+    OPT.ctxButtons = true; OPT.botDrop = true; OPT.headMul = 2.2; OPT.directAim = true;
     OPT.voice = true; OPT.voiceMic = true; OPT.perOrient = true;
     OPT.online = false; OPT.netTarget = 25; OPT.netWait = 300;
     P.lobby.buttons = clone(FACTORY.lobby);
@@ -1225,7 +1253,7 @@
       el("h4", { text: "🧠 الأعداء والشخصية" }),
       el("div", { class: "rs-chips" }, [
         el("button", { class: "rs-chip " + (OPT.botLOS ? "ok" : "dz"), text: OPT.botLOS ? "✅ لا إطلاق عبر الجدران" : "🚫 الأعداء يخترقون الجدران", onclick: function () { OPT.botLOS = !OPT.botLOS; persist(); renderPlay(); } }),
-        el("button", { class: "rs-chip " + (OPT.faceMove ? "ok" : "dz"), text: OPT.faceMove ? "✅ الشخصية تنظر لجهة حركتها" : "🚫 تنظر لجهة الكاميرا", onclick: function () { OPT.faceMove = !OPT.faceMove; persist(); renderPlay(); } }),
+        el("button", { class: "rs-chip " + (OPT.faceMove ? "ok" : "dz"), text: OPT.faceMove ? "🏃 تنظر لجهة حركتها" : "✅ تتبع الكاميرا دائماً", onclick: function () { OPT.faceMove = !OPT.faceMove; persist(); renderPlay(); } }),
         el("button", { class: "rs-chip " + (OPT.doorFix ? "ok" : "dz"), text: OPT.doorFix ? "✅ دخول البيوت بدل الصعود فوقها" : "🚫 السلوك القديم", onclick: function () { OPT.doorFix = !OPT.doorFix; persist(); renderPlay(); } }),
         el("button", { class: "rs-chip " + (OPT.trophies ? "" : "ok"), text: OPT.trophies ? "🏆 الكؤوس والعملات ظاهرة" : "🚫 الكؤوس والعملات مخفية", onclick: function () { OPT.trophies = !OPT.trophies; persist(); renderPlay(); } })
       ])
@@ -1252,6 +1280,29 @@
           class: "rs-chip " + (OPT.gunFlip ? "ok" : "dz"),
           text: OPT.gunFlip ? "✅ السلاح يشير للأمام" : "🚫 اتجاه السلاح الأصلي",
           onclick: function () { OPT.gunFlip = !OPT.gunFlip; persist(); applyGunLive(); renderPlay(); }
+        }),
+        el("button", {
+          class: "rs-chip " + (OPT.directAim ? "ok" : ""),
+          text: OPT.directAim ? "🎯 تصويب مباشر (بلا مساعدة)" : "🧲 مساعدة التصويب مفعّلة",
+          onclick: function () { OPT.directAim = !OPT.directAim; persist(); renderPlay(); }
+        })
+      ]),
+      row("ضرر إصابة الرأس", slider(1, 4, 0.1, OPT.headMul, function (v) { OPT.headMul = v; persist(); })),
+      el("div", { class: "rs-hint", text: "الإصابة صارت تُحسب على كرتين: رأس (نصف قطر 0.34م) وجسم (0.62م)، ويُفحص الجدار حتى نقطة الإصابة نفسها — فإن كان الجدار منخفضاً والرأس ظاهراً تُحسب إصابة رأس، وإن كان يحجبه فلا إصابة." })
+    ]));
+
+    s.appendChild(el("div", { class: "rs-card" }, [
+      el("h4", { text: "📦 الغنائم والأزرار السياقية" }),
+      el("div", { class: "rs-chips" }, [
+        el("button", {
+          class: "rs-chip " + (OPT.ctxButtons ? "ok" : ""),
+          text: OPT.ctxButtons ? "✅ زرّا الفتح/الالتقاط يظهران عند الحاجة" : "👁️ يظهران دائماً",
+          onclick: function () { OPT.ctxButtons = !OPT.ctxButtons; persist(); renderPlay(); }
+        }),
+        el("button", {
+          class: "rs-chip " + (OPT.botDrop ? "ok" : "dz"),
+          text: OPT.botDrop ? "✅ الأعداء يُسقطون غنائمهم" : "🚫 لا يسقط شيء",
+          onclick: function () { OPT.botDrop = !OPT.botDrop; persist(); renderPlay(); }
         })
       ])
     ]));
@@ -2153,6 +2204,71 @@
     voiceBtnSync();
     ensureMic();
   }
+
+  /* ---- أزرار سياقية: فتح الصندوق / الالتقاط ---- */
+  window.__ROYAL_CTX__ = function (game, crate, loot) {
+    if (!OPT.ctxButtons) return;
+    var hud = game.hud; if (!hud || !hud.widgets) return;
+    var set = function (id, on) {
+      var w = hud.widgets[id];
+      if (!w || !w.cfg || !w.cfg.visible) return;      /* المخفي يبقى مخفياً */
+      if (w.__ctx === on) return;
+      w.__ctx = on;
+      w.node.classList.toggle("ctx-off", !on);
+    };
+    set("open", !!crate);
+    set("pickup", !!loot);
+  };
+
+  /* ---- غنائم الأعداء ---- */
+  window.__ROYAL_DROP__ = function (game, bot) {
+    try { dropLoot(game, bot); } catch (e) { console.warn("drop", e); }
+  };
+  function dropLoot(game, bot) {
+    if (!OPT.botDrop || !game.spawnPickup) return;
+    var defs = game.wdefs || [];
+    if (!defs.length) return;
+    var w = defs[(Math.random() * defs.length) | 0];
+    var out = [{ t: "weapon", def: w }, { t: "ammo", kind: w.ammo, n: (w.mag || 10) * 2 }];
+    if (Math.random() < 0.55) out.push({ t: "item", kind: "heal", n: 1 });
+    if (Math.random() < 0.35) out.push({ t: "item", kind: "shield", n: 1 });
+    var y = game.Q.heightAt(bot.pos.x, bot.pos.z);
+    out.forEach(function (p, i) {
+      var a = (i / out.length) * 6.2832;
+      game.spawnPickup(bot.pos.x + Math.cos(a) * 1.15, y + 1.2, bot.pos.z + Math.sin(a) * 1.15, p);
+    });
+    game.hud && game.hud.feed && game.hud.feed("\u{1F392} " + bot.name + " \u0623\u0633\u0642\u0637 \u063A\u0646\u0627\u0626\u0645\u0647");
+  }
+
+  /* ---- إصابة دقيقة: رأس / جسم + فحص جدار لنقطة الإصابة نفسها ---- */
+  function sphereHit(ox, oy, oz, dx, dy, dz, cx, cy, cz, r, maxD) {
+    var mx = cx - ox, my = cy - oy, mz = cz - oz;
+    var tca = mx * dx + my * dy + mz * dz;
+    if (tca < 0.4 || tca > maxD) return -1;
+    var d2 = (mx * mx + my * my + mz * mz) - tca * tca;
+    if (d2 > r * r) return -1;
+    var thc = Math.sqrt(r * r - d2);
+    var t0 = tca - thc;
+    return t0 > 0.4 ? t0 : tca;
+  }
+
+  window.__ROYAL_HIT__ = function (game, o, d, bot, maxD) {
+    var H = bot.ch.totalH || 1.7;
+    var bx = bot.pos.x, bz = bot.pos.z, by = bot.pos.y;
+    var headY = by + H * 0.88, bodyY = by + H * 0.48;
+    var dh = sphereHit(o.x, o.y, o.z, d.x, d.y, d.z, bx, headY, bz, 0.34, maxD);
+    var db = sphereHit(o.x, o.y, o.z, d.x, d.y, d.z, bx, bodyY, bz, 0.62, maxD);
+    var head = false, dist = -1;
+    if (dh > 0 && (db < 0 || dh <= db)) { head = true; dist = dh; }
+    else if (db > 0) { head = false; dist = db; }
+    if (dist < 0) return null;
+    /* هل يحجب جدارٌ نقطة الإصابة تحديداً؟ */
+    if (OPT.playerWall) {
+      var w = wallHit(game, o.x, o.y, o.z, d.x, d.y, d.z, dist - 0.15);
+      if (w != null) return null;
+    }
+    return { d: dist, head: head };
+  };
 
   /* ---- 6.4 شارة السلاح ---- */
   function badgeEl(hud) {
