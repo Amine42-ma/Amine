@@ -185,3 +185,37 @@
 .wslot.on{box-shadow:0 0 0 1.5px var(--wcol,rgba(255,194,26,.5)),0 0 14px -3px var(--wcol,#ffc21a)}
 .wslot.on{border-color:var(--wcol,var(--acc))}
 .wslot .nm{color:var(--wcol,var(--ink-2))}
+
+
+/* ---------- زر رفع كبير + عناوين فرعية ---------- */
+.rs-chip.big{padding:12px 16px;font-size:14px;border-radius:14px}
+.rs-h4{margin:12px 0 4px;font-size:13px;font-weight:900;color:var(--ink)}
+.rs-emo.mine b{background:rgba(255,255,255,.1);padding:4px}
+.rs-emo.mine b img{width:100%;height:100%;object-fit:contain;pointer-events:none}
+
+/* ---------- بطاقة محرّر البناء ---------- */
+.rs-card.hero{background:linear-gradient(160deg,rgba(57,224,123,.16),rgba(37,211,255,.10));
+  border-color:rgba(57,224,123,.45)}
+.rs-big{display:block;width:100%;margin-top:8px;border:0;border-radius:16px;cursor:pointer;
+  padding:15px;font-size:16px;font-weight:900;font-family:inherit;color:#04240f;
+  background:linear-gradient(180deg,var(--gr),var(--gr-d));
+  box-shadow:0 6px 0 rgba(0,0,0,.42),0 10px 22px rgba(0,0,0,.45)}
+.rs-big:active{transform:translateY(3px);box-shadow:0 3px 0 rgba(0,0,0,.42)}
+
+/* ---------- شريط وضع البناء داخل اللعبة ---------- */
+#rs-build{position:fixed;left:0;right:0;bottom:0;z-index:8500;direction:rtl;
+  font-family:var(--ff);color:var(--ink);pointer-events:auto;
+  padding:8px 10px calc(env(safe-area-inset-bottom) + 10px);
+  background:linear-gradient(180deg,rgba(6,3,18,.35),rgba(6,3,18,.93) 42%)}
+#rs-build .bb-top{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:900;margin-bottom:6px}
+#rs-build .bb-top b{color:var(--acc)}
+#rs-build .bb-top span{color:var(--ink-2)}
+#rs-build .bb-top i{margin-inline-start:auto;font-style:normal;font-size:11px;color:var(--ink-3);direction:ltr}
+#rs-build .bb-tools{display:flex;gap:6px;margin-bottom:6px}
+#rs-build .bb{flex:1;border:1.5px solid var(--line);background:rgba(255,255,255,.1);color:var(--ink);
+  border-radius:12px;padding:11px 6px;font-size:12.5px;font-weight:900;font-family:inherit;cursor:pointer}
+#rs-build .bb.ok{background:linear-gradient(180deg,var(--gr),var(--gr-d));color:#04240f;border-color:transparent}
+#rs-build .bb.dz{background:linear-gradient(180deg,var(--rd),var(--rd-d));color:#fff;border-color:transparent}
+#rs-build .bb.on{background:linear-gradient(180deg,var(--cy),var(--cy-d));color:#02222e;border-color:transparent}
+#rs-build .bb.save{background:linear-gradient(180deg,var(--acc),var(--acc-d));color:#2a1c00;border-color:transparent}
+#rs-build .bb:active{transform:scale(.96)}
