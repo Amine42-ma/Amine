@@ -153,6 +153,13 @@
     faceFlip: true,      /* تصحيح دوران الشخصية 180° (كانت تنظر للكاميرا) */
     zoneBotMul: 3,       /* سرعة تأذّي البوتات خارج الزون */
     zoneRamp: 4,         /* ثوانٍ حتى يصل ضرر الزون لكامله */
+    playerWall: true,    /* رصاص اللاعب لا يخترق الجدران */
+    sens: 1,             /* حساسية النظر */
+    adsSens: 0.55,       /* حساسية النظر أثناء التصويب */
+    smooth: 0.35,        /* تنعيم حركة النظر */
+    online: false,       /* افتح الأونلاين افتراضياً */
+    netTarget: 25,       /* ابدأ فور اكتمال هذا العدد */
+    netWait: 300,        /* أقصى انتظار بالثواني */
     botLOS: true,        /* الأعداء لا يطلقون عبر الجدران */
     ambient: 0.55,       /* مستوى صوت الخلفية */
     ocean: true,         /* بحر واقعي */
@@ -185,7 +192,9 @@
       stats: clone(P.controls.stats),
       scale: P.controls.scale,
       weapons: clone(P.weapons),
-      crates: clone(P.map.crates || [])
+      crates: clone(P.map.crates || []),
+      lobby: clone((P.lobby && P.lobby.buttons) || []),
+      match: clone(P.match || {})
     };
     applySaved();
     return new Promise(function (res) {
@@ -258,6 +267,18 @@
       }
     }
     if (Array.isArray(s.crates) && s.crates.length) P.map.crates = clone(s.crates);
+    if (s.lobby && P.lobby && P.lobby.buttons) {
+      P.lobby.buttons.forEach(function (b) {
+        var f = s.lobby[b.uid];
+        if (f) for (var k in f) if (f[k] !== undefined) b[k] = f[k];
+      });
+    }
+    if (P.match) {
+      P.match.online = !!OPT.online;
+      P.match.netWait = OPT.netWait;
+      P.match.netMinPlayers = 1;
+      P.match.lookSens = P.match.lookSens || 1;
+    }
   }
 
   function persist() {
@@ -278,11 +299,18 @@
       s.weapons[w.id] = { emo: w.emo, icon: w.icon, color: w.color, hold: w.hold, scale: w.scale };
     }
     s.crates = P.map.crates;
+    s.lobby = {};
+    ((P.lobby && P.lobby.buttons) || []).forEach(function (b) {
+      s.lobby[b.uid] = { x: b.x, y: b.y, w: b.w, h: b.h, icon: b.icon, emoji: b.emoji, color: b.color, visible: b.visible, label: b.label };
+    });
     s.opt = {
       climb: OPT.climb, stepH: OPT.stepH, doorStep: OPT.doorStep, doorFix: OPT.doorFix,
       freeWater: OPT.freeWater, stickyAim: OPT.stickyAim, faceMove: OPT.faceMove,
       botLOS: OPT.botLOS, faceFlip: OPT.faceFlip, zoneBotMul: OPT.zoneBotMul,
-      zoneRamp: OPT.zoneRamp, ambient: OPT.ambient, ocean: OPT.ocean,
+      zoneRamp: OPT.zoneRamp, playerWall: OPT.playerWall, sens: OPT.sens,
+      adsSens: OPT.adsSens, smooth: OPT.smooth, online: OPT.online,
+      netTarget: OPT.netTarget, netWait: OPT.netWait,
+      ambient: OPT.ambient, ocean: OPT.ocean,
       trophies: OPT.trophies, slimHud: OPT.slimHud, badge: OPT.badge
     };
     SAVED = s; save();
@@ -324,8 +352,8 @@
     UI.grip.onclick = function () { openPanel(panel.classList.contains("min")); };
     panel.classList.add("min");
 
-    [["btn", "🎮 الأزرار"], ["stat", "📊 العدّادات"], ["weap", "🔫 الأسلحة"],
-    ["crate", "📦 الصناديق"], ["play", "⚙️ اللعب"]].forEach(function (t) {
+    [["btn", "🎮 الأزرار"], ["stat", "📊 العدّادات"], ["lobby", "🏠 الواجهة"],
+    ["weap", "🔫 الأسلحة"], ["crate", "📦 الصناديق"], ["play", "⚙️ اللعب"]].forEach(function (t) {
       UI.tabs.appendChild(el("button", { class: "rs-tab", "data-t": t[0], text: t[1], onclick: function () { setTab(t[0]); } }));
     });
     addEventListener("resize", function () { if (UI && UI.root.classList.contains("on")) renderStage(); });
@@ -354,6 +382,7 @@
     UI.panel.style.display = stageTab ? "" : "none";
     UI.stage.style.display = stageTab ? "" : "none";
     if (stageTab) { renderStage(); renderPanel(); openPanel(false); }
+    else if (t === "lobby") renderLobbyTab();
     else if (t === "weap") renderWeapons();
     else if (t === "crate") renderCrates();
     else renderPlay();
@@ -713,10 +742,155 @@
     P.map.crates = clone(FACTORY.crates);
     OPT.climb = "strict"; OPT.stepH = 0.28; OPT.doorStep = 0.75; OPT.doorFix = true;
     OPT.freeWater = true; OPT.stickyAim = true; OPT.faceMove = true; OPT.botLOS = true;
-    OPT.faceFlip = true; OPT.zoneBotMul = 3; OPT.zoneRamp = 4;
+    OPT.faceFlip = true; OPT.zoneBotMul = 3; OPT.zoneRamp = 4; OPT.playerWall = true;
+    OPT.sens = 1; OPT.adsSens = 0.55; OPT.smooth = 0.35;
+    OPT.online = false; OPT.netTarget = 25; OPT.netWait = 300;
+    P.lobby.buttons = clone(FACTORY.lobby);
     OPT.ambient = 0.55; OPT.ocean = true; OPT.trophies = false; OPT.slimHud = true;
     OPT.badge = { x: 0.5, y: 0.19, size: 0.85, visible: false };
     sel = null; persist(); setTab(tab);
+  }
+
+  /* ============================================================
+     1.5) واجهة اللعبة (أزرار اللوبي)
+     ============================================================ */
+
+  var LB_KIND = {
+    play: "زرّ اللعب", shop: "المتجر", brawlers: "الأبطال", skins: "الأزياء",
+    quests: "المهام", news: "الأخبار", friends: "الأصدقاء", club: "الاتحاد",
+    settings: "الإعدادات"
+  };
+  var lbSel = null;
+
+  function lbButtons() { return (P.lobby && P.lobby.buttons) || []; }
+
+  function renderLobbyTab() {
+    var s = UI.sheet; s.innerHTML = "";
+    s.appendChild(el("div", { class: "rs-card" }, [
+      el("h4", { text: "🏠 أزرار واجهة اللعبة" }),
+      el("div", { class: "rs-hint", text: "هذه هي الأزرار التي تظهر للاعب أول ما يدخل. اسحبها داخل المعاينة لتغيير مكانها، أو أخفِ ما لا تحتاجه. زر «اللعب» لا يمكن إخفاؤه." })
+    ]));
+
+    /* معاينة الواجهة بنسبة 16:9 */
+    var pv = el("div", { id: "rs-lbpv" });
+    s.appendChild(pv);
+    s.appendChild(el("div", { class: "rs-card", id: "rs-lbsel" }));
+
+    requestAnimationFrame(function () { drawLobbyPreview(pv); lbPanel(); });
+  }
+
+  function drawLobbyPreview(pv) {
+    pv.innerHTML = "";
+    var r = pv.getBoundingClientRect(), W = r.width, H = r.height;
+    lbButtons().forEach(function (b) {
+      var n = el("div", { class: "lbb" + (lbSel === b.uid ? " sel" : "") + (b.visible ? "" : " off") });
+      n.style.background = "linear-gradient(180deg," + (b.color || "#c56bff") + "," + hexA(b.color || "#c56bff", 0.55) + ")";
+      n.style.width = (b.w * W) + "px";
+      n.style.height = (b.h * H) + "px";
+      n.style.left = (b.x * W - b.w * W / 2) + "px";
+      n.style.top = (b.y * H - b.h * H / 2) + "px";
+      n.appendChild(isUrl(b.icon) ? el("img", { src: b.icon }) : el("span", { text: b.emoji || "•" }));
+      n.appendChild(el("i", { text: b.label || LB_KIND[b.kind] || b.kind }));
+      lbDrag(n, b, W, H, pv);
+      pv.appendChild(n);
+    });
+  }
+
+  function lbDrag(node, b, W, H, pv) {
+    var st = null;
+    node.style.touchAction = "none";
+    node.addEventListener("pointerdown", function (e) {
+      e.preventDefault(); node.setPointerCapture(e.pointerId);
+      st = { px: e.clientX, py: e.clientY, x: b.x, y: b.y };
+      lbSel = b.uid;
+      var all = pv.querySelectorAll(".lbb");
+      for (var i = 0; i < all.length; i++) all[i].classList.remove("sel");
+      node.classList.add("sel");
+      lbPanel();
+    });
+    node.addEventListener("pointermove", function (e) {
+      if (!st) return;
+      b.x = clamp(st.x + (e.clientX - st.px) / W, 0.03, 0.97);
+      b.y = clamp(st.y + (e.clientY - st.py) / H, 0.05, 0.95);
+      node.style.left = (b.x * W - b.w * W / 2) + "px";
+      node.style.top = (b.y * H - b.h * H / 2) + "px";
+    });
+    function up() { if (st) { st = null; persist(); } }
+    node.addEventListener("pointerup", up);
+    node.addEventListener("pointercancel", up);
+  }
+
+  function lbPanel() {
+    var box = document.getElementById("rs-lbsel"); if (!box) return;
+    box.innerHTML = "";
+    var b = lbButtons().filter(function (q) { return q.uid === lbSel; })[0];
+    if (!b) {
+      box.appendChild(el("div", { class: "rs-hint", text: "اضغط على أي زر في المعاينة لتعديله." }));
+      var q2 = el("div", { class: "rs-chips" });
+      lbButtons().forEach(function (x) {
+        q2.appendChild(el("button", {
+          class: "rs-chip" + (x.visible ? "" : " dz"), text: (x.emoji || "•") + " " + (x.label || LB_KIND[x.kind] || x.kind),
+          onclick: function () { lbSel = x.uid; drawLobbyPreview(document.getElementById("rs-lbpv")); lbPanel(); }
+        }));
+      });
+      box.appendChild(q2);
+      return;
+    }
+    var pv = document.getElementById("rs-lbpv");
+    function redraw() { persist(); drawLobbyPreview(pv); lbPanel(); }
+
+    box.appendChild(el("h4", { text: "✏️ " + (b.label || LB_KIND[b.kind] || b.kind) }));
+    box.appendChild(el("div", { class: "rs-chips" }, [
+      b.kind === "play"
+        ? el("div", { class: "rs-hint", text: "زرّ اللعب أساسي ولا يُخفى." })
+        : el("button", {
+          class: "rs-chip " + (b.visible ? "ok" : "dz"), text: b.visible ? "👁️ ظاهر" : "🚫 مخفي",
+          onclick: function () { b.visible = !b.visible; redraw(); }
+        }),
+      el("button", {
+        class: "rs-chip", text: "↺ افتراضي", onclick: function () {
+          var f = FACTORY.lobby.filter(function (q) { return q.uid === b.uid; })[0];
+          if (f) for (var k in f) b[k] = clone(f[k]);
+          redraw();
+        }
+      })
+    ]));
+    box.appendChild(row("العرض", slider(0.04, 0.45, 0.005, b.w, function (v) { b.w = v; persist(); drawLobbyPreview(pv); })));
+    box.appendChild(row("الطول", slider(0.05, 0.4, 0.005, b.h, function (v) { b.h = v; persist(); drawLobbyPreview(pv); })));
+    box.appendChild(row("تحريك دقيق", (function () {
+      var w = el("div", { class: "rs-chips" });
+      [["◀", -0.01, 0], ["▶", 0.01, 0], ["▲", 0, -0.01], ["▼", 0, 0.01]].forEach(function (d) {
+        w.appendChild(el("button", {
+          class: "rs-chip", text: d[0], onclick: function () {
+            b.x = clamp(b.x + d[1], 0.03, 0.97); b.y = clamp(b.y + d[2], 0.05, 0.95);
+            persist(); drawLobbyPreview(pv);
+          }
+        }));
+      });
+      return w;
+    })()));
+
+    var cw = el("div", { class: "rs-cols" });
+    PALETTE.forEach(function (c) {
+      var i2 = el("i", { style: "background:" + c });
+      if ((b.color || "").toLowerCase() === c) i2.classList.add("on");
+      i2.onclick = function () { b.color = c; redraw(); };
+      cw.appendChild(i2);
+    });
+    var cin = el("input", { type: "color", value: b.color || "#c56bff", style: "width:34px;height:30px;border:0;background:none;padding:0" });
+    cin.oninput = function () { b.color = cin.value; persist(); drawLobbyPreview(pv); };
+    cw.appendChild(cin);
+    box.appendChild(row("اللون", cw));
+
+    var nin = el("input", { type: "text", value: b.label || "", maxlength: "14", class: "rs-txt" });
+    nin.oninput = function () { b.label = nin.value; persist(); drawLobbyPreview(pv); };
+    box.appendChild(row("الاسم", nin));
+
+    box.appendChild(iconSection({
+      id: b.kind,
+      get icon() { return b.icon; }, set icon(v) { b.icon = v; },
+      get emoji() { return b.emoji; }, set emoji(v) { b.emoji = v; }
+    }, redraw));
   }
 
   /* ============================================================
@@ -1019,6 +1193,36 @@
       ])
     ]));
 
+    s.appendChild(el("div", { class: "rs-card" }, [
+      el("h4", { text: "🎯 التحكّم والتصويب" }),
+      el("div", { class: "rs-hint", text: "حساسية أقل أثناء التصويب + تنعيم = تحكّم سلس مثل الألعاب الاحترافية. زر «التقريب 🔭» يُخرجك من التصويب بضغطة." }),
+      row("حساسية النظر", slider(0.3, 2.5, 0.05, OPT.sens, function (v) { OPT.sens = v; persist(); })),
+      row("حساسية التصويب", slider(0.2, 1.5, 0.05, OPT.adsSens, function (v) { OPT.adsSens = v; persist(); })),
+      row("التنعيم", slider(0, 0.75, 0.05, OPT.smooth, function (v) { OPT.smooth = v; persist(); })),
+      el("div", { class: "rs-chips" }, [
+        el("button", {
+          class: "rs-chip " + (OPT.playerWall ? "ok" : "dz"),
+          text: OPT.playerWall ? "✅ رصاصك لا يخترق الجدران" : "🚫 رصاصك يخترق الجدران",
+          onclick: function () { OPT.playerWall = !OPT.playerWall; persist(); renderPlay(); }
+        })
+      ])
+    ]));
+
+    s.appendChild(el("div", { class: "rs-card" }, [
+      el("h4", { text: "🌐 اللعب أونلاين" }),
+      el("div", { class: "rs-hint", text: "اللعبة تدعم اللعب الجماعي عبر WebRTC: من يضغط «أون لاين» يدخل نفس الروم تلقائياً، ومن يريد صديقاً بعينه يكتبان نفس رمز الروم. عند انتهاء الانتظار أو اكتمال العدد تبدأ المباراة والباقي بوتات." }),
+      el("div", { class: "rs-chips" }, [
+        el("button", {
+          class: "rs-chip " + (OPT.online ? "ok" : ""),
+          text: OPT.online ? "🌐 يبدأ على وضع أونلاين" : "🤖 يبدأ ضد الروبوتات",
+          onclick: function () { OPT.online = !OPT.online; persist(); renderPlay(); }
+        })
+      ]),
+      row("عدد اللاعبين", slider(2, 25, 1, OPT.netTarget, function (v) { OPT.netTarget = v; persist(); })),
+      row("أقصى انتظار (ث)", slider(20, 600, 10, OPT.netWait, function (v) { OPT.netWait = v; persist(); })),
+      el("div", { class: "rs-hint", text: "5 دقائق = 300 ثانية. تبدأ المباراة فوراً إذا اكتمل العدد قبل انتهاء الوقت." })
+    ]));
+
     s.appendChild(el("div", { class: "rs-card hero" }, [
       el("h4", { text: "⬇️ حمّل اللعبة النهائية" }),
       el("div", { class: "rs-hint", text: "يُنتج ملفاً واحداً فيه كل ترتيبك وأيقوناتك وصناديقك مدمجة داخله. من يحمّله يجد الأزرار جاهزة كما صمّمتها — لا تظهر له لوحة الإعداد، فقط يكتب اسمه ويلعب. هذه هي النسخة التي توزّعها." }),
@@ -1029,7 +1233,12 @@
       el("h4", { text: "💾 الإعدادات" }),
       el("div", { class: "rs-hint", text: "أثناء التصميم يُحفظ كل شيء في جهازك. اسمك الحالي: " + (playerName() || "—") }),
       el("div", { class: "rs-chips" }, [
-        el("button", { class: "rs-chip", text: "✏️ غيّر الاسم", onclick: function () { playerName(""); toast("سيُطلب اسمك عند بدء اللعبة"); } }),
+        el("button", {
+          class: "rs-chip", text: "✏️ غيّر الاسم", onclick: function () {
+            playerName("");
+            askName(function () { renderPlay(); toast("تم تغيير الاسم ✔"); });
+          }
+        }),
         el("button", { class: "rs-chip dz", text: "↺ استعادة كل الافتراضي", onclick: resetAll })
       ])
     ]));
@@ -1253,21 +1462,37 @@
     return base * (0.18 + 0.82 * ramp * ramp) * far;
   };
 
+  /* ------- اصطدام الرصاص بالجدران (للاعب وللبوتات معاً) ------- */
+  /* يرجع مسافة أول اصطدام أو null إذا كان الطريق خالياً */
+  function wallHit(game, ox, oy, oz, dx, dy, dz, maxD) {
+    var Q = game.Q;
+    if (!Q || !Q.roofAt) return null;
+    var bothIn = Q.isIndoor && Q.isIndoor(ox, oz);
+    var step = 0.8, d = 1.2;
+    for (; d < maxD; d += step) {
+      var x = ox + dx * d, y = oy + dy * d, z = oz + dz * d;
+      if (Q.heightAt(x, z) > y + 0.05) return d;              /* أرض/تضاريس */
+      if (Q.roofAt(x, z) > y + 0.3) {                          /* بناء فوق الشعاع */
+        if (!(bothIn && Q.isIndoor(x, z))) return d;           /* داخل نفس المبنى: يمرّ */
+      }
+      if (d > 40) step = 1.6;
+    }
+    return null;
+  }
+
+  window.__ROYAL_WALL__ = function (game, origin, dir, maxD) {
+    if (!OPT.playerWall) return null;
+    return wallHit(game, origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, maxD);
+  };
+
   /* خطّ النظر: الأعداء لا يطلقون عبر الجدران والتضاريس */
   window.__ROYAL_LOS__ = function (game, from, to) {
     if (!OPT.botLOS) return true;
-    var Q = game.Q;
-    if (!Q || !Q.roofAt) return true;
     var dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
-    var len = Math.hypot(dx, dz);
+    var len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
     if (len < 2) return true;
-    var steps = Math.min(64, Math.max(6, Math.ceil(len / 1.2)));
-    for (var i = 1; i < steps; i++) {
-      var k = i / steps;
-      var x = from.x + dx * k, z = from.z + dz * k, y = from.y + dy * k;
-      if (Q.roofAt(x, z) > y + 0.35) return false;
-    }
-    return true;
+    var hit = wallHit(game, from.x, from.y, from.z, dx / len, dy / len, dz / len, len - 0.8);
+    return hit == null;
   };
 
   /* إخفاء الكؤوس والعملات من الواجهة */

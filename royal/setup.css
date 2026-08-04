@@ -263,3 +263,25 @@
 /* زر رفع الصورة (label) */
 .rs-chip.up{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
 .rs-chip.up input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+
+
+/* ---------- معاينة واجهة اللعبة (أزرار اللوبي) ---------- */
+#rs-lbpv{position:relative;width:100%;aspect-ratio:16/9;border-radius:16px;overflow:hidden;
+  border:2px solid var(--line);margin-bottom:10px;touch-action:none;
+  background:radial-gradient(1000px 600px at 60% -10%,#4a2196 0%,transparent 60%),
+             linear-gradient(160deg,#3b1e86,#0b0524)}
+#rs-lbpv .lbb{position:absolute;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:2px;border-radius:12px;cursor:grab;overflow:hidden;
+  border:2px solid rgba(255,255,255,.35);box-shadow:0 4px 0 rgba(0,0,0,.4);
+  color:#fff;text-shadow:0 2px 0 rgba(0,0,0,.5)}
+#rs-lbpv .lbb span{font-size:clamp(14px,3.2vw,26px);line-height:1}
+#rs-lbpv .lbb img{width:52%;height:52%;object-fit:contain}
+#rs-lbpv .lbb i{font-style:normal;font-size:clamp(8px,1.6vw,12px);font-weight:900;
+  white-space:nowrap;overflow:hidden;max-width:96%}
+#rs-lbpv .lbb.off{opacity:.25;filter:grayscale(1)}
+#rs-lbpv .lbb.sel{outline:3px dashed var(--acc);outline-offset:2px}
+
+.rs-txt{flex:1;min-width:120px;padding:8px 11px;border-radius:11px;font-family:inherit;
+  font-size:13px;font-weight:800;color:#fff;background:rgba(255,255,255,.08);
+  border:1.5px solid var(--line);outline:none}
+.rs-txt:focus{border-color:var(--acc)}

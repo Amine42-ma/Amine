@@ -294,6 +294,58 @@ ENGINE_PATCHES = [
         'n.traverse(_m=>{_m.isMesh&&(_m.frustumCulled=!1,_m.renderOrder=2)}),'
         'this.handGun.add(n)',
     ),
+
+    # 23) أثناء الهبوط بالمظلة: الشخصية تنظر لجهة سقوطها لا لعكسها.
+    (
+        'chute-face',
+        'Math.hypot(this.vel.x,this.vel.z)>.4&&(this.player.st.yaw=Math.atan2(this.vel.x,this.vel.z)),'
+        'this.player.root.rotation.y=this.player.st.yaw',
+
+        'Math.hypot(this.vel.x,this.vel.z)>.4&&(this.player.st.yaw=Math.atan2(this.vel.x,this.vel.z)'
+        '+((window.__ROYAL_OPT__&&window.__ROYAL_OPT__.faceFlip)?Math.PI:0)),'
+        'this.player.root.rotation.y=this.player.st.yaw',
+    ),
+
+    # 24) زرّ التقريب يُخرجك من التصويب أيضاً (كان يعلق مع تثبيت التصويب).
+    (
+        'scope-exit',
+        'else if(t.id==="scope"){o&&(this.input.scopeOn=!this.input.scopeOn,'
+        'n.classList.toggle("locked",this.input.scopeOn));return}',
+
+        'else if(t.id==="scope"){if(o){if(this.input.scopeOn||this.input.aiming)'
+        '{this.input.scopeOn=!1,this.input.aiming=!1,this.cross.classList.remove("on")}'
+        'else this.input.scopeOn=!0;n.classList.toggle("locked",this.input.scopeOn)}return}',
+    ),
+
+    # 25) رصاص اللاعب لا يخترق الجدران والتضاريس.
+    (
+        'player-wall',
+        'let c=t.clone().addScaledVector(e,i||o?s:n.range);',
+        'let _md=i||o?s:n.range;'
+        'if(window.__ROYAL_WALL__){let _wd=window.__ROYAL_WALL__(this,t,e,_md);'
+        'if(_wd!=null){_md=_wd;if(_wd<s-.05){i=null;o=null}}}'
+        'let c=t.clone().addScaledVector(e,_md);',
+    ),
+
+    # 26) حساسية النظر: قابلة للضبط + تنعيم.
+    (
+        'look-sens',
+        'a=(this.P.match.lookSens||1)*.0032,c=this.hud.takeLook();this[e]-=c.x*a,',
+        'a=(this.P.match.lookSens||1)*.0032*((window.__ROYAL_OPT__&&window.__ROYAL_OPT__.sens)||1)'
+        '*((this.hud.input.aiming||this.hud.input.scopeOn)?((window.__ROYAL_OPT__&&window.__ROYAL_OPT__.adsSens)||1):1),'
+        'c=this.hud.takeLook();'
+        'if(window.__ROYAL_OPT__&&window.__ROYAL_OPT__.smooth>0){var _s=window.__ROYAL_OPT__.smooth;'
+        'this._lkx=(this._lkx||0)*_s+c.x*(1-_s);this._lky=(this._lky||0)*_s+c.y*(1-_s);'
+        'c={x:this._lkx,y:this._lky}}'
+        'this[e]-=c.x*a,',
+    ),
+
+    # 27) الأونلاين: ابدأ فوراً عند اكتمال العدد المطلوب.
+    (
+        'net-target',
+        'p<=0&&_()},1e3)',
+        'p<=0&&_(),b>=((window.__ROYAL_OPT__&&window.__ROYAL_OPT__.netTarget)||99)&&_()},1e3)',
+    ),
 ]
 
 
