@@ -410,6 +410,30 @@ ENGINE_PATCHES = [
         'this._hs&&this.hud.feed("\\u{1F3AF} \\u0625\\u0635\\u0627\\u0628\\u0629 \\u0631\\u0623\\u0633!");',
     ),
 
+    # 36) المظلّة: تسارع وكبح قابلان للضبط ليكون التحرّك سلساً وسريعاً.
+    (
+        'chute-accel',
+        'let i=e?16:26,s=n.move.x',
+        'let i=e?((window.__ROYAL_OPT__&&window.__ROYAL_OPT__.chuteAcc)||16):26,s=n.move.x',
+    ),
+    (
+        'chute-damp',
+        'let d=e?2.6:1.1;',
+        'let d=e?((window.__ROYAL_OPT__&&window.__ROYAL_OPT__.chuteDamp)||2.6):1.1;',
+    ),
+
+    # 37) البوتات تستعمل نفس اصطدام المضلّعات فلا تصعد فوق البيوت.
+    (
+        'bot-move',
+        'this.groundY(_,s.pos.z,m)-p<=.55?s.pos.x=_:s.vel.x*=-.4,'
+        'this.groundY(s.pos.x,v,m)-p<=.55?s.pos.z=v:s.vel.z*=-.4,',
+
+        '(window.__ROYAL_MOVE__?window.__ROYAL_MOVE__(this,s.pos,_,s.pos.z):this.groundY(_,s.pos.z,m)-p<=.55)'
+        '?s.pos.x=_:s.vel.x*=-.4,'
+        '(window.__ROYAL_MOVE__?window.__ROYAL_MOVE__(this,s.pos,s.pos.x,v):this.groundY(s.pos.x,v,m)-p<=.55)'
+        '?s.pos.z=v:s.vel.z*=-.4,',
+    ),
+
     # 35) مساعدة التصويب اختيارية (تصويب مباشر عند إطفائها).
     (
         'aim-assist',

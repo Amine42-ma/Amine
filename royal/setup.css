@@ -299,8 +299,7 @@
 
 
 /* الأزرار السياقية: تبهت وتصغر حتى يقترب الشيء */
-#hud .gw.ctx-off{opacity:0!important;pointer-events:none;transform:scale(.7);
-  transition:opacity .18s,transform .18s}
+#hud .gw.ctx-off{display:none!important}
 #hud .gw{transition:opacity .18s,transform .18s}
 
 /* معاينة الوضع العمودي داخل المحرّر */

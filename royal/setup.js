@@ -176,6 +176,9 @@
     botDrop: true,       /* الأعداء يُسقطون غنائمهم */
     headMul: 2.2,        /* مضاعف ضرر إصابة الرأس */
     directAim: true,     /* تصويب مباشر بلا مساعدة */
+    meshMove: true,      /* حركة تصطدم بمضلّعات الخريطة فعلياً */
+    chuteAcc: 34,        /* تسارع التحرّك تحت المظلّة */
+    chuteDamp: 2.2,      /* كبح التحرّك تحت المظلّة */
     exactWalls: true,    /* اصطدام دقيق بمضلّعات الخريطة */
     matchMin: 22,        /* مدة المباراة بالدقائق */
     voice: true,         /* الميكروفون مع الأصدقاء */
@@ -344,7 +347,8 @@
       botLOS: OPT.botLOS, faceFlip: OPT.faceFlip, zoneBotMul: OPT.zoneBotMul,
       zoneRamp: OPT.zoneRamp, playerWall: OPT.playerWall, gunFlip: OPT.gunFlip,
       exactWalls: OPT.exactWalls, ctxButtons: OPT.ctxButtons, botDrop: OPT.botDrop,
-      headMul: OPT.headMul, directAim: OPT.directAim,
+      headMul: OPT.headMul, directAim: OPT.directAim, meshMove: OPT.meshMove,
+      chuteAcc: OPT.chuteAcc, chuteDamp: OPT.chuteDamp,
       matchMin: OPT.matchMin, voice: OPT.voice,
       voiceMic: OPT.voiceMic, perOrient: OPT.perOrient, sens: OPT.sens,
       adsSens: OPT.adsSens, smooth: OPT.smooth, online: OPT.online,
@@ -809,6 +813,7 @@
     OPT.sens = 1; OPT.adsSens = 0.55; OPT.smooth = 0.35;
     OPT.gunFlip = true; OPT.exactWalls = true; OPT.matchMin = 22;
     OPT.ctxButtons = true; OPT.botDrop = true; OPT.headMul = 2.2; OPT.directAim = true;
+    OPT.meshMove = true; OPT.chuteAcc = 34; OPT.chuteDamp = 2.2;
     OPT.voice = true; OPT.voiceMic = true; OPT.perOrient = true;
     OPT.online = false; OPT.netTarget = 25; OPT.netWait = 300;
     P.lobby.buttons = clone(FACTORY.lobby);
@@ -1272,8 +1277,13 @@
           onclick: function () { OPT.playerWall = !OPT.playerWall; persist(); renderPlay(); }
         }),
         el("button", {
+          class: "rs-chip " + (OPT.meshMove ? "ok" : "dz"),
+          text: OPT.meshMove ? "✅ حركة تصطدم بالمباني فعلياً" : "🚫 حركة تقريبية",
+          onclick: function () { OPT.meshMove = !OPT.meshMove; persist(); renderPlay(); }
+        }),
+        el("button", {
           class: "rs-chip " + (OPT.exactWalls ? "ok" : ""),
-          text: OPT.exactWalls ? "🎯 اصطدام دقيق بالمضلّعات" : "⚡ اصطدام تقريبي (أسرع)",
+          text: OPT.exactWalls ? "🎯 اصطدام دقيق للرصاص" : "⚡ اصطدام تقريبي (أسرع)",
           onclick: function () { OPT.exactWalls = !OPT.exactWalls; persist(); renderPlay(); }
         }),
         el("button", {
@@ -1289,6 +1299,14 @@
       ]),
       row("ضرر إصابة الرأس", slider(1, 4, 0.1, OPT.headMul, function (v) { OPT.headMul = v; persist(); })),
       el("div", { class: "rs-hint", text: "الإصابة صارت تُحسب على كرتين: رأس (نصف قطر 0.34م) وجسم (0.62م)، ويُفحص الجدار حتى نقطة الإصابة نفسها — فإن كان الجدار منخفضاً والرأس ظاهراً تُحسب إصابة رأس، وإن كان يحجبه فلا إصابة." })
+    ]));
+
+    s.appendChild(el("div", { class: "rs-card" }, [
+      el("h4", { text: "🪂 التحكّم تحت المظلّة" }),
+      el("div", { class: "rs-hint", text: "ارفع الاندفاع واخفض الكبح لتنطلق بسرعة نحو المكان الذي تريده." }),
+      row("قوّة الاندفاع", slider(10, 70, 2, OPT.chuteAcc, function (v) { OPT.chuteAcc = v; persist(); })),
+      row("الكبح", slider(1, 5, 0.1, OPT.chuteDamp, function (v) { OPT.chuteDamp = v; persist(); })),
+      el("div", { class: "rs-hint", text: "السرعة القصوى ≈ الاندفاع ÷ الكبح  (الحالية ≈ " + Math.round(OPT.chuteAcc / OPT.chuteDamp) + " م/ث)" })
     ]));
 
     s.appendChild(el("div", { class: "rs-card" }, [
@@ -1520,7 +1538,47 @@
 
   var blockStart = 0;
 
+  /* ------------------------------------------------------------------
+     حركة حقيقية: شعاع عند الصدر (جدار) + شعاع عند الركبة (عائق منخفض)
+     + مسبار عمودي لمعرفة أرض الوجهة. يمنع الصعود فوق البيوت،
+     ويجعل المرور من الأبواب فورياً بلا أي توقّف.
+     ------------------------------------------------------------------ */
+  var RAD = 0.42;
+
+  function floorUnder(x, y, z, depth) {
+    var d = meshHit(x, y, z, 0, -1, 0, depth || 8);
+    return d == null ? null : y - d;
+  }
+
+  function meshPass(game, fromX, fromY, fromZ, x, z, step) {
+    var dx = x - fromX, dz = z - fromZ, len = Math.hypot(dx, dz);
+    if (len < 1e-5) return true;
+    dx /= len; dz /= len;
+    var need = len + RAD;
+    if (meshHit(fromX, fromY + 1.15, fromZ, dx, 0, dz, need) != null) return false;
+    if (meshHit(fromX, fromY + 0.70, fromZ, dx, 0, dz, need) != null) return false;
+    var low = meshHit(fromX, fromY + 0.22, fromZ, dx, 0, dz, need);
+    if (low != null) {
+      var f = floorUnder(x, fromY + 1.4, z, 3.2);
+      if (f == null || f - fromY > step) return false;
+    }
+    return true;
+  }
+
   window.__ROYAL_PASS__ = function (game, x, z, curG, tgtG, step) {
+    if (OPT.meshMove && TRI && !OPT.build) {
+      if (meshPass(game, game.pos.x, game.pos.y, game.pos.z, x, z, step)) { blockStart = 0; return true; }
+      return blocked();
+    }
+    return passHeightfield(game, x, z, curG, tgtG, step);
+  };
+
+  window.__ROYAL_MOVE__ = function (game, pos, x, z) {
+    if (!OPT.meshMove || !TRI) return game.groundY(x, z, pos.y) - game.groundY(pos.x, pos.z, pos.y) <= 0.55;
+    return meshPass(game, pos.x, pos.y, pos.z, x, z, 0.45);
+  };
+
+  function passHeightfield(game, x, z, curG, tgtG, step) {
     var Q = game.Q;
     if (Q.isBlocked(x, z)) return blocked();
 
@@ -1790,6 +1848,7 @@
   window.__ROYAL_READY__ = function (game) {
     try { startAmbient(game); } catch (e) { console.warn("ambient", e); }
     try { voiceButton(game); } catch (e) { console.warn("voice", e); }
+    if (OPT.ctxButtons) try { ctxSet(game.hud, "open", false); ctxSet(game.hud, "pickup", false); } catch (e) { }
     if (OPT.build) { try { enterBuild(game); } catch (e) { console.error("build", e); } }
   };
 
@@ -2206,18 +2265,17 @@
   }
 
   /* ---- أزرار سياقية: فتح الصندوق / الالتقاط ---- */
+  function ctxSet(hud, id, on) {
+    var w = hud && hud.widgets && hud.widgets[id];
+    if (!w || !w.cfg || !w.cfg.visible) return;        /* المخفي يبقى مخفياً */
+    if (w.__ctx === on) return;
+    w.__ctx = on;
+    w.node.classList.toggle("ctx-off", !on);
+  }
   window.__ROYAL_CTX__ = function (game, crate, loot) {
     if (!OPT.ctxButtons) return;
-    var hud = game.hud; if (!hud || !hud.widgets) return;
-    var set = function (id, on) {
-      var w = hud.widgets[id];
-      if (!w || !w.cfg || !w.cfg.visible) return;      /* المخفي يبقى مخفياً */
-      if (w.__ctx === on) return;
-      w.__ctx = on;
-      w.node.classList.toggle("ctx-off", !on);
-    };
-    set("open", !!crate);
-    set("pickup", !!loot);
+    ctxSet(game.hud, "open", !!crate);
+    ctxSet(game.hud, "pickup", !!loot);
   };
 
   /* ---- غنائم الأعداء ---- */
