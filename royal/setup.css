@@ -300,6 +300,15 @@
 #rv-btn:active{transform:scale(.93)}
 
 
+/* «بلا إطار»: لا دائرة ولا حدود ولا ظلّ — الصورة تملأ الزر */
+#hud .gw.nf .body,#rs-stage .gw.nf .body{
+  background:none!important;border:0!important;box-shadow:none!important}
+#hud .gw.nf .body img,#rs-stage .gw.nf .body img{width:100%;height:100%;
+  filter:drop-shadow(0 2px 5px rgba(0,0,0,.55))}
+#hud .gw.nf.press .body{transform:scale(.9);background:none!important}
+#hud .gw.nf.locked .body{background:none!important;box-shadow:none!important;
+  filter:drop-shadow(0 0 6px var(--acc,#ffc21a))}
+
 /* الأزرار السياقية: تبهت وتصغر حتى يقترب الشيء */
 #hud .gw.ctx-off{display:none!important}
 #hud .gw{transition:opacity .18s,transform .18s}

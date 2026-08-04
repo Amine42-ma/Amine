@@ -541,8 +541,18 @@ ENGINE_PATCHES = [
     (
         'aim-assist',
         'd===1&&(y=this.aimAssist(c,y,s.range)),this.shootRay(c,y,s)}',
-        'd===1&&!(window.__ROYAL_OPT__&&window.__ROYAL_OPT__.directAim)&&(y=this.aimAssist(c,y,s.range)),'
+        '(window.__ROYAL_AIM__?(y=window.__ROYAL_AIM__(this,c,y,s.range,d)):'
+        '(d===1&&!(window.__ROYAL_OPT__&&window.__ROYAL_OPT__.directAim)&&(y=this.aimAssist(c,y,s.range)))),'
         'this.shootRay(c,y,s)}',
+    ),
+
+    # 44) لا إطلاق نار إلا بالضغط على زرّ الضرب — لا لمسة الشاشة ولا التلقائي.
+    (
+        'fire-button-only',
+        'let o=this.hud.consume("tapFire"),a=e.shoot||o||this.P.match.autoFire&&this.enemyInSight();',
+        'let o=this.hud.consume("tapFire"),'
+        '_fb=!(window.__ROYAL_OPT__&&window.__ROYAL_OPT__.fireBtnOnly===!1),'
+        'a=e.shoot||!_fb&&(o||this.P.match.autoFire&&this.enemyInSight());',
     ),
 ]
 

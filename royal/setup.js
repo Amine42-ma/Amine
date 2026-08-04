@@ -97,13 +97,17 @@
   function isUrl(s) { return typeof s === "string" && /^(data:|blob:|https?:)/.test(s); }
   function orient() { return editOrient || (innerWidth >= innerHeight ? "land" : "port"); }
   var editOrient = null;
+  /* المكان والحجم يختلفان بين الطول والعرض — أمّا المظهر فواحد للاثنين */
+  var GEO_KEYS = ["x", "y", "size", "wk", "hk"];
+  var LOOK_KEYS = ["shape", "emoji", "icon", "opacity", "visible", "color", "bare"];
   function setEditOrient(o) {
     persist();                      /* احفظ الوضع الحالي أولاً */
     editOrient = o;
     var st = load(), src = o === "port" ? st.layoutPort : st.layout;
     if (!src) src = o === "port" ? st.layout : st.layoutPort;
     if (src) P.controls.layout.forEach(function (c) {
-      var f = src[c.id]; if (f) for (var k in f) if (f[k] !== undefined) c[k] = f[k];
+      var f = src[c.id];
+      if (f) GEO_KEYS.forEach(function (k) { if (f[k] !== undefined) c[k] = f[k]; });
     });
     UI.stage.classList.toggle("port", o === "port");
     applyStageBox();
@@ -217,7 +221,12 @@
     ctxButtons: true,    /* أزرار الفتح/الالتقاط تظهر عند الحاجة فقط */
     botDrop: true,       /* الأعداء يُسقطون غنائمهم */
     headMul: 2.2,        /* مضاعف ضرر إصابة الرأس */
-    directAim: true,     /* تصويب مباشر بلا مساعدة */
+    directAim: false,    /* true = بلا أي مساعدة تصويب إطلاقاً */
+    aimAssist: true,     /* مساعد التصويب: يقفل على العدو */
+    aimAdsOnly: true,    /* لا يعمل إلا عند تفعيل وضع التصويب */
+    aimCone: 0.9,        /* اتساع مخروط المساعدة (0.9 ≈ 25°) */
+    aimPow: 1,           /* 1 = قفل كامل على العدو */
+    fireBtnOnly: true,   /* لا إطلاق إلا بالضغط على زرّ الضرب */
     meshMove: true,      /* حركة تصطدم بمضلّعات الخريطة فعلياً */
     chuteAcc: 34,        /* تسارع التحرّك تحت المظلّة */
     chuteDamp: 2.2,      /* كبح التحرّك تحت المظلّة */
@@ -274,6 +283,7 @@
       match: clone(P.match || {})
     };
     applySaved();
+    watchOrientLive();
     return new Promise(function (res) {
       resolveGo = res;
       /* النسخة النهائية للاعبين: لا لوحة إعداد — اسم اللاعب ثم اللعب مباشرةً */
@@ -326,9 +336,19 @@
     }
     OPT.build = false;
     var LY = (OPT.perOrient && orient() === "port" && s.layoutPort) ? s.layoutPort : (s.layout || s.layoutPort);
+    /* المظهر المشترك أولاً (وإن كان الحفظ قديماً فخُذه من الترتيب الأفقي) */
+    var LOOK = s.look || s.layout || s.layoutPort;
+    if (LOOK) for (i = 0; i < P.controls.layout.length; i++) {
+      f = LOOK[P.controls.layout[i].id];
+      if (f) LOOK_KEYS.forEach(function (kk) {
+        if (f[kk] !== undefined) P.controls.layout[i][kk] = f[kk];
+      });
+    }
     if (LY) for (i = 0; i < P.controls.layout.length; i++) {
       f = LY[P.controls.layout[i].id];
-      if (f) for (j in f) if (f[j] !== undefined) P.controls.layout[i][j] = f[j];
+      if (f) GEO_KEYS.forEach(function (kk) {
+        if (f[kk] !== undefined) P.controls.layout[i][kk] = f[kk];
+      });
     }
     if (s.stats) for (i = 0; i < P.controls.stats.length; i++) {
       f = s.stats[P.controls.stats[i].id];
@@ -372,10 +392,13 @@
   function persist() {
     var s = load(), i, w;
     var LK = (OPT.perOrient && orient() === "port") ? "layoutPort" : "layout";
-    s[LK] = {}; s.stats = {};
+    s[LK] = {}; s.stats = {}; s.look = s.look || {};
     for (i = 0; i < P.controls.layout.length; i++) {
       var c = P.controls.layout[i];
-      s[LK][c.id] = { x: c.x, y: c.y, size: c.size, wk: c.wk, hk: c.hk, shape: c.shape, emoji: c.emoji, icon: c.icon, opacity: c.opacity, visible: c.visible, color: c.color };
+      /* المكان والحجم لكل وضع شاشة على حِدة… */
+      s[LK][c.id] = { x: c.x, y: c.y, size: c.size, wk: c.wk, hk: c.hk };
+      /* …أمّا الأيقونة واللون والشكل فمشتركة بين الوضعين ولا تضيع عند القلب */
+      s.look[c.id] = { shape: c.shape, emoji: c.emoji, icon: c.icon, opacity: c.opacity, visible: c.visible, color: c.color, bare: c.bare };
     }
     for (i = 0; i < P.controls.stats.length; i++) {
       var t = P.controls.stats[i];
@@ -399,6 +422,8 @@
       zoneRamp: OPT.zoneRamp, playerWall: OPT.playerWall, gunFlip: OPT.gunFlip,
       exactWalls: OPT.exactWalls, ctxButtons: OPT.ctxButtons, botDrop: OPT.botDrop,
       headMul: OPT.headMul, directAim: OPT.directAim, meshMove: OPT.meshMove,
+      aimAssist: OPT.aimAssist, aimAdsOnly: OPT.aimAdsOnly, aimCone: OPT.aimCone,
+      aimPow: OPT.aimPow, fireBtnOnly: OPT.fireBtnOnly,
       chuteAcc: OPT.chuteAcc, chuteDamp: OPT.chuteDamp, customSfx: OPT.customSfx,
       sfxPistolSec: OPT.sfxPistolSec, sfxRifleSec: OPT.sfxRifleSec, menuVol: OPT.menuVol,
       thumbSide: OPT.thumbSide, meshGround: OPT.meshGround,
@@ -415,6 +440,33 @@
   }
 
   var _liveT = 0;
+  /* ترتيب الوضع الحالي (طول/عرض) على أزرار اللعب — يعمل حتى في النسخة النهائية */
+  function applyOrientLayout() {
+    var s = load();
+    var o = innerWidth >= innerHeight ? "land" : "port";
+    var src = o === "port" ? s.layoutPort : s.layout;
+    if (!src) src = o === "port" ? s.layout : s.layoutPort;
+    if (!src) return;
+    P.controls.layout.forEach(function (c) {
+      var f = src[c.id];
+      if (f) GEO_KEYS.forEach(function (k) { if (f[k] !== undefined) c[k] = f[k]; });
+    });
+  }
+  var _liveOr = null;
+  function watchOrientLive() {
+    _liveOr = innerWidth >= innerHeight ? "land" : "port";
+    function tick() {
+      if (!OPT.perOrient) return;
+      var o = innerWidth >= innerHeight ? "land" : "port";
+      if (o === _liveOr) return;
+      _liveOr = o;
+      applyOrientLayout();
+      applyLiveSoon();
+    }
+    addEventListener("resize", tick);
+    addEventListener("orientationchange", function () { setTimeout(tick, 280); });
+  }
+
   function applyLiveSoon() {
     clearTimeout(_liveT);
     _liveT = setTimeout(function () { try { applyLive(); } catch (e) { } }, 120);
@@ -471,7 +523,8 @@
           var st = load(), src = o === "port" ? st.layoutPort : st.layout;
           if (!src) src = o === "port" ? st.layout : st.layoutPort;
           if (src) P.controls.layout.forEach(function (c) {
-            var f = src[c.id]; if (f) for (var k in f) if (f[k] !== undefined) c[k] = f[k];
+            var f = src[c.id];
+            if (f) GEO_KEYS.forEach(function (k) { if (f[k] !== undefined) c[k] = f[k]; });
           });
           toast(o === "port" ? "📱 انتقلتَ لترتيب الوضع العمودي" : "🖥️ انتقلتَ لترتيب الوضع الأفقي");
           renderPanel();
@@ -607,6 +660,9 @@
   function skinWidget(node, cfg) {
     var body = node.querySelector ? node.querySelector(".body") : null;
     if (!body) return;
+    /* «بلا إطار»: الصورة وحدها بلا دائرة ولا حدود — مظهر احترافي */
+    if (node.classList) node.classList.toggle("nf", !!(cfg && cfg.bare));
+    if (cfg && cfg.bare) { body.style.background = ""; body.style.borderColor = ""; body.style.boxShadow = ""; return; }
     var c = cfg && cfg.color;
     if (c && c.toLowerCase() !== "#ffffff") {
       body.style.background = "radial-gradient(circle at 35% 30%," + hexA(c, 0.62) + "," + hexA(c, 0.18) + ")";
@@ -700,9 +756,24 @@
             var st = load(), src = orient() === "port" ? st.layout : st.layoutPort;
             if (!src) { toast("لا يوجد ترتيب محفوظ للوضع الآخر"); return; }
             P.controls.layout.forEach(function (c) {
-              var f = src[c.id]; if (f) for (var k in f) if (f[k] !== undefined) c[k] = f[k];
+              var f = src[c.id];
+              if (f) GEO_KEYS.forEach(function (k) { if (f[k] !== undefined) c[k] = f[k]; });
             });
             persist(); renderStage(); renderPanel(); toast("تم النسخ ✔");
+          }
+        })
+      ]));
+      if (tab === "btn") b.appendChild(el("div", { class: "rs-chips" }, [
+        el("button", {
+          class: "rs-chip dz", text: "🚫 احذف الإطار عن كل الأزرار", onclick: function () {
+            P.controls.layout.forEach(function (c) { if (c.id !== "move" && c.id !== "aim") c.bare = true; });
+            persist(); renderStage(); renderPanel(); toast("اختفت الدوائر — الصور وحدها ✔");
+          }
+        }),
+        el("button", {
+          class: "rs-chip", text: "🔘 أعِد الإطار للكل", onclick: function () {
+            P.controls.layout.forEach(function (c) { c.bare = false; });
+            persist(); renderStage(); renderPanel();
           }
         })
       ]));
@@ -776,9 +847,19 @@
     box.appendChild(el("h4", { class: "rs-h4", text: "🖼️ أيقونتك الخاصة" }));
     box.appendChild(el("div", { class: "rs-hint", text: "ارفع أي صورة من جهازك (PNG بخلفية شفافة أفضل). تُحفظ في مكتبتك لتستعملها لأي زر آخر." }));
     box.appendChild(el("div", { class: "rs-row" }, [
-      upload("📁 ارفع صورة من جهازك", function (url) { cfg.icon = url; addMyIcon(url); onChange(); }, true),
+      upload("📁 ارفع صورة من جهازك", function (url) { cfg.icon = url; cfg.bare = true; addMyIcon(url); onChange(); }, true),
       isUrl(cfg.icon) ? el("button", { class: "rs-chip dz", text: "🗑️ أزل الصورة", onclick: function () { cfg.icon = null; onChange(); } }) : null
     ]));
+    if (cfg.id !== "move" && cfg.id !== "aim") {
+      box.appendChild(el("div", { class: "rs-row" }, [
+        el("span", { class: "rs-lab", text: "إطار الزر" }),
+        el("button", {
+          class: "rs-chip " + (cfg.bare ? "dz" : "ok"),
+          text: cfg.bare ? "🚫 بلا إطار (الصورة وحدها)" : "🔘 دائرة حول الأيقونة",
+          onclick: function () { cfg.bare = !cfg.bare; onChange(); }
+        })
+      ]));
+    }
 
     var mine = load().myIcons || [];
     if (mine.length) {
@@ -901,7 +982,9 @@
     OPT.faceFlip = false; OPT.zoneBotMul = 3; OPT.zoneRamp = 4; OPT.playerWall = true;
     OPT.sens = 1; OPT.adsSens = 0.55; OPT.smooth = 0.35;
     OPT.gunFlip = true; OPT.exactWalls = true; OPT.matchMin = 22;
-    OPT.ctxButtons = true; OPT.botDrop = true; OPT.headMul = 2.2; OPT.directAim = true;
+    OPT.ctxButtons = true; OPT.botDrop = true; OPT.headMul = 2.2; OPT.directAim = false;
+    OPT.aimAssist = true; OPT.aimAdsOnly = true; OPT.aimCone = 0.9; OPT.aimPow = 1;
+    OPT.fireBtnOnly = true;
     OPT.meshMove = true; OPT.chuteAcc = 34; OPT.chuteDamp = 2.2;
     OPT.customSfx = true; OPT.sfxPistolSec = 1.0; OPT.sfxRifleSec = 0.3; OPT.menuVol = 0.45;
     OPT.thumbSide = true; OPT.meshGround = true; OPT.stickRun = true; OPT.stickRunAt = 0.86;
@@ -1437,14 +1520,41 @@
           text: OPT.gunFlip ? "✅ السلاح يشير للأمام" : "🚫 اتجاه السلاح الأصلي",
           onclick: function () { OPT.gunFlip = !OPT.gunFlip; persist(); applyGunLive(); renderPlay(); }
         }),
-        el("button", {
-          class: "rs-chip " + (OPT.directAim ? "ok" : ""),
-          text: OPT.directAim ? "🎯 تصويب مباشر (بلا مساعدة)" : "🧲 مساعدة التصويب مفعّلة",
-          onclick: function () { OPT.directAim = !OPT.directAim; persist(); renderPlay(); }
-        })
       ]),
       row("ضرر إصابة الرأس", slider(1, 4, 0.1, OPT.headMul, function (v) { OPT.headMul = v; persist(); })),
-      el("div", { class: "rs-hint", text: "الإصابة صارت تُحسب على كرتين: رأس (نصف قطر 0.34م) وجسم (0.62م)، ويُفحص الجدار حتى نقطة الإصابة نفسها — فإن كان الجدار منخفضاً والرأس ظاهراً تُحسب إصابة رأس، وإن كان يحجبه فلا إصابة." })
+      el("div", { class: "rs-hint", text: "الإصابة صارت تُحسب على كرتين: رأس (نصف قطر 0.34م) وجسم (0.62م)، ويُفحص الجدار حتى نقطة الإصابة نفسها — فإن كان الجدار منخفضاً والرأس ظاهراً تُحسب إصابة رأس، وإن كان يحجبه فلا إصابة. وإن كان العدو ملتصقاً بزاوية جدار وتراه الكاميرا فعلاً، تُحتسب الإصابة — ما تراه عينك تصيبه يدك." })
+    ]));
+
+    s.appendChild(el("div", { class: "rs-card" }, [
+      el("h4", { text: "🧲 مساعد التصويب وزرّ الضرب" }),
+      el("div", { class: "rs-chips" }, [
+        el("button", {
+          class: "rs-chip " + (OPT.fireBtnOnly ? "ok" : "dz"),
+          text: OPT.fireBtnOnly ? "✅ لا يطلق إلا بزرّ الضرب" : "🚫 لمسة الشاشة تُطلق أيضاً",
+          onclick: function () { OPT.fireBtnOnly = !OPT.fireBtnOnly; persist(); renderPlay(); }
+        }),
+        el("button", {
+          class: "rs-chip " + (OPT.aimAssist && !OPT.directAim ? "ok" : "dz"),
+          text: OPT.aimAssist && !OPT.directAim ? "🧲 مساعد التصويب مفعّل" : "🎯 بلا مساعدة إطلاقاً",
+          onclick: function () {
+            if (OPT.aimAssist && !OPT.directAim) { OPT.aimAssist = false; OPT.directAim = true; }
+            else { OPT.aimAssist = true; OPT.directAim = false; }
+            persist(); renderPlay();
+          }
+        }),
+        el("button", {
+          class: "rs-chip " + (OPT.aimAdsOnly ? "ok" : ""),
+          text: OPT.aimAdsOnly ? "🔭 عند التصويب فقط" : "♾️ في كل الأوقات",
+          onclick: function () { OPT.aimAdsOnly = !OPT.aimAdsOnly; persist(); renderPlay(); }
+        })
+      ]),
+      row("قوّة القفل", slider(0, 1, 0.05, OPT.aimPow, function (v) { OPT.aimPow = v; persist(); })),
+      row("اتساع المخروط", slider(0.75, 0.99, 0.01, OPT.aimCone, function (v) { OPT.aimCone = v; persist(); })),
+      el("div", {
+        class: "rs-hint", text: "القفل الكامل (1) يوجّه الرصاصة إلى العدو مباشرةً ما دام داخل المخروط ولا جدار بينكما — " +
+          "المخروط الحالي ≈ " + Math.round(Math.acos(clamp(OPT.aimCone, -1, 1)) * 180 / Math.PI) + "° حول مركز الشاشة. " +
+          "المساعدة لا تعمل أبداً على عدوٍّ خلف جدار."
+      })
     ]));
 
     s.appendChild(el("div", { class: "rs-card" }, [
@@ -2614,9 +2724,62 @@
     /* هل يحجب جدارٌ نقطة الإصابة تحديداً؟ */
     if (OPT.playerWall) {
       var w = wallHit(game, o.x, o.y, o.z, d.x, d.y, d.z, dist - 0.15);
+      /* العدو الملتصق بزاوية جدار: الشعاع إلى نقطة الإصابة يخدش الزاوية
+         فيُلغى الرصاص رغم أنه مكشوف أمامك. نسمح بهامش جانبي ±18سم عند
+         نقطة الإصابة نفسها فقط — يكفي لتجاوز خدش الزاوية، ولا يكفي
+         أبداً لاختراق جدار حقيقي. */
+      if (w != null && exposedAt(game, o, d, dist)) w = null;
       if (w != null) return null;
     }
     return { d: dist, head: head };
+  };
+
+  function exposedAt(game, o, d, dist) {
+    var hx = o.x + d.x * dist, hy = o.y + d.y * dist, hz = o.z + d.z * dist;
+    var rx = -d.z, rz = d.x;                       /* متجه جانبي أفقي */
+    var rl = Math.sqrt(rx * rx + rz * rz) || 1; rx /= rl; rz /= rl;
+    var offs = [0.18, -0.18];
+    for (var i = 0; i < offs.length; i++) {
+      var px = hx + rx * offs[i], pz = hz + rz * offs[i];
+      var vx = px - o.x, vy = hy - o.y, vz = pz - o.z;
+      var L = Math.sqrt(vx * vx + vy * vy + vz * vz);
+      if (L < 1e-4) return true;
+      if (wallHit(game, o.x, o.y, o.z, vx / L, vy / L, vz / L, L - 0.12) == null) return true;
+    }
+    return false;
+  }
+
+  /* ------- مساعد التصويب: يقفل على العدو عند تفعيل وضع التصويب ------- */
+  window.__ROYAL_AIM__ = function (game, o, dir, range, pellets) {
+    try {
+      if (OPT.directAim || !OPT.aimAssist || pellets !== 1) return dir;
+      var inp = game.hud && game.hud.input;
+      if (OPT.aimAdsOnly && !(inp && (inp.aiming || inp.scopeOn))) return dir;
+      var cone = OPT.aimCone, best = null, bestScore = -1, i, b, H, vx, vy, vz, L, dot, sc;
+      for (i = 0; i < game.bots.length; i++) {
+        b = game.bots[i];
+        if (!b.alive || !b.landed || b.ally) continue;
+        H = (b.ch && b.ch.totalH) || 1.7;
+        vx = b.pos.x - o.x; vy = (b.pos.y + H * 0.55) - o.y; vz = b.pos.z - o.z;
+        L = Math.sqrt(vx * vx + vy * vy + vz * vz);
+        if (L > range || L < 0.6) continue;
+        vx /= L; vy /= L; vz /= L;
+        dot = vx * dir.x + vy * dir.y + vz * dir.z;
+        if (dot < cone) continue;
+        /* لا مساعدة على عدوٍّ خلف جدار */
+        if (wallHit(game, o.x, o.y, o.z, vx, vy, vz, L - 0.6) != null) continue;
+        sc = dot * 2 + (1 - L / range);
+        if (sc > bestScore) { bestScore = sc; best = { x: vx, y: vy, z: vz }; }
+      }
+      if (!best) return dir;
+      var k = clamp(OPT.aimPow, 0, 1);
+      var nx = dir.x + (best.x - dir.x) * k;
+      var ny = dir.y + (best.y - dir.y) * k;
+      var nz = dir.z + (best.z - dir.z) * k;
+      var n = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+      dir.set(nx / n, ny / n, nz / n);
+    } catch (e) { }
+    return dir;
   };
 
   /* ============================================================
