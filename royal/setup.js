@@ -95,6 +95,7 @@
     return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + a + ")";
   }
   function isUrl(s) { return typeof s === "string" && /^(data:|blob:|https?:)/.test(s); }
+  function orient() { return innerWidth >= innerHeight ? "land" : "port"; }
   function toast(msg, ms) {
     var t = el("div", {
       class: "rs-toast", text: msg,
@@ -157,6 +158,12 @@
     sens: 1,             /* حساسية النظر */
     adsSens: 0.55,       /* حساسية النظر أثناء التصويب */
     smooth: 0.35,        /* تنعيم حركة النظر */
+    gunFlip: true,       /* تصحيح اتجاه السلاح مع قلب الشخصية */
+    exactWalls: true,    /* اصطدام دقيق بمضلّعات الخريطة */
+    matchMin: 22,        /* مدة المباراة بالدقائق */
+    voice: true,         /* الميكروفون مع الأصدقاء */
+    voiceMic: true,      /* ابدأ والميكروفون مفتوح */
+    perOrient: true,     /* ترتيب مستقل للوضع العمودي والأفقي */
     online: false,       /* افتح الأونلاين افتراضياً */
     netTarget: 25,       /* ابدأ فور اكتمال هذا العدد */
     netWait: 300,        /* أقصى انتظار بالثواني */
@@ -248,8 +255,9 @@
       else if (k in OPT) OPT[k] = s.opt[k];
     }
     OPT.build = false;
-    if (s.layout) for (i = 0; i < P.controls.layout.length; i++) {
-      f = s.layout[P.controls.layout[i].id];
+    var LY = (OPT.perOrient && orient() === "port" && s.layoutPort) ? s.layoutPort : (s.layout || s.layoutPort);
+    if (LY) for (i = 0; i < P.controls.layout.length; i++) {
+      f = LY[P.controls.layout[i].id];
       if (f) for (j in f) if (f[j] !== undefined) P.controls.layout[i][j] = f[j];
     }
     if (s.stats) for (i = 0; i < P.controls.stats.length; i++) {
@@ -273,6 +281,15 @@
         if (f) for (var k in f) if (f[k] !== undefined) b[k] = f[k];
       });
     }
+    if (P.map && P.map.zone) {
+      var Z = P.map.zone, ph = Z.phases || 7;
+      var T = Math.max(120, OPT.matchMin * 60 - (Z.firstDelay || 25));
+      Z.holdTime = Math.round((T / ph) * 0.6);
+      Z.shrinkTime = Math.round((T / ph) * 0.4);
+    }
+    if (!s.lobby && P.lobby && P.lobby.buttons) {
+      P.lobby.buttons.forEach(function (b) { if (b.kind === "skins") b.visible = false; });
+    }
     if (P.match) {
       P.match.online = !!OPT.online;
       P.match.netWait = OPT.netWait;
@@ -283,10 +300,11 @@
 
   function persist() {
     var s = load(), i, w;
-    s.layout = {}; s.stats = {};
+    var LK = (OPT.perOrient && orient() === "port") ? "layoutPort" : "layout";
+    s[LK] = {}; s.stats = {};
     for (i = 0; i < P.controls.layout.length; i++) {
       var c = P.controls.layout[i];
-      s.layout[c.id] = { x: c.x, y: c.y, size: c.size, wk: c.wk, hk: c.hk, shape: c.shape, emoji: c.emoji, icon: c.icon, opacity: c.opacity, visible: c.visible, color: c.color };
+      s[LK][c.id] = { x: c.x, y: c.y, size: c.size, wk: c.wk, hk: c.hk, shape: c.shape, emoji: c.emoji, icon: c.icon, opacity: c.opacity, visible: c.visible, color: c.color };
     }
     for (i = 0; i < P.controls.stats.length; i++) {
       var t = P.controls.stats[i];
@@ -307,7 +325,9 @@
       climb: OPT.climb, stepH: OPT.stepH, doorStep: OPT.doorStep, doorFix: OPT.doorFix,
       freeWater: OPT.freeWater, stickyAim: OPT.stickyAim, faceMove: OPT.faceMove,
       botLOS: OPT.botLOS, faceFlip: OPT.faceFlip, zoneBotMul: OPT.zoneBotMul,
-      zoneRamp: OPT.zoneRamp, playerWall: OPT.playerWall, sens: OPT.sens,
+      zoneRamp: OPT.zoneRamp, playerWall: OPT.playerWall, gunFlip: OPT.gunFlip,
+      exactWalls: OPT.exactWalls, matchMin: OPT.matchMin, voice: OPT.voice,
+      voiceMic: OPT.voiceMic, perOrient: OPT.perOrient, sens: OPT.sens,
       adsSens: OPT.adsSens, smooth: OPT.smooth, online: OPT.online,
       netTarget: OPT.netTarget, netWait: OPT.netWait,
       ambient: OPT.ambient, ocean: OPT.ocean,
@@ -554,7 +574,23 @@
 
     if (!cfg) {
       UI.ptitle.textContent = tab === "btn" ? "اضغط على أي زر لتعديله" : "اضغط على أي عدّاد لتعديله";
-      b.appendChild(el("div", { class: "rs-hint", text: "اسحب العنصر بإصبعك لتغيير مكانه، أو اضغط عليه لفتح خياراته." }));
+      b.appendChild(el("div", {
+        class: "rs-hint",
+        text: "اسحب العنصر بإصبعك لتغيير مكانه، أو اضغط عليه لفتح خياراته." +
+          (OPT.perOrient ? ("  •  تُحرّر الآن ترتيب الوضع " + (orient() === "port" ? "العمودي 📱" : "الأفقي 🖥️") + " — أدِر جهازك لتحرير الوضع الآخر.") : "")
+      }));
+      if (OPT.perOrient) b.appendChild(el("div", { class: "rs-chips" }, [
+        el("button", {
+          class: "rs-chip", text: "⇄ انسخ الترتيب من الوضع الآخر", onclick: function () {
+            var st = load(), src = orient() === "port" ? st.layout : st.layoutPort;
+            if (!src) { toast("لا يوجد ترتيب محفوظ للوضع الآخر"); return; }
+            P.controls.layout.forEach(function (c) {
+              var f = src[c.id]; if (f) for (var k in f) if (f[k] !== undefined) c[k] = f[k];
+            });
+            persist(); renderStage(); renderPanel(); toast("تم النسخ ✔");
+          }
+        })
+      ]));
       var q = el("div", { class: "rs-chips" });
       (tab === "btn" ? P.controls.layout : P.controls.stats).forEach(function (c) {
         q.appendChild(el("button", { class: "rs-chip", text: (isUrl(c.icon) ? "🖼️" : (c.emoji || "•")) + " " + ((tab === "btn" ? BTN : STAT)[c.id] || c.id), onclick: function () { select(tab, c.id); } }));
@@ -744,6 +780,8 @@
     OPT.freeWater = true; OPT.stickyAim = true; OPT.faceMove = true; OPT.botLOS = true;
     OPT.faceFlip = true; OPT.zoneBotMul = 3; OPT.zoneRamp = 4; OPT.playerWall = true;
     OPT.sens = 1; OPT.adsSens = 0.55; OPT.smooth = 0.35;
+    OPT.gunFlip = true; OPT.exactWalls = true; OPT.matchMin = 22;
+    OPT.voice = true; OPT.voiceMic = true; OPT.perOrient = true;
     OPT.online = false; OPT.netTarget = 25; OPT.netWait = 300;
     P.lobby.buttons = clone(FACTORY.lobby);
     OPT.ambient = 0.55; OPT.ocean = true; OPT.trophies = false; OPT.slimHud = true;
@@ -1204,8 +1242,46 @@
           class: "rs-chip " + (OPT.playerWall ? "ok" : "dz"),
           text: OPT.playerWall ? "✅ رصاصك لا يخترق الجدران" : "🚫 رصاصك يخترق الجدران",
           onclick: function () { OPT.playerWall = !OPT.playerWall; persist(); renderPlay(); }
+        }),
+        el("button", {
+          class: "rs-chip " + (OPT.exactWalls ? "ok" : ""),
+          text: OPT.exactWalls ? "🎯 اصطدام دقيق بالمضلّعات" : "⚡ اصطدام تقريبي (أسرع)",
+          onclick: function () { OPT.exactWalls = !OPT.exactWalls; persist(); renderPlay(); }
+        }),
+        el("button", {
+          class: "rs-chip " + (OPT.gunFlip ? "ok" : "dz"),
+          text: OPT.gunFlip ? "✅ السلاح يشير للأمام" : "🚫 اتجاه السلاح الأصلي",
+          onclick: function () { OPT.gunFlip = !OPT.gunFlip; persist(); applyGunLive(); renderPlay(); }
         })
       ])
+    ]));
+
+    s.appendChild(el("div", { class: "rs-card" }, [
+      el("h4", { text: "🎤 الميكروفون مع الأصدقاء" }),
+      el("div", { class: "rs-hint", text: "صوت مباشر داخل نفس الروم فقط — يمرّ على نفس اتصال WebRTC بلا خادم. زر 🎤 داخل اللعبة يدور بين: ميكروفون مفتوح ← استماع فقط ← إغلاق تام." }),
+      el("div", { class: "rs-chips" }, [
+        el("button", {
+          class: "rs-chip " + (OPT.voice ? "ok" : "dz"), text: OPT.voice ? "✅ الميكروفون مُفعَّل" : "🚫 بلا ميكروفون",
+          onclick: function () { OPT.voice = !OPT.voice; persist(); renderPlay(); }
+        }),
+        el("button", {
+          class: "rs-chip " + (OPT.voiceMic ? "ok" : ""), text: OPT.voiceMic ? "🎤 يبدأ مفتوحاً" : "👂 يبدأ على استماع فقط",
+          onclick: function () { OPT.voiceMic = !OPT.voiceMic; persist(); renderPlay(); }
+        })
+      ])
+    ]));
+
+    s.appendChild(el("div", { class: "rs-card" }, [
+      el("h4", { text: "⏱️ مدّة المباراة" }),
+      el("div", { class: "rs-hint", text: "تتحكّم بسرعة تقلّص الزون: كلما زادت الدقائق طالت المباراة." }),
+      row("بالدقائق", slider(6, 35, 1, OPT.matchMin, function (v) {
+        OPT.matchMin = v; persist();
+        if (P.map && P.map.zone) {
+          var Z = P.map.zone, ph = Z.phases || 7;
+          var T = Math.max(120, v * 60 - (Z.firstDelay || 25));
+          Z.holdTime = Math.round((T / ph) * 0.6); Z.shrinkTime = Math.round((T / ph) * 0.4);
+        }
+      }))
     ]));
 
     s.appendChild(el("div", { class: "rs-card" }, [
@@ -1462,9 +1538,137 @@
     return base * (0.18 + 0.82 * ramp * ramp) * far;
   };
 
+  /* ============================================================
+     اصطدام دقيق بمضلّعات الخريطة (شبكة تسريع + Möller–Trumbore)
+     ============================================================ */
+  var TRI = null;
+
+  window.__ROYAL_MAPMESH__ = function (game) {
+    TRI = null;
+    if (!OPT.exactWalls) return;
+    try { TRI = buildTriGrid(game); }
+    catch (e) { console.warn("tri grid", e); TRI = null; }
+  };
+
+  function buildTriGrid(game) {
+    var root = game.mapRoot; if (!root) return null;
+    var t0 = performance.now();
+    root.updateMatrixWorld(true);
+
+    /* 1) اجمع المثلّثات في إحداثيات العالم */
+    var chunks = [], total = 0;
+    root.traverse(function (o) {
+      if (!o.isMesh || !o.geometry || !o.geometry.attributes || !o.geometry.attributes.position) return;
+      var g = o.geometry, pos = g.attributes.position, idx = g.index;
+      var n = idx ? idx.count : pos.count;
+      if (n < 3) return;
+      chunks.push({ m: o.matrixWorld.elements, pos: pos, idx: idx, n: n });
+      total += (n / 3) | 0;
+    });
+    if (!total || total > 900000) return null;
+
+    var V = new Float32Array(total * 9), w = 0;
+    var minX = 1e30, maxX = -1e30, minZ = 1e30, maxZ = -1e30;
+    function xf(e, x, y, z, out, o2) {
+      out[o2] = e[0] * x + e[4] * y + e[8] * z + e[12];
+      out[o2 + 1] = e[1] * x + e[5] * y + e[9] * z + e[13];
+      out[o2 + 2] = e[2] * x + e[6] * y + e[10] * z + e[14];
+    }
+    for (var ci = 0; ci < chunks.length; ci++) {
+      var c = chunks[ci], pa = c.pos.array, ia = c.idx ? c.idx.array : null;
+      for (var k = 0; k + 2 < c.n; k += 3) {
+        for (var v = 0; v < 3; v++) {
+          var pi = (ia ? ia[k + v] : (k + v)) * 3;
+          xf(c.m, pa[pi], pa[pi + 1], pa[pi + 2], V, w + v * 3);
+        }
+        for (var v2 = 0; v2 < 3; v2++) {
+          var X = V[w + v2 * 3], Z = V[w + v2 * 3 + 2];
+          if (X < minX) minX = X; if (X > maxX) maxX = X;
+          if (Z < minZ) minZ = Z; if (Z > maxZ) maxZ = Z;
+        }
+        w += 9;
+      }
+    }
+    var nTri = w / 9;
+    if (!nTri) return null;
+
+    /* 2) شبكة تسريع على المستوى الأفقي */
+    var G = nTri > 300000 ? 192 : nTri > 80000 ? 128 : 80;
+    var sx = (maxX - minX) / G || 1, sz = (maxZ - minZ) / G || 1;
+    var count = new Int32Array(G * G);
+    function cellRange(i) {
+      var ax = V[i * 9], az = V[i * 9 + 2], bx = V[i * 9 + 3], bz = V[i * 9 + 5], cx = V[i * 9 + 6], cz = V[i * 9 + 8];
+      var x0 = Math.min(ax, bx, cx), x1 = Math.max(ax, bx, cx);
+      var z0 = Math.min(az, bz, cz), z1 = Math.max(az, bz, cz);
+      return [
+        Math.max(0, Math.min(G - 1, ((x0 - minX) / sx) | 0)), Math.max(0, Math.min(G - 1, ((x1 - minX) / sx) | 0)),
+        Math.max(0, Math.min(G - 1, ((z0 - minZ) / sz) | 0)), Math.max(0, Math.min(G - 1, ((z1 - minZ) / sz) | 0))
+      ];
+    }
+    var i2, r2, gx, gz;
+    for (i2 = 0; i2 < nTri; i2++) {
+      r2 = cellRange(i2);
+      for (gz = r2[2]; gz <= r2[3]; gz++) for (gx = r2[0]; gx <= r2[1]; gx++) count[gz * G + gx]++;
+    }
+    var start = new Int32Array(G * G + 1), acc = 0;
+    for (i2 = 0; i2 < G * G; i2++) { start[i2] = acc; acc += count[i2]; }
+    start[G * G] = acc;
+    if (acc > 6000000) return null;
+    var items = new Int32Array(acc), fill = start.slice(0, G * G);
+    for (i2 = 0; i2 < nTri; i2++) {
+      r2 = cellRange(i2);
+      for (gz = r2[2]; gz <= r2[3]; gz++) for (gx = r2[0]; gx <= r2[1]; gx++) items[fill[gz * G + gx]++] = i2;
+    }
+    console.log("[royal] collision mesh:", nTri, "tris,", G + "x" + G, "grid in", Math.round(performance.now() - t0) + "ms");
+    return { V: V, n: nTri, G: G, minX: minX, minZ: minZ, sx: sx, sz: sz, start: start, items: items };
+  }
+
+  /* تقاطع شعاع/مثلّث */
+  function triHit(V, i, ox, oy, oz, dx, dy, dz, maxD) {
+    var o = i * 9;
+    var ax = V[o], ay = V[o + 1], az = V[o + 2];
+    var e1x = V[o + 3] - ax, e1y = V[o + 4] - ay, e1z = V[o + 5] - az;
+    var e2x = V[o + 6] - ax, e2y = V[o + 7] - ay, e2z = V[o + 8] - az;
+    var px = dy * e2z - dz * e2y, py = dz * e2x - dx * e2z, pz = dx * e2y - dy * e2x;
+    var det = e1x * px + e1y * py + e1z * pz;
+    if (det > -1e-7 && det < 1e-7) return -1;
+    var inv = 1 / det;
+    var tx = ox - ax, ty = oy - ay, tz = oz - az;
+    var u = (tx * px + ty * py + tz * pz) * inv;
+    if (u < -1e-5 || u > 1.00001) return -1;
+    var qx = ty * e1z - tz * e1y, qy = tz * e1x - tx * e1z, qz = tx * e1y - ty * e1x;
+    var v = (dx * qx + dy * qy + dz * qz) * inv;
+    if (v < -1e-5 || u + v > 1.00001) return -1;
+    var t = (e2x * qx + e2y * qy + e2z * qz) * inv;
+    return (t > 0.05 && t < maxD) ? t : -1;
+  }
+
+  /* يمشي الشعاع على خلايا الشبكة ويرجع أقرب اصطدام أو null */
+  function meshHit(ox, oy, oz, dx, dy, dz, maxD) {
+    var T = TRI; if (!T) return null;
+    var G = T.G, best = -1, seen = {}, i, j, hit;
+    var steps = Math.min(512, Math.ceil(maxD / Math.min(T.sx, T.sz)) + 2);
+    var stepLen = maxD / steps;
+    for (var s2 = 0; s2 <= steps; s2++) {
+      var d = s2 * stepLen;
+      var gx = ((ox + dx * d - T.minX) / T.sx) | 0;
+      var gz = ((oz + dz * d - T.minZ) / T.sz) | 0;
+      if (gx < 0 || gz < 0 || gx >= G || gz >= G) continue;
+      var cell = gz * G + gx;
+      if (seen[cell]) continue;
+      seen[cell] = 1;
+      for (i = T.start[cell], j = T.start[cell + 1]; i < j; i++) {
+        hit = triHit(T.V, T.items[i], ox, oy, oz, dx, dy, dz, best > 0 ? best : maxD);
+        if (hit > 0 && (best < 0 || hit < best)) best = hit;
+      }
+    }
+    return best > 0 ? best : null;
+  }
+
   /* ------- اصطدام الرصاص بالجدران (للاعب وللبوتات معاً) ------- */
   /* يرجع مسافة أول اصطدام أو null إذا كان الطريق خالياً */
   function wallHit(game, ox, oy, oz, dx, dy, dz, maxD) {
+    if (TRI) return meshHit(ox, oy, oz, dx, dy, dz, maxD);
     var Q = game.Q;
     if (!Q || !Q.roofAt) return null;
     var bothIn = Q.isIndoor && Q.isIndoor(ox, oz);
@@ -1534,6 +1738,7 @@
 
   window.__ROYAL_READY__ = function (game) {
     try { startAmbient(game); } catch (e) { console.warn("ambient", e); }
+    try { voiceButton(game); } catch (e) { console.warn("voice", e); }
     if (OPT.build) { try { enterBuild(game); } catch (e) { console.error("build", e); } }
   };
 
@@ -1867,6 +2072,86 @@
     var s = load(); s.wantBuild = true; SAVED = s; save();
     toast("تم الحفظ — جارٍ الرجوع للوحة الإعداد…", 2500);
     setTimeout(function () { location.reload(); }, 700);
+  }
+
+  /* ============================================================
+     6.35) الميكروفون مع الأصدقاء (فوق نفس اتصال WebRTC)
+     ============================================================ */
+  var VOICE = { stream: null, pcs: [], els: {}, mic: true, listen: true, asked: false };
+
+  window.__ROYAL_VOICE_PC__ = function (pc, peerId) {
+    if (!OPT.voice) return;
+    VOICE.pcs.push(pc);
+    pc.ontrack = function (e) {
+      if (!e.streams || !e.streams[0]) return;
+      var a = VOICE.els[peerId];
+      if (!a) {
+        a = document.createElement("audio");
+        a.autoplay = true; a.playsInline = true;
+        a.style.display = "none";
+        document.body.appendChild(a);
+        VOICE.els[peerId] = a;
+      }
+      a.srcObject = e.streams[0];
+      a.muted = !VOICE.listen;
+      a.play().catch(function () { });
+    };
+    try { pc.addTransceiver("audio", { direction: "sendrecv" }); } catch (e) { }
+    attachMic(pc);
+    ensureMic();
+  };
+
+  function attachMic(pc) {
+    if (!VOICE.stream) return;
+    try {
+      var senders = pc.getSenders ? pc.getSenders() : [];
+      var has = senders.some(function (sd) { return sd.track && sd.track.kind === "audio"; });
+      if (!has) VOICE.stream.getAudioTracks().forEach(function (tr) { pc.addTrack(tr, VOICE.stream); });
+    } catch (e) { console.warn("mic attach", e); }
+  }
+
+  function ensureMic(cb) {
+    if (!OPT.voice || VOICE.stream || VOICE.asked) { cb && cb(); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { VOICE.asked = true; return; }
+    VOICE.asked = true;
+    navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
+      .then(function (st) {
+        VOICE.stream = st;
+        st.getAudioTracks().forEach(function (tr) { tr.enabled = !!VOICE.mic; });
+        VOICE.pcs.forEach(attachMic);
+        voiceBtnSync();
+        toast(VOICE.mic ? "🎤 الميكروفون مفتوح" : "🔇 الميكروفون مغلق", 1800);
+        cb && cb();
+      })
+      .catch(function (e) {
+        console.warn("mic denied", e);
+        toast("تعذّر فتح الميكروفون — اسمح به من إعدادات المتصفّح", 3200);
+      });
+  }
+
+  function voiceCycle() {
+    if (VOICE.mic && VOICE.listen) { VOICE.mic = false; VOICE.listen = true; toast("👂 استماع فقط — ميكروفونك مغلق"); }
+    else if (!VOICE.mic && VOICE.listen) { VOICE.listen = false; toast("🔇 الصوت مغلق تماماً"); }
+    else { VOICE.mic = true; VOICE.listen = true; toast("🎤 الميكروفون والسماع مفتوحان"); ensureMic(); }
+    if (VOICE.stream) VOICE.stream.getAudioTracks().forEach(function (tr) { tr.enabled = !!VOICE.mic; });
+    for (var k in VOICE.els) VOICE.els[k].muted = !VOICE.listen;
+    voiceBtnSync();
+  }
+
+  function voiceBtnSync() {
+    var b = document.getElementById("rv-btn"); if (!b) return;
+    b.textContent = VOICE.mic ? "🎤" : (VOICE.listen ? "👂" : "🔇");
+    b.className = VOICE.mic ? "on" : (VOICE.listen ? "listen" : "off");
+  }
+
+  function voiceButton(game) {
+    if (!OPT.voice || document.getElementById("rv-btn")) return;
+    if (!game.net) return;                       /* أونلاين فقط */
+    var b = el("div", { id: "rv-btn", text: "🎤", onclick: voiceCycle });
+    (game.hud && game.hud.node ? game.hud.node : document.body).appendChild(b);
+    VOICE.mic = !!OPT.voiceMic;
+    voiceBtnSync();
+    ensureMic();
   }
 
   /* ---- 6.4 شارة السلاح ---- */

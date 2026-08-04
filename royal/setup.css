@@ -285,3 +285,14 @@
   font-size:13px;font-weight:800;color:#fff;background:rgba(255,255,255,.08);
   border:1.5px solid var(--line);outline:none}
 .rs-txt:focus{border-color:var(--acc)}
+
+
+/* ---------- زر الميكروفون داخل اللعبة ---------- */
+#rv-btn{position:absolute;z-index:9;inset-inline-start:12px;top:34%;width:52px;height:52px;
+  border-radius:50%;display:grid;place-items:center;font-size:24px;cursor:pointer;
+  pointer-events:auto;border:2px solid rgba(255,255,255,.4);
+  box-shadow:0 4px 0 rgba(0,0,0,.45),0 8px 18px rgba(0,0,0,.5)}
+#rv-btn.on{background:linear-gradient(180deg,var(--gr),var(--gr-d))}
+#rv-btn.listen{background:linear-gradient(180deg,var(--cy),var(--cy-d))}
+#rv-btn.off{background:linear-gradient(180deg,var(--rd),var(--rd-d))}
+#rv-btn:active{transform:scale(.93)}

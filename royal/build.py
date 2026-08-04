@@ -346,6 +346,31 @@ ENGINE_PATCHES = [
         'p<=0&&_()},1e3)',
         'p<=0&&_(),b>=((window.__ROYAL_OPT__&&window.__ROYAL_OPT__.netTarget)||99)&&_()},1e3)',
     ),
+
+    # 28) الميكروفون: نمرّر اتصال WebRTC لطبقة الصوت قبل إنشاء العرض.
+    (
+        'voice-pc',
+        'n={pc:i,dc:null,open:!1},this.conns.set(t,n);',
+        'n={pc:i,dc:null,open:!1},this.conns.set(t,n);'
+        'try{window.__ROYAL_VOICE_PC__&&window.__ROYAL_VOICE_PC__(i,t)}catch(_v){}',
+    ),
+
+    # 29) تصحيح اتجاه السلاح بعد قلب دوران الشخصية.
+    (
+        'gun-yaw',
+        'n.rotation.set(e.hold.rx,e.hold.ry,e.hold.rz),'
+        'n.traverse(_m=>{_m.isMesh&&(_m.frustumCulled=!1,_m.renderOrder=2)}),',
+
+        'n.rotation.set(e.hold.rx,e.hold.ry+((window.__ROYAL_OPT__&&window.__ROYAL_OPT__.gunFlip)?Math.PI:0),e.hold.rz),'
+        'n.traverse(_m=>{_m.isMesh&&(_m.frustumCulled=!1,_m.renderOrder=2)}),',
+    ),
+
+    # 30) خريطة مضلّعات دقيقة للاصطدام: نمرّر جذر الخريطة بعد تحميلها.
+    (
+        'map-mesh',
+        'this.Q=Ga(this.an),',
+        'this.Q=Ga(this.an),window.__ROYAL_MAPMESH__&&window.__ROYAL_MAPMESH__(this),',
+    ),
 ]
 
 
