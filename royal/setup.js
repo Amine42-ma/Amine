@@ -150,6 +150,9 @@
     freeWater: true,     /* السماح بدخول الأودية والماء الداخلي */
     stickyAim: true,     /* التصويب يبقى مثبّتاً حتى تضغط ثانيةً */
     faceMove: true,      /* الشخصية تنظر لجهة حركتها */
+    faceFlip: true,      /* تصحيح دوران الشخصية 180° (كانت تنظر للكاميرا) */
+    zoneBotMul: 3,       /* سرعة تأذّي البوتات خارج الزون */
+    zoneRamp: 4,         /* ثوانٍ حتى يصل ضرر الزون لكامله */
     botLOS: true,        /* الأعداء لا يطلقون عبر الجدران */
     ambient: 0.55,       /* مستوى صوت الخلفية */
     ocean: true,         /* بحر واقعي */
@@ -249,7 +252,10 @@
       var w = P.weapons[i];
       if (!w.color) w.color = AMMO_COL[w.ammo] || "#ffc21a";
       f = s.weapons && s.weapons[w.id];
-      if (f) { if (f.emo) w.emo = f.emo; if (f.icon) w.icon = f.icon; if (f.color) w.color = f.color; }
+      if (f) {
+        if (f.emo) w.emo = f.emo; if (f.icon) w.icon = f.icon; if (f.color) w.color = f.color;
+        if (f.hold) w.hold = f.hold; if (f.scale) w.scale = f.scale;
+      }
     }
     if (Array.isArray(s.crates) && s.crates.length) P.map.crates = clone(s.crates);
   }
@@ -267,12 +273,16 @@
     }
     s.scale = P.controls.scale;
     s.weapons = {};
-    for (i = 0; i < P.weapons.length; i++) { w = P.weapons[i]; s.weapons[w.id] = { emo: w.emo, icon: w.icon, color: w.color }; }
+    for (i = 0; i < P.weapons.length; i++) {
+      w = P.weapons[i];
+      s.weapons[w.id] = { emo: w.emo, icon: w.icon, color: w.color, hold: w.hold, scale: w.scale };
+    }
     s.crates = P.map.crates;
     s.opt = {
       climb: OPT.climb, stepH: OPT.stepH, doorStep: OPT.doorStep, doorFix: OPT.doorFix,
       freeWater: OPT.freeWater, stickyAim: OPT.stickyAim, faceMove: OPT.faceMove,
-      botLOS: OPT.botLOS, ambient: OPT.ambient, ocean: OPT.ocean,
+      botLOS: OPT.botLOS, faceFlip: OPT.faceFlip, zoneBotMul: OPT.zoneBotMul,
+      zoneRamp: OPT.zoneRamp, ambient: OPT.ambient, ocean: OPT.ocean,
       trophies: OPT.trophies, slimHud: OPT.slimHud, badge: OPT.badge
     };
     SAVED = s; save();
@@ -289,7 +299,8 @@
     var top = el("div", { id: "rs-top" }, [
       el("div", { id: "rs-tabs" }), eye,
       el("button", { id: "rs-reset", title: "استعادة الافتراضي", onclick: resetAll, text: "↺" }),
-      el("button", { id: "rs-start", onclick: start, text: "▶️ ابدأ اللعبة" })
+      el("button", { id: "rs-dl", title: "حمّل اللعبة النهائية", onclick: exportGame, text: "⬇️ حمّل اللعبة" }),
+      el("button", { id: "rs-start", onclick: start, text: "▶️ جرّب" })
     ]);
     var sheet = el("div", { id: "rs-sheet" });
     var panel = el("div", { id: "rs-panel" }, [
@@ -376,6 +387,7 @@
     node.style.top = (cfg.y * s.h - H / 2) + "px";
     node.style.opacity = (cfg.opacity == null ? 0.92 : cfg.opacity);
     node.classList.toggle("off", !cfg.visible);
+    node.__rsType = "btn"; node.__rsId = cfg.id;
     if (sel && sel.type === "btn" && sel.id === cfg.id) node.classList.add("sel");
     drag(node, cfg, s, "btn");
     UI.stage.appendChild(node);
@@ -404,6 +416,7 @@
       node.style.transform = "translate(-50%,-50%) scale(" + ((cfg.size || 1) * clamp(hudScale(), 0.7, 1.5)) + ")";
     }
     node.classList.toggle("off", !cfg.visible);
+    node.__rsType = "stat"; node.__rsId = cfg.id;
     if (sel && sel.type === "stat" && sel.id === cfg.id) node.classList.add("sel");
     drag(node, cfg, s, "stat");
     UI.stage.appendChild(node);
@@ -420,6 +433,7 @@
       el("span", { style: "display:block;font-size:11px;font-weight:800;color:#c9c0ee;direction:ltr;text-align:right", text: "30 / 90" })
     ]));
     node.classList.toggle("off", !OPT.badge.visible);
+    node.__rsType = "badge"; node.__rsId = "badge";
     if (sel && sel.type === "badge") node.classList.add("sel");
     node.style.left = (OPT.badge.x * s.w) + "px";
     node.style.top = (OPT.badge.y * s.h) + "px";
@@ -478,9 +492,15 @@
     node.addEventListener("pointercancel", up);
   }
 
+  /* لا نُعيد بناء المسرح هنا إطلاقاً — إعادة البناء أثناء الضغط
+     كانت تحذف العنصر الذي تسحبه فيتعطّل السحب تماماً. */
   function select(type, id) {
     sel = { type: type, id: id };
-    renderPanel(); openPanel(true); renderStage();
+    var ws = UI.stage.querySelectorAll(".rs-w");
+    for (var i = 0; i < ws.length; i++)
+      ws[i].classList.toggle("sel", ws[i].__rsType === type && ws[i].__rsId === id);
+    renderPanel();
+    openPanel(true);
   }
 
   /* --------------------------------------------- لوحة التعديل */
@@ -660,10 +680,10 @@
       fr.readAsDataURL(f);
       inp.value = "";
     };
-    return el("span", {}, [
-      el("button", { class: "rs-chip" + (big ? " ok big" : ""), text: label, onclick: function () { inp.click(); } }),
-      inp
-    ]);
+    /* <label> يفتح مُنتقي الملفات أصلاً بلا جافاسكربت — أضمن على الجوال */
+    var lab = el("label", { class: "rs-chip up" + (big ? " ok big" : ""), text: label });
+    lab.appendChild(inp);
+    return lab;
   }
 
   function resetOne() {
@@ -685,10 +705,15 @@
     P.controls.layout = clone(FACTORY.layout);
     P.controls.stats = clone(FACTORY.stats);
     P.controls.scale = FACTORY.scale;
-    P.weapons.forEach(function (w, i) { var f = FACTORY.weapons[i]; w.emo = f.emo; w.icon = f.icon; w.color = AMMO_COL[w.ammo] || "#ffc21a"; });
+    P.weapons.forEach(function (w, i) {
+      var f = FACTORY.weapons[i];
+      w.emo = f.emo; w.icon = f.icon; w.color = AMMO_COL[w.ammo] || "#ffc21a";
+      w.hold = JSON.parse(JSON.stringify(f.hold)); w.scale = f.scale || 1;
+    });
     P.map.crates = clone(FACTORY.crates);
     OPT.climb = "strict"; OPT.stepH = 0.28; OPT.doorStep = 0.75; OPT.doorFix = true;
     OPT.freeWater = true; OPT.stickyAim = true; OPT.faceMove = true; OPT.botLOS = true;
+    OPT.faceFlip = true; OPT.zoneBotMul = 3; OPT.zoneRamp = 4;
     OPT.ambient = 0.55; OPT.ocean = true; OPT.trophies = false; OPT.slimHud = true;
     OPT.badge = { x: 0.5, y: 0.19, size: 0.85, visible: false };
     sel = null; persist(); setTab(tab);
@@ -736,6 +761,26 @@
       inp.oninput = function () { w.color = inp.value; persist(); };
       cw.appendChild(inp);
       card.appendChild(row("اللون", cw));
+
+      card.appendChild(el("h4", { class: "rs-h4", text: "✋ وضع السلاح في اليد (منظور الشخص الثالث)" }));
+      card.appendChild(el("div", { class: "rs-hint", text: "إذا لم يظهر السلاح كاملاً أو دخل داخل الجسم، عدّل هذه المقادير." }));
+      var HOLD = [["px", "يمين/يسار", -0.6, 0.6, 0.01], ["py", "أعلى/أسفل", -0.6, 0.6, 0.01],
+      ["pz", "أمام/خلف", -0.8, 0.8, 0.01], ["ry", "دوران", -3.2, 3.2, 0.05], ["rz", "ميل", -3.2, 3.2, 0.05]];
+      HOLD.forEach(function (h) {
+        card.appendChild(row(h[1], slider(h[2], h[3], h[4], w.hold[h[0]] || 0, function (v) {
+          w.hold[h[0]] = v; persist(); applyGunLive();
+        })));
+      });
+      card.appendChild(row("الحجم", slider(0.5, 2.2, 0.05, w.scale || 1, function (v) { w.scale = v; persist(); applyGunLive(); })));
+      card.appendChild(el("div", { class: "rs-chips" }, [
+        el("button", {
+          class: "rs-chip", text: "↺ أعد ضبط اليد", onclick: function () {
+            var f = FACTORY.weapons.filter(function (q) { return q.id === w.id; })[0];
+            if (f) { w.hold = JSON.parse(JSON.stringify(f.hold)); w.scale = f.scale || 1; }
+            persist(); renderWeapons(); applyGunLive();
+          }
+        })
+      ]));
       s.appendChild(card);
     });
   }
@@ -1095,6 +1140,13 @@
     };
   }
 
+  function applyGunLive() {
+    try {
+      var g = window.__runtime && window.__runtime.game;
+      if (g && g.refreshGunModel) g.refreshGunModel();
+    } catch (e) { }
+  }
+
   function applyLive() {
     try {
       var rt = window.__runtime, hud = rt && rt.game && rt.game.hud;
@@ -1157,10 +1209,14 @@
   };
 
   /* صمّام أمان: لو عَلِق اللاعب تماماً أكثر من ثانيتين ونصف نُرخي المنع مؤقتاً */
+  var relaxUntil = 0;
   function blocked() {
     var now = performance.now();
+    if (now < relaxUntil) return true;              /* نافذة مرور مفتوحة */
     if (!blockStart) { blockStart = now; return false; }
-    if (now - blockStart > 2500) { blockStart = now - 1200; return true; }
+    if (now - blockStart > 900) {                   /* عالق؟ افتح المرور 1.6 ثانية كاملة */
+      relaxUntil = now + 1600; blockStart = 0; return true;
+    }
     return false;
   }
 
@@ -1179,9 +1235,22 @@
 
   /* الشخصية تنظر لجهة حركتها بدل أن تُدير ظهرها */
   window.__ROYAL_FACE__ = function (game, camYaw, moveYaw, aiming) {
-    if (!OPT.faceMove || aiming || game.view === "fps") return undefined;
-    if (moveYaw === undefined) return undefined;
-    return moveYaw;
+    if (!OPT.faceMove && !OPT.faceFlip) return undefined;
+    var still = (moveYaw === undefined) || aiming || game.view === "fps" || !OPT.faceMove;
+    var base = still ? camYaw : moveYaw;
+    return OPT.faceFlip ? base + Math.PI : base;
+  };
+
+  /* ضرر الزون يتدرّج: يبدأ خفيفاً ويشتدّ كلما طال بقاؤك وبَعُدت */
+  var outT = 0, outLast = 0;
+  window.__ROYAL_ZONE__ = function (game, base, dt, distOut) {
+    var now = performance.now();
+    if (now - outLast > 400) outT = 0;
+    outLast = now;
+    outT += dt;
+    var ramp = Math.min(1, outT / Math.max(0.3, OPT.zoneRamp));
+    var far = 1 + Math.min(1.2, Math.max(0, distOut) / 90);
+    return base * (0.18 + 0.82 * ramp * ramp) * far;
   };
 
   /* خطّ النظر: الأعداء لا يطلقون عبر الجدران والتضاريس */

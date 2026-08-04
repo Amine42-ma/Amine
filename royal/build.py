@@ -262,6 +262,38 @@ ENGINE_PATCHES = [
         'this.n.air.frequency.setTargetAtTime(850+1500*t,e,.28),'
         'this.n.ag.gain.setTargetAtTime(.10+.34*t*t,e,.28)}',
     ),
+
+    # 20) ضرر الزون على اللاعب يتدرّج بدل أن يبدأ كاملاً.
+    (
+        'zone-ramp',
+        'let c=(e.cfg.damageStart??2)+e.phase*(e.cfg.damageStep??3);'
+        'this.damage(c*t,"\\u0627\\u0644\\u0632\\u0648\\u0646")',
+
+        'let c=(e.cfg.damageStart??2)+e.phase*(e.cfg.damageStep??3);'
+        'if(window.__ROYAL_ZONE__)c=window.__ROYAL_ZONE__(this,c,t,n-e.r);'
+        'c>0&&this.damage(c*t,"\\u0627\\u0644\\u0632\\u0648\\u0646")',
+    ),
+
+    # 21) البوتات خارج الزون تتأذّى أسرع وتتّجه نحو المركز حتى تموت أو تعود.
+    (
+        'zone-bots',
+        'for(let o of this.bots)!o.alive||!o.landed||Math.hypot(o.pos.x-i.cx,o.pos.z-i.cz)>i.r'
+        '&&(o.hp-=s*t,o.hp<=0&&this.killBot(o,!1))',
+
+        'for(let o of this.bots)!o.alive||!o.landed||Math.hypot(o.pos.x-i.cx,o.pos.z-i.cz)>i.r'
+        '&&(o.hp-=s*t*((window.__ROYAL_OPT__&&window.__ROYAL_OPT__.zoneBotMul)||1),'
+        'o.target&&(o.target.x+=(i.cx-o.target.x)*.35,o.target.z+=(i.cz-o.target.z)*.35),'
+        'o.hp<=0&&this.killBot(o,!1))',
+    ),
+
+    # 22) سلاح اليد لا يُقصّ من منظور الشخص الثالث.
+    (
+        'handgun-cull',
+        'n.rotation.set(e.hold.rx,e.hold.ry,e.hold.rz),this.handGun.add(n)',
+        'n.rotation.set(e.hold.rx,e.hold.ry,e.hold.rz),'
+        'n.traverse(_m=>{_m.isMesh&&(_m.frustumCulled=!1,_m.renderOrder=2)}),'
+        'this.handGun.add(n)',
+    ),
 ]
 
 
