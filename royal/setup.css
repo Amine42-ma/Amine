@@ -309,6 +309,31 @@
 #hud .gw.nf.locked .body{background:none!important;box-shadow:none!important;
   filter:drop-shadow(0 0 6px var(--acc,#ffc21a))}
 
+/* ---------- شريطا العلاجات والقنابل (أسلوب ببجي) ---------- */
+#hud .ri-rail{position:absolute;top:50%;transform:translateY(-50%);z-index:4;
+  display:flex;flex-direction:column;gap:7px;pointer-events:auto;direction:ltr}
+#hud #ri-heal{right:8px}
+#hud #ri-nade{left:8px}
+#hud .ri-btn{position:relative;width:48px;height:48px;border-radius:13px;cursor:pointer;
+  border:1.5px solid rgba(255,255,255,.34);background:rgba(10,14,26,.56);
+  display:grid;place-items:center;padding:0;font-family:inherit;
+  box-shadow:0 3px 10px rgba(0,0,0,.42);transition:transform .08s,opacity .15s}
+#hud .ri-btn i{font-style:normal;font-size:23px;line-height:1;pointer-events:none}
+#hud .ri-btn b{position:absolute;right:-3px;bottom:-3px;min-width:17px;height:17px;
+  border-radius:9px;background:#12b45a;color:#fff;font-size:11px;font-weight:900;
+  display:grid;place-items:center;padding:0 3px;box-shadow:0 1px 4px rgba(0,0,0,.5);
+  pointer-events:none}
+#hud .ri-btn.nade b{background:#e0483f}
+#hud .ri-btn:active{transform:scale(.9)}
+#hud .ri-btn.empty{opacity:.3}
+#hud .ri-btn.empty b{background:#5a6070}
+@media (max-height:430px){
+  #hud .ri-btn{width:40px;height:40px;border-radius:11px}
+  #hud .ri-btn i{font-size:19px}
+  #hud .ri-rail{gap:5px}
+}
+body.rs-building #hud .ri-rail{display:none!important}
+
 /* الأزرار السياقية: تبهت وتصغر حتى يقترب الشيء */
 #hud .gw.ctx-off{display:none!important}
 #hud .gw{transition:opacity .18s,transform .18s}

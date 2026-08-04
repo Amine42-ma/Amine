@@ -209,7 +209,7 @@
     doorFix: true,       /* لا يقفز فوق سطح البيت عند محاولة الدخول */
     freeWater: true,     /* السماح بدخول الأودية والماء الداخلي */
     stickyAim: true,     /* التصويب يبقى مثبّتاً حتى تضغط ثانيةً */
-    faceMove: true,      /* أثناء الحركة تنظر لجهة سيرها؛ وهي واقفة ظهرها للكاميرا */
+    faceMove: false,     /* المحرّك يدير القدمين وحدهما — لا نلمس زاوية الجسم */
     faceFlip: false,     /* قلب 180° — النموذج أمامه +Z فالمحرّك صحيح بدونه */
     zoneBotMul: 3,       /* سرعة تأذّي البوتات خارج الزون */
     zoneRamp: 4,         /* ثوانٍ حتى يصل ضرر الزون لكامله */
@@ -229,6 +229,16 @@
     fireBtnOnly: true,   /* لا إطلاق إلا بالضغط على زرّ الضرب */
     parallax: true,      /* الرصاصة تذهب حيث تشير علامة التصويب بالضبط */
     shotFx: true,        /* خيط رصاص لامع وصاروخ RPG حقيقي */
+    holdFix: true,       /* إخراج مؤخّرة السلاح من داخل جسم الشخصية */
+    holdClear: 0.06,     /* ما يُسمح ببقائه خلف اليد */
+    holdPush: 0.04,      /* دفع إضافي للأمام */
+    holdOut: 0.07,       /* إبعاد عن الجسم */
+    holdUp: 0,           /* رفع/خفض */
+    itemRails: true,     /* علاجات على اليمين وقنابل على اليسار */
+    nadeFuse: 3,         /* ثوانٍ حتى انفجار القنبلة */
+    nadeSpeed: 17,       /* قوّة الرمي */
+    nadeR: 7.5,          /* نصف قطر الانفجار */
+    nadeDmg: 115,        /* أقصى ضرر في المركز */
     meshMove: true,      /* حركة تصطدم بمضلّعات الخريطة فعلياً */
     chuteAcc: 34,        /* تسارع التحرّك تحت المظلّة */
     chuteDamp: 2.2,      /* كبح التحرّك تحت المظلّة */
@@ -428,7 +438,10 @@
       headMul: OPT.headMul, directAim: OPT.directAim, meshMove: OPT.meshMove,
       aimAssist: OPT.aimAssist, aimAdsOnly: OPT.aimAdsOnly, aimCone: OPT.aimCone,
       aimPow: OPT.aimPow, fireBtnOnly: OPT.fireBtnOnly,
-      parallax: OPT.parallax, shotFx: OPT.shotFx,
+      parallax: OPT.parallax, shotFx: OPT.shotFx, holdFix: OPT.holdFix,
+      holdClear: OPT.holdClear, holdPush: OPT.holdPush, holdOut: OPT.holdOut, holdUp: OPT.holdUp,
+      itemRails: OPT.itemRails, nadeFuse: OPT.nadeFuse, nadeSpeed: OPT.nadeSpeed,
+      nadeR: OPT.nadeR, nadeDmg: OPT.nadeDmg,
       sfxSniperSec: OPT.sfxSniperSec, sfxRpgSec: OPT.sfxRpgSec,
       chuteAcc: OPT.chuteAcc, chuteDamp: OPT.chuteDamp, customSfx: OPT.customSfx,
       sfxPistolSec: OPT.sfxPistolSec, sfxRifleSec: OPT.sfxRifleSec, menuVol: OPT.menuVol,
@@ -984,13 +997,15 @@
     });
     P.map.crates = clone(FACTORY.crates);
     OPT.climb = "strict"; OPT.stepH = 0.28; OPT.doorStep = 0.75; OPT.doorFix = true;
-    OPT.freeWater = true; OPT.stickyAim = true; OPT.faceMove = true; OPT.botLOS = true;
+    OPT.freeWater = true; OPT.stickyAim = true; OPT.faceMove = false; OPT.botLOS = true;
     OPT.faceFlip = false; OPT.zoneBotMul = 3; OPT.zoneRamp = 4; OPT.playerWall = true;
     OPT.sens = 1; OPT.adsSens = 0.55; OPT.smooth = 0.35;
     OPT.gunFlip = true; OPT.exactWalls = true; OPT.matchMin = 22;
     OPT.ctxButtons = true; OPT.botDrop = true; OPT.headMul = 2.2; OPT.directAim = false;
     OPT.aimAssist = true; OPT.aimAdsOnly = true; OPT.aimCone = 0.9; OPT.aimPow = 1;
     OPT.fireBtnOnly = true; OPT.parallax = true; OPT.shotFx = true;
+    OPT.holdFix = true; OPT.holdClear = 0.06; OPT.holdPush = 0.04; OPT.holdOut = 0.07; OPT.holdUp = 0;
+    OPT.itemRails = true; OPT.nadeFuse = 3; OPT.nadeSpeed = 17; OPT.nadeR = 7.5; OPT.nadeDmg = 115;
     OPT.sfxSniperSec = 1.6; OPT.sfxRpgSec = 2.4;
     OPT.meshMove = true; OPT.chuteAcc = 34; OPT.chuteDamp = 2.2;
     OPT.customSfx = true; OPT.sfxPistolSec = 1.0; OPT.sfxRifleSec = 0.3; OPT.menuVol = 0.45;
@@ -1496,7 +1511,7 @@
       el("h4", { text: "🧠 الأعداء والشخصية" }),
       el("div", { class: "rs-chips" }, [
         el("button", { class: "rs-chip " + (OPT.botLOS ? "ok" : "dz"), text: OPT.botLOS ? "✅ لا إطلاق عبر الجدران" : "🚫 الأعداء يخترقون الجدران", onclick: function () { OPT.botLOS = !OPT.botLOS; persist(); renderPlay(); } }),
-        el("button", { class: "rs-chip " + (OPT.faceMove ? "ok" : "dz"), text: OPT.faceMove ? "🏃 تنظر لجهة حركتها" : "✅ تتبع الكاميرا دائماً", onclick: function () { OPT.faceMove = !OPT.faceMove; persist(); renderPlay(); } }),
+        el("button", { class: "rs-chip " + (OPT.faceMove ? "dz" : "ok"), text: OPT.faceMove ? "🚫 الجسم كلّه يلتفّ للحركة (يقلب السلاح)" : "✅ الجذع للتصويب والقدمان للحركة", onclick: function () { OPT.faceMove = !OPT.faceMove; persist(); renderPlay(); } }),
         el("button", { class: "rs-chip " + (OPT.doorFix ? "ok" : "dz"), text: OPT.doorFix ? "✅ دخول البيوت بدل الصعود فوقها" : "🚫 السلوك القديم", onclick: function () { OPT.doorFix = !OPT.doorFix; persist(); renderPlay(); } }),
         el("button", { class: "rs-chip " + (OPT.trophies ? "" : "ok"), text: OPT.trophies ? "🏆 الكؤوس والعملات ظاهرة" : "🚫 الكؤوس والعملات مخفية", onclick: function () { OPT.trophies = !OPT.trophies; persist(); renderPlay(); } })
       ])
@@ -1568,12 +1583,34 @@
         })
       ]),
       row("قوّة القفل", slider(0, 1, 0.05, OPT.aimPow, function (v) { OPT.aimPow = v; persist(); })),
+      row("إخراج مؤخّرة السلاح", slider(0, 0.4, 0.02, OPT.holdPush, function (v) { OPT.holdPush = v; persist(); applyGunLive(); })),
+      row("إبعاد السلاح عن الجسم", slider(0, 0.3, 0.01, OPT.holdOut, function (v) { OPT.holdOut = v; persist(); applyGunLive(); })),
       row("اتساع المخروط", slider(0.75, 0.99, 0.01, OPT.aimCone, function (v) { OPT.aimCone = v; persist(); })),
       el("div", {
         class: "rs-hint", text: "القفل الكامل (1) يوجّه الرصاصة إلى العدو مباشرةً ما دام داخل المخروط ولا جدار بينكما — " +
           "المخروط الحالي ≈ " + Math.round(Math.acos(clamp(OPT.aimCone, -1, 1)) * 180 / Math.PI) + "° حول مركز الشاشة. " +
           "المساعدة لا تعمل أبداً على عدوٍّ خلف جدار."
       })
+    ]));
+
+    s.appendChild(el("div", { class: "rs-card" }, [
+      el("h4", { text: "🎒 العلاجات والقنابل" }),
+      el("div", { class: "rs-hint", text: "أربعة علاجات على يمين الشاشة (ضمادة · حقيبة إسعاف · درع · مشروب طاقة) والقنبلة على اليسار — كما في ببجي. تجدها في الصناديق وفي غنائم من تقتلهم." }),
+      el("div", { class: "rs-chips" }, [
+        el("button", {
+          class: "rs-chip " + (OPT.itemRails ? "ok" : "dz"),
+          text: OPT.itemRails ? "✅ الشريطان ظاهران" : "🚫 مخفيّان",
+          onclick: function () {
+            OPT.itemRails = !OPT.itemRails; persist(); renderPlay();
+            if (!OPT.itemRails && RAILS) { RAILS.right.remove(); RAILS.left.remove(); RAILS = null; }
+          }
+        })
+      ]),
+      row("فتيل القنبلة (ث)", slider(1.5, 6, 0.5, OPT.nadeFuse, function (v) { OPT.nadeFuse = v; persist(); })),
+      row("قوّة الرمي", slider(8, 30, 1, OPT.nadeSpeed, function (v) { OPT.nadeSpeed = v; persist(); })),
+      row("نصف قطر الانفجار", slider(3, 14, 0.5, OPT.nadeR, function (v) { OPT.nadeR = v; persist(); })),
+      row("ضرر الانفجار", slider(40, 200, 5, OPT.nadeDmg, function (v) { OPT.nadeDmg = v; persist(); })),
+      el("div", { class: "rs-hint", text: "الضرر يتناقص كلما بَعُد العدو عن مركز الانفجار، ولا يمرّ عبر الجدران." })
     ]));
 
     s.appendChild(el("div", { class: "rs-card" }, [
@@ -1911,11 +1948,14 @@
   };
 
   /* الشخصية تنظر لجهة حركتها بدل أن تُدير ظهرها */
+  /* المحرّك أصلاً يفصل بين الجذع والقدمين: الجذع يتبع اتجاه التصويب
+     (`yaw`) والقدمان تلتفتان لجهة الجري (`moveYaw` المحصور بـ ±60°) —
+     تماماً كما في ببجي. لو استبدلنا زاوية الجسم بزاوية الحركة يلتفّ
+     الجسم والسلاح معه بعيداً عن علامة التصويب، فيبدو اللاعب ينظر لجهة
+     والسلاح لجهة أخرى، ويتبدّل ذلك بين الوقوف والجري. لذلك لا نتدخّل. */
   window.__ROYAL_FACE__ = function (game, camYaw, moveYaw, aiming) {
-    if (!OPT.faceMove && !OPT.faceFlip) return undefined;
-    var still = (moveYaw === undefined) || aiming || game.view === "fps" || !OPT.faceMove;
-    var base = still ? camYaw : moveYaw;
-    return OPT.faceFlip ? base + Math.PI : base;
+    if (!OPT.faceFlip) return undefined;                  /* اترك المحرّك يعمل */
+    return camYaw + Math.PI;
   };
 
   /* ضرر الزون يتدرّج: يبدأ خفيفاً ويشتدّ كلما طال بقاؤك وبَعُدت */
@@ -2710,6 +2750,8 @@
     var out = [{ t: "weapon", def: w }, { t: "ammo", kind: w.ammo, n: (w.mag || 10) * 2 }];
     if (Math.random() < 0.55) out.push({ t: "item", kind: "heal", n: 1 });
     if (Math.random() < 0.35) out.push({ t: "item", kind: "shield", n: 1 });
+    if (Math.random() < 0.22) out.push({ t: "item", kind: "med", n: 1 });
+    if (Math.random() < 0.45) out.push({ t: "item", kind: "nade", n: 1 });
     var y = game.Q.heightAt(bot.pos.x, bot.pos.z);
     out.forEach(function (p, i) {
       var a = (i / out.length) * 6.2832;
@@ -2809,6 +2851,21 @@
     dir.set(nx / n, ny / n, nz / n);
     return dir;
   }
+
+  /* ------------------------------------------------------------------
+     مؤخّرة السلاح كانت مدفونة داخل جسم الشخصية: المحرّك يضع محور
+     السلاح عند 74% من طوله، فيبقى 26% منه خلف قبضة اليد — أي داخل
+     الصدر. ندفع السلاح للأمام وللخارج بمقدار يتناسب مع طوله. */
+  window.__ROYAL_HOLD__ = function (node, def) {
+    if (!OPT.holdFix) return;
+    var back = (def.len || 0.8) * 0.26;                 /* ما يقع خلف اليد */
+    var push = Math.max(0, back - OPT.holdClear) + OPT.holdPush;
+    node.position.set(
+      def.hold.px + OPT.holdOut,
+      def.hold.py + OPT.holdUp,
+      def.hold.pz + push
+    );
+  };
 
   /* ============================================================
      6.39) مؤثّرات الطلقة: خيط رصاص لامع + صاروخ RPG حقيقي
@@ -2932,6 +2989,19 @@
   }
 
   window.__ROYAL_FX__ = function (game, dt) {
+    /* شريطا العلاج والقنابل: ابنِهما مرّة، وحدّث الأعداد كل ربع ثانية */
+    if (OPT.itemRails && !game.__build && game.hud) {
+      railT -= dt;
+      if (railT <= 0) {
+        railT = 0.25;
+        buildRails(game);
+        syncRails(game);
+        if (RAILS) {                       /* لا تظهر إلا بعد الهبوط */
+          var on = game.phase === "ground" ? "" : "none";
+          RAILS.right.style.display = on; RAILS.left.style.display = on;
+        }
+      }
+    }
     var L = FX.list; if (!L.length) return;
     var T = window.__ROYAL_THREE__;
     for (var i = L.length - 1; i >= 0; i--) {
@@ -2952,6 +3022,31 @@
         f.o.position.set(f.fx + f.dx * d, f.fy + f.dy * d, f.fz + f.dz * d);
         if (p >= 1) { fxKill(f.o); L.splice(i, 1); }
         else f.o.children[0].material.opacity = 0.95 * (1 - p * p);
+        continue;
+      }
+      if (f.k === "nade") {
+        f.vy -= 22 * dt;
+        var nx2 = f.o.position.x + f.vx * dt;
+        var ny2 = f.o.position.y + f.vy * dt;
+        var nz2 = f.o.position.z + f.vz * dt;
+        var fl2 = game.Q.groundFor ? game.Q.groundFor(nx2, nz2, ny2) : game.Q.heightAt(nx2, nz2);
+        if (ny2 <= fl2 + 0.11) {                 /* ارتداد عن الأرض */
+          ny2 = fl2 + 0.11;
+          if (f.vy < -1.2) { f.vy = -f.vy * 0.36; f.bounce++; }
+          else f.vy = 0;
+          f.vx *= 0.62; f.vz *= 0.62;
+        } else if (TRI) {                        /* ارتداد عن الجدران */
+          var mdx = nx2 - f.o.position.x, mdz = nz2 - f.o.position.z;
+          var ml = Math.sqrt(mdx * mdx + mdz * mdz);
+          if (ml > 1e-4 && meshHit(f.o.position.x, f.o.position.y, f.o.position.z,
+            mdx / ml, 0, mdz / ml, ml + 0.2) != null) {
+            f.vx = -f.vx * 0.45; f.vz = -f.vz * 0.45;
+            nx2 = f.o.position.x; nz2 = f.o.position.z;
+          }
+        }
+        f.o.position.set(nx2, ny2, nz2);
+        f.o.rotation.x += dt * 7; f.o.rotation.z += dt * 5;
+        if (p >= 1) { nadeBoom(game, nx2, ny2, nz2); fxKill(f.o); L.splice(i, 1); }
         continue;
       }
       if (f.k === "rocket") {
@@ -2980,6 +3075,118 @@
       fxKill(f.o); L.splice(i, 1);
     }
   };
+
+  /* ============================================================
+     6.40) شريطا العلاجات (يمين) والقنابل (يسار) — بأسلوب ببجي
+     ============================================================ */
+  var HEALS = [
+    { k: "heal", emo: "🩹", name: "ضمادة", hp: 40 },
+    { k: "med", emo: "🧰", name: "حقيبة إسعاف", hp: 999 },
+    { k: "shield", emo: "🛡️", name: "درع", sh: 50 },
+    { k: "boost", emo: "🥤", name: "مشروب طاقة", boost: 12 }
+  ];
+  var RAILS = null, railT = 0;
+
+  function buildRails(game) {
+    if (RAILS && document.body.contains(RAILS.right)) return;
+    var hud = game.hud && game.hud.node; if (!hud) return;
+    var right = el("div", { id: "ri-heal", class: "ri-rail" });
+    HEALS.forEach(function (h) {
+      var n = el("button", {
+        class: "ri-btn", title: h.name,
+        onclick: function (e) { e.preventDefault(); useHeal(game, h); }
+      }, [el("i", { text: h.emo }), el("b", { text: "0" })]);
+      n.__k = h.k;
+      right.appendChild(n);
+    });
+    var left = el("div", { id: "ri-nade", class: "ri-rail" }, [
+      el("button", {
+        class: "ri-btn nade", title: "قنبلة يدوية",
+        onclick: function (e) { e.preventDefault(); throwNade(game); }
+      }, [el("i", { text: "💣" }), el("b", { text: "0" })])
+    ]);
+    hud.appendChild(right); hud.appendChild(left);
+    RAILS = { right: right, left: left };
+    syncRails(game);
+  }
+
+  function syncRails(game) {
+    if (!RAILS) return;
+    var it = (game.inv && game.inv.items) || {};
+    var bs = RAILS.right.children, i, n;
+    for (i = 0; i < bs.length; i++) {
+      n = it[bs[i].__k] || 0;
+      bs[i].querySelector("b").textContent = n;
+      bs[i].classList.toggle("empty", n <= 0);
+    }
+    n = it.nade || 0;
+    var nb = RAILS.left.firstChild;
+    nb.querySelector("b").textContent = n;
+    nb.classList.toggle("empty", n <= 0);
+  }
+
+  function useHeal(game, h) {
+    var inv = game.inv; if (!inv) return;
+    if ((inv.items[h.k] || 0) <= 0) { game.hud.feed("لا يوجد " + h.name); return; }
+    if (h.k === "med") {                       /* نوع جديد لا يعرفه المحرّك */
+      inv.items.med--;
+      game.stats.hp = game.stats.maxHp;
+      game.hud.feed("🧰 صحّة كاملة");
+      game.hud.setHP(game.stats.hp, game.stats.maxHp, game.stats.shield);
+      try { game.scene && window.__ROYAL_AUDIO__; } catch (e) { }
+    } else game.useItem(h.k);
+    syncRails(game);
+  }
+
+  /* ---- القنبلة اليدوية: رمي بقوس، ارتداد، فتيل، ثم انفجار ---- */
+  function throwNade(game) {
+    var inv = game.inv; if (!inv) return;
+    if ((inv.items.nade || 0) <= 0) { game.hud.feed("لا توجد قنابل"); return; }
+    if (!window.__ROYAL_THREE__) return;
+    inv.items.nade--; syncRails(game);
+    var T = window.__ROYAL_THREE__;
+    var cam = game.camera; cam.updateWorldMatrix(true, false);
+    var e = cam.matrixWorld.elements;
+    var fx = -e[8], fy = -e[9], fz = -e[10];
+    var fl = Math.sqrt(fx * fx + fy * fy + fz * fz) || 1; fx /= fl; fy /= fl; fz /= fl;
+    var o = { x: game.pos.x, y: game.pos.y + game.player.totalH * 0.78, z: game.pos.z };
+    var g = new T.Group();
+    var body = new T.Mesh(new T.Sph(0.11, 10, 8), new T.Std({ color: 0x2f4a24, roughness: 0.75 }));
+    var top = new T.Mesh(new T.Cyl(0.045, 0.045, 0.07, 8, 1), new T.Std({ color: 0x6a6a6a, roughness: 0.6 }));
+    top.position.y = 0.12;
+    g.add(body); g.add(top);
+    g.position.set(o.x + fx * 0.5, o.y, o.z + fz * 0.5);
+    game.scene.add(g);
+    var sp = OPT.nadeSpeed;
+    FX.list.push({
+      o: g, k: "nade", t: 0, life: OPT.nadeFuse,
+      vx: fx * sp, vy: fy * sp + 4.2, vz: fz * sp, bounce: 0
+    });
+    game.hud.feed("💣 رميتَ قنبلة");
+  }
+
+  function nadeBoom(game, x, y, z) {
+    boom(game, x, y, z);
+    var R = OPT.nadeR, DM = OPT.nadeDmg, i, b, d, dmg;
+    for (i = 0; i < game.bots.length; i++) {
+      b = game.bots[i];
+      if (!b.alive || !b.landed) continue;
+      var H = (b.ch && b.ch.totalH) || 1.7;
+      var bx = b.pos.x - x, by = (b.pos.y + H * 0.5) - y, bz = b.pos.z - z;
+      d = Math.sqrt(bx * bx + by * by + bz * bz);
+      if (d > R) continue;
+      if (d > 1 && wallHit(game, x, y, z, bx / d, by / d, bz / d, d - 0.6) != null) continue;
+      dmg = DM * (1 - d / R);
+      b.hp -= dmg;
+      b.aggro = game.pos.clone();
+      if (b.hp <= 0) game.killBot(b, true);
+    }
+    var px = game.pos.x - x, py = (game.pos.y + 0.9) - y, pz = game.pos.z - z;
+    d = Math.sqrt(px * px + py * py + pz * pz);
+    if (d < R && game.damage) {
+      try { game.damage(DM * (1 - d / R) * 0.8, "قنبلة"); } catch (e) { }
+    }
+  }
 
   /* ------- مساعد التصويب: يقفل على العدو عند تفعيل وضع التصويب ------- */
   window.__ROYAL_AIM__ = function (game, o, dir, range, pellets) {

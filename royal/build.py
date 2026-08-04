@@ -396,6 +396,7 @@ ENGINE_PATCHES = [
         'n.traverse(_m=>{_m.isMesh&&(_m.frustumCulled=!1,_m.renderOrder=2)}),',
 
         'n.rotation.set(e.hold.rx,e.hold.ry+((window.__ROYAL_OPT__&&window.__ROYAL_OPT__.gunFlip)?Math.PI:0),e.hold.rz),'
+        'window.__ROYAL_HOLD__&&window.__ROYAL_HOLD__(n,e),'
         'n.traverse(_m=>{_m.isMesh&&(_m.frustumCulled=!1,_m.renderOrder=2)}),',
     ),
 
@@ -547,6 +548,31 @@ ENGINE_PATCHES = [
         '(window.__ROYAL_AIM__?(y=window.__ROYAL_AIM__(this,c,y,s.range,d)):'
         '(d===1&&!(window.__ROYAL_OPT__&&window.__ROYAL_OPT__.directAim)&&(y=this.aimAssist(c,y,s.range)))),'
         'this.shootRay(c,y,s)}',
+    ),
+
+    # 47) الصناديق تُخرج أيضاً حقيبة الإسعاف والقنبلة اليدوية.
+    (
+        'crate-loot',
+        'Math.random()<.25&&t.push({t:"item",kind:"boost",n:1}),t}',
+        'Math.random()<.25&&t.push({t:"item",kind:"boost",n:1}),'
+        'Math.random()<.30&&t.push({t:"item",kind:"med",n:1}),'
+        'Math.random()<.55&&t.push({t:"item",kind:"nade",n:1}),t}',
+    ),
+
+    # 48) شكل واسم الغنيمة الجديدة على الأرض.
+    (
+        'pickup-look',
+        'let l={heal:3793019,shield:2479103,boost:16747038}[i.kind]||16777215;',
+        'let l={heal:3793019,shield:2479103,boost:16747038,med:16724787,nade:5000268}[i.kind]||16777215;',
+    ),
+    (
+        'pickup-label',
+        'a={heal:"\\u0639\\u062F\\u0651\\u0629 \\u0625\\u0633\\u0639\\u0627\\u0641",'
+        'shield:"\\u062F\\u0631\\u0639",boost:"\\u0645\\u064F\\u0639\\u0632\\u0651\\u0632"}[i.kind]',
+        'a={heal:"\\u0639\\u062F\\u0651\\u0629 \\u0625\\u0633\\u0639\\u0627\\u0641",'
+        'shield:"\\u062F\\u0631\\u0639",boost:"\\u0645\\u064F\\u0639\\u0632\\u0651\\u0632",'
+        'med:"\\u062D\\u0642\\u064A\\u0628\\u0629 \\u0625\\u0633\\u0639\\u0627\\u0641",'
+        'nade:"\\u0642\\u0646\\u0628\\u0644\\u0629 \\u064A\\u062F\\u0648\\u064A\\u0629"}[i.kind]',
     ),
 
     # 45) مؤثّرات الطلقة: خيط رصاص لامع وصاروخ RPG حقيقي بدل الخط الرفيع.
