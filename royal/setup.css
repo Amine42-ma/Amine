@@ -58,8 +58,10 @@
   border:0;border-radius:12px;padding:9px 13px;font-size:13.5px;font-weight:900;cursor:pointer;
   box-shadow:0 4px 0 rgba(0,0,0,.42);white-space:nowrap}
 #rs-start:active{transform:translateY(2px);box-shadow:0 2px 0 rgba(0,0,0,.42)}
-#rs-reset,#rs-eye{flex:0 0 auto;background:rgba(255,255,255,.1);border:1.5px solid var(--line);color:var(--ink);
+#rs-reset,#rs-eye,#rs-flip{flex:0 0 auto;background:rgba(255,255,255,.1);border:1.5px solid var(--line);color:var(--ink);
   border-radius:12px;padding:9px 11px;font-size:14px;font-weight:900;cursor:pointer}
+#rs-flip{font-family:inherit;white-space:nowrap;font-size:12px;padding:9px 10px}
+#rs-flip.on{background:linear-gradient(180deg,var(--cy),var(--cy-d));color:#02222e;border-color:transparent}
 
 /* على الشاشات الضيّقة: التبويبات في سطر ثانٍ حتى لا تنضغط */
 @media (max-width:640px){
@@ -306,3 +308,29 @@
 #rs-stage.port::before{content:"📱 الوضع العمودي";position:absolute;top:52%;left:50%;
   transform:translate(-50%,-50%);font-size:13px;font-weight:900;color:rgba(255,255,255,.18);
   pointer-events:none}
+
+/* محاكاة شاشة الهاتف بعد قلبها: إطار بنِسبة الجهاز نفسه مقلوبة */
+#rsetup.simon{background:
+  radial-gradient(900px 600px at 50% 0%,#180d33 0%,#080415 70%),#050310}
+#rs-stage.sim{border-radius:16px;box-shadow:0 0 0 2px rgba(255,255,255,.16),0 18px 44px rgba(0,0,0,.6);
+  outline:2px dashed rgba(255,197,66,.35);outline-offset:6px}
+#rs-simtag{position:fixed;z-index:23;left:50%;transform:translateX(-50%);
+  bottom:calc(env(safe-area-inset-bottom) + 6px);pointer-events:none;direction:rtl;
+  background:rgba(10,6,32,.9);border:1.5px solid rgba(255,255,255,.2);border-radius:11px;
+  padding:5px 12px;font-size:11.5px;font-weight:900;color:#fff;font-family:var(--ff)}
+
+/* صفّ الأدوات الصغيرة في شريط البناء */
+#rs-build .bb-mini{display:flex;gap:5px}
+#rs-build .bb-mini .bb{flex:1;padding:8px 2px;font-size:14px;border-radius:10px;min-width:0}
+
+/* داخل محرّر البناء لا نُريد أزرار اللعب — العصوان فقط */
+body.rs-building #hud .gw:not(.stick){display:none!important}
+body.rs-building #hud #ammobox,
+body.rs-building #hud #slots,
+body.rs-building #hud .slots,
+body.rs-building #hud .wammo,
+body.rs-building #hud #hpbar,
+body.rs-building #hud #killfeed,
+body.rs-building #hud #hitmark,
+body.rs-building #hud #dmgflash{display:none!important}
+body.rs-building #hud{padding-bottom:0}
