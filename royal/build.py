@@ -562,6 +562,21 @@ ENGINE_PATCHES = [
         'this.root.rotation.y=window.__ROYAL_BODY__?window.__ROYAL_BODY__(this,n.yaw):n.yaw;',
     ),
 
+    # 52) الكاميرا كانت تدخل الجدران فترى داخلها: نقرّبها حتى أوّل عائق.
+    (
+        'cam-wall',
+        'let i=this.tmp.v1.copy(this.pos);i.y+=this.player.totalH*.72+n*.4;'
+        'let s=this.tmp.v2.set(Math.sin(this.yaw)*Math.cos(this.pitch),'
+        'Math.sin(this.pitch)+.28,Math.cos(this.yaw)*Math.cos(this.pitch)).normalize(),'
+        'o=i.clone().addScaledVector(s,e)',
+
+        'let i=this.tmp.v1.copy(this.pos);i.y+=this.player.totalH*.72+n*.4;'
+        'let s=this.tmp.v2.set(Math.sin(this.yaw)*Math.cos(this.pitch),'
+        'Math.sin(this.pitch)+.28,Math.cos(this.yaw)*Math.cos(this.pitch)).normalize();'
+        'if(window.__ROYAL_CAM__)e=window.__ROYAL_CAM__(this,i.x,i.y,i.z,s.x,s.y,s.z,e);'
+        'let o=i.clone().addScaledVector(s,e)',
+    ),
+
     # 50) مستوى القصّ الأمامي للكاميرا كان 0.35 وسلاح المنظور الأول على
     #     0.34 — أي داخل المستوى، فيُقَصّ ويظهر مجوّفاً من الداخل.
     (

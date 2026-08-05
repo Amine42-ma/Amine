@@ -98,8 +98,9 @@
   function orient() { return editOrient || (innerWidth >= innerHeight ? "land" : "port"); }
   var editOrient = null;
   /* رقم إصدار الإعدادات: إذا رفعناه تُنسى المفاتيح المذكورة أدناه فقط */
-  var OPT_VER = 2;
-  var FORCED = ["faceFlip", "gunFlip", "faceMove", "bodyLock", "fpsFix", "camNear", "fpsClear",
+  var OPT_VER = 3;
+  var FORCED = ["faceFlip", "gunFlip", "faceMove", "bodyLock", "gunAuto",
+    "noClip", "camWall", "camPad", "camMin", "clipDepth", "clipRad", "fpsFix", "camNear", "fpsClear",
     "holdFix", "holdClear", "holdPush", "holdOut", "parallax", "fireBtnOnly", "itemRails"];
   /* المكان والحجم يختلفان بين الطول والعرض — أمّا المظهر فواحد للاثنين */
   var GEO_KEYS = ["x", "y", "size", "wk", "hk"];
@@ -214,7 +215,7 @@
     freeWater: true,     /* السماح بدخول الأودية والماء الداخلي */
     stickyAim: true,     /* التصويب يبقى مثبّتاً حتى تضغط ثانيةً */
     faceMove: false,     /* المحرّك يدير القدمين وحدهما — لا نلمس زاوية الجسم */
-    faceFlip: false,     /* مقيس بالصورة: الجسم = زاوية التصويب مباشرةً */
+    faceFlip: true,      /* مقيس ببكسلات العينين: هكذا يُدير ظهره للكاميرا */
     bodyLock: true,      /* زاوية الجسم = زاوية التصويب بالضبط، كل إطار */
     zoneBotMul: 3,       /* سرعة تأذّي البوتات خارج الزون */
     zoneRamp: 4,         /* ثوانٍ حتى يصل ضرر الزون لكامله */
@@ -243,6 +244,15 @@
     camNear: 0.08,       /* مستوى القصّ الأمامي */
     fpsClear: 0.1,       /* هامش أمان أمام الكاميرا */
     itemRails: true,     /* لوحتا العلاجات والقنابل */
+    gunAuto: true,       /* يعاير اتجاه الماسورة تلقائياً مع أي نموذج */
+    noClip: true,        /* لا نزول تحت الخريطة ولا دخول في الصخر */
+    clipDepth: 2.2,      /* عمق البحث عن السطح تحت الرأس */
+    clipRad: 0.42,       /* نصف قطر جسم اللاعب */
+    clipPush: 0.06,      /* قوّة الدفع للخارج إن حُشِر */
+    camWall: true,       /* الكاميرا لا تدخل الجدران */
+    camPad: 0.35,        /* هامش أمام الجدار */
+    camMin: 0.9,         /* أقرب مسافة للكاميرا */
+    camRad: 0.28,        /* نصف قطر الكاميرا للمسح */
     nadeFuse: 3,         /* ثوانٍ حتى انفجار القنبلة */
     nadeSpeed: 17,       /* قوّة الرمي */
     nadeR: 7.5,          /* نصف قطر الانفجار */
@@ -458,6 +468,9 @@
       holdClear: OPT.holdClear, holdPush: OPT.holdPush, holdOut: OPT.holdOut, holdUp: OPT.holdUp,
       itemRails: OPT.itemRails, nadeFuse: OPT.nadeFuse, nadeSpeed: OPT.nadeSpeed,
       fpsFix: OPT.fpsFix, camNear: OPT.camNear, fpsClear: OPT.fpsClear,
+      gunAuto: OPT.gunAuto, noClip: OPT.noClip, clipDepth: OPT.clipDepth,
+      clipRad: OPT.clipRad, clipPush: OPT.clipPush,
+      camWall: OPT.camWall, camPad: OPT.camPad, camMin: OPT.camMin, camRad: OPT.camRad,
       nadeR: OPT.nadeR, nadeDmg: OPT.nadeDmg,
       sfxSniperSec: OPT.sfxSniperSec, sfxRpgSec: OPT.sfxRpgSec,
       chuteAcc: OPT.chuteAcc, chuteDamp: OPT.chuteDamp, customSfx: OPT.customSfx,
@@ -1015,7 +1028,7 @@
     P.map.crates = clone(FACTORY.crates);
     OPT.climb = "strict"; OPT.stepH = 0.28; OPT.doorStep = 0.75; OPT.doorFix = true;
     OPT.freeWater = true; OPT.stickyAim = true; OPT.faceMove = false; OPT.botLOS = true;
-    OPT.faceFlip = false; OPT.bodyLock = true; OPT.zoneBotMul = 3; OPT.zoneRamp = 4; OPT.playerWall = true;
+    OPT.faceFlip = true; OPT.bodyLock = true; OPT.zoneBotMul = 3; OPT.zoneRamp = 4; OPT.playerWall = true;
     OPT.sens = 1; OPT.adsSens = 0.55; OPT.smooth = 0.35;
     OPT.gunFlip = true; OPT.exactWalls = true; OPT.matchMin = 22;
     OPT.ctxButtons = true; OPT.botDrop = true; OPT.headMul = 2.2; OPT.directAim = false;
@@ -1024,6 +1037,8 @@
     OPT.holdFix = true; OPT.holdClear = 0.06; OPT.holdPush = 0.04; OPT.holdOut = 0.07; OPT.holdUp = 0;
     OPT.itemRails = true; OPT.nadeFuse = 3; OPT.nadeSpeed = 17; OPT.nadeR = 7.5; OPT.nadeDmg = 115;
     OPT.fpsFix = true; OPT.camNear = 0.08; OPT.fpsClear = 0.1;
+    OPT.gunAuto = true; OPT.noClip = true; OPT.clipDepth = 2.2; OPT.clipRad = 0.42;
+    OPT.clipPush = 0.06; OPT.camWall = true; OPT.camPad = 0.35; OPT.camMin = 0.9; OPT.camRad = 0.28;
     OPT.sfxSniperSec = 1.6; OPT.sfxRpgSec = 2.4;
     OPT.meshMove = true; OPT.chuteAcc = 34; OPT.chuteDamp = 2.2;
     OPT.customSfx = true; OPT.sfxPistolSec = 1.0; OPT.sfxRifleSec = 0.3; OPT.menuVol = 0.45;
@@ -1955,7 +1970,18 @@
       var py = (yArg === undefined) ? (game.pos ? game.pos.y : 1e5) : yArg;
       var from = py + 1.5;
       var d = meshHit(x, from, z, 0, -1, 0, 16);
-      if (d != null) return from - d;
+      var res = (d != null) ? from - d : null;
+      /* كان هذا هو أصل «الدخول تحت الخريطة»: الشعاع ينطلق من فوق رأسه
+         بقليل، فإن كان تحت الأرض أصلاً لم يجد السطح الذي فوقه أبداً
+         فيبقى تحته للأبد. الآن: إن كان تحت التضاريس ولا بناء فوقه
+         (بيت/جسر/نفق) نُعيده إلى سطح الأرض فوراً. */
+      if (OPT.noClip && game.Q) {
+        var terr = game.Q.heightAt(x, z);
+        var roof = game.Q.roofAt ? game.Q.roofAt(x, z) : terr;
+        var structure = (roof - terr) > 0.35;
+        if (!structure && (py < terr - 0.4 || (res != null && res < terr - 0.4))) return terr;
+      }
+      if (res != null) return res;
     }
     if (!OPT.doorFix) return g;
     var Q = game.Q, f = Q.heightAt(x, z), rf = Q.roofAt(x, z);
@@ -2891,6 +2917,7 @@
      السلاح عند 74% من طوله، فيبقى 26% منه خلف قبضة اليد — أي داخل
      الصدر. ندفع السلاح للأمام وللخارج بمقدار يتناسب مع طوله. */
   window.__ROYAL_HOLD__ = function (node, def) {
+    node.__align = true;                     /* يُعاير اتجاه الماسورة أوّل إطار */
     if (!OPT.holdFix) return;
     var back = (def.len || 0.8) * 0.26;                 /* ما يقع خلف اليد */
     var push = Math.max(0, back - OPT.holdClear) + OPT.holdPush;
@@ -2900,6 +2927,35 @@
       def.hold.pz + push
     );
   };
+
+  /* ------------------------------------------------------------------
+     بدل التخمين في اتجاه النموذج: نقيس اتجاه السلاح فعلياً بعد تركيبه،
+     فإن كان يشير عكس نظر الكاميرا ندوّره نصف دورة. يعمل مع أي نموذج
+     مهما كان اتجاهه الأصلي، ولا يعتمد على أي اصطلاح. */
+  function alignMuzzle(game) {
+    var T = window.__ROYAL_THREE__; if (!T) return;
+    var HG = game.handGun, n = HG && HG.children && HG.children[0];
+    if (!n || !n.__align) return;
+    if (!game.camera) return;
+    n.__align = false;
+    if (!OPT.gunAuto) return;
+    try {
+      n.updateWorldMatrix(true, true);
+      var b = new T.Box3().setFromObject(n);
+      var e = n.matrixWorld.elements;               /* أصل السلاح (قبضة اليد) */
+      var ox = e[12], oz = e[14];
+      var cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
+      var dx = cx - ox, dz = cz - oz;
+      var L = Math.sqrt(dx * dx + dz * dz);
+      if (L < 0.02) return;                          /* سلاح قصير جداً */
+      dx /= L; dz /= L;
+      game.camera.updateWorldMatrix(true, false);
+      var ce = game.camera.matrixWorld.elements;
+      var fx = -ce[8], fz = -ce[10];
+      var fl = Math.sqrt(fx * fx + fz * fz) || 1; fx /= fl; fz /= fl;
+      if (dx * fx + dz * fz < 0) n.rotation.y += Math.PI;   /* كان للخلف */
+    } catch (err) { }
+  }
 
   /* سلاح المنظور الأول: ادفعه خارج مستوى القصّ حتى لا يُقَصّ ويظهر مجوّفاً */
   window.__ROYAL_FPS__ = function (node, def) {
@@ -3030,7 +3086,72 @@
     try { game.flash.position.set(x, y, z); game.flash.intensity = 60; } catch (e) { }
   }
 
+  /* ------------------------------------------------------------------
+     لا نزول تحت الخريطة ولا دخول داخل الصخر والمباني.
+     كل إطار: نبحث عن أعلى سطح تحت رأس اللاعب مباشرةً، فإن كان اللاعب
+     أسفل منه (أي داخل الأرض أو تحتها) نرفعه فوقه فوراً. وإن كان محشوراً
+     داخل جسم مصمت ندفعه لأقرب فراغ. */
+  function antiClip(game, dt) {
+    if (!OPT.noClip || !TRI || game.__build) return;
+    if (game.phase !== "ground") return;
+    var p = game.pos, H = (game.player && game.player.totalH) || 1.7;
+    /* 1) الأرضية الحقيقية تحت الرأس */
+    var headY = p.y + H * 0.9;
+    var d = meshHit(p.x, headY, p.z, 0, -1, 0, H * 0.9 + OPT.clipDepth);
+    if (d != null) {
+      var floorY = headY - d;
+      if (p.y < floorY - 0.02) {                 /* غاص تحت السطح */
+        p.y = floorY;
+        if (game.vel.y < 0) game.vel.y = 0;
+        game.grounded = true;
+      }
+    }
+    /* 2) هل هو داخل جسم مصمت؟ اختبر أشعّة أفقية قصيرة حول الصدر */
+    var cy = p.y + H * 0.55, i, a, hit = 0, ax, az, freeX = 0, freeZ = 0;
+    for (i = 0; i < 8; i++) {
+      a = i * Math.PI / 4; ax = Math.cos(a); az = Math.sin(a);
+      if (meshHit(p.x, cy, p.z, ax, 0, az, OPT.clipRad) != null) hit++;
+      else { freeX += ax; freeZ += az; }
+    }
+    if (hit >= 7) {                              /* محاصر من كل الجهات */
+      var fl = Math.sqrt(freeX * freeX + freeZ * freeZ);
+      if (fl > 0.01) { p.x += (freeX / fl) * OPT.clipPush * dt * 60; p.z += (freeZ / fl) * OPT.clipPush * dt * 60; }
+      else p.y += OPT.clipPush * dt * 60;        /* لا مخرج: اصعد */
+    }
+    /* 3) حدّ أدنى مطلق: لا تحت تضاريس الخريطة أبداً */
+    var g0 = game.Q.heightAt(p.x, p.z);
+    if (p.y < g0 - 0.05) { p.y = g0; if (game.vel.y < 0) game.vel.y = 0; }
+  }
+
+  /* الكاميرا لا تدخل الجدران: نقرّبها حتى أوّل عائق بينها وبين اللاعب */
+  window.__ROYAL_CAM__ = function (game, tx, ty, tz, dx, dy, dz, dist) {
+    if (!OPT.camWall || !TRI) return dist;
+    /* شعاع واحد لا يكفي: الكاميرا جسم له حجم، فنمسح أربعة أشعّة مزاحة
+       حولها ونأخذ أقربها — ثم نُعيد المسح مرّة ثانية بعد التقريب لأن
+       تقريب الكاميرا يغيّر اتجاه الشعاع نفسه. */
+    var rx = -dz, rz = dx;                         /* متجه جانبي */
+    var rl = Math.sqrt(rx * rx + rz * rz) || 1; rx /= rl; rz /= rl;
+    var ux = -dy * rz, uy = dz * rx - dx * rz, uz = dy * rx;   /* أعلى تقريبي */
+    var ul = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1; ux /= ul; uy /= ul; uz /= ul;
+    var off = OPT.camRad;
+    var offs = [[0, 0, 0], [rx * off, 0, rz * off], [-rx * off, 0, -rz * off],
+    [ux * off, uy * off, uz * off], [-ux * off, -uy * off, -uz * off]];
+    var cur = dist, pass, i, best, o, d;
+    for (pass = 0; pass < 2; pass++) {
+      best = cur;
+      for (i = 0; i < offs.length; i++) {
+        o = offs[i];
+        d = meshHit(tx + o[0], ty + o[1], tz + o[2], dx, dy, dz, cur + OPT.camPad);
+        if (d != null && d - OPT.camPad < best) best = d - OPT.camPad;
+      }
+      cur = Math.max(OPT.camMin, best);
+    }
+    return cur;
+  };
+
   window.__ROYAL_FX__ = function (game, dt) {
+    try { antiClip(game, dt); } catch (e) { }
+    try { alignMuzzle(game); } catch (e) { }
     /* شريطا العلاج والقنابل: ابنِهما مرّة، وحدّث الأعداد كل ربع ثانية */
     if (OPT.itemRails && !game.__build && game.hud) {
       railT -= dt;
