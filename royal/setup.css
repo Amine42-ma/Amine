@@ -309,39 +309,25 @@
 #hud .gw.nf.locked .body{background:none!important;box-shadow:none!important;
   filter:drop-shadow(0 0 6px var(--acc,#ffc21a))}
 
-/* ---------- لوحتا القنابل والعلاجات فوق شريط الأسلحة (أسلوب ببجي) ---------- */
-#hud #ri-bar{position:absolute;left:50%;transform:translateX(-50%);
-  bottom:calc(10px + clamp(40px,6.4vw,58px) + 8px);
-  z-index:4;display:flex;gap:8px;align-items:flex-end;pointer-events:auto;direction:ltr}
-#hud .ri-panel{border-radius:11px;padding:3px 5px 5px;
+/* ---------- القنابل والعلاجات: في نفس صفّ خانات السلاح ---------- */
+#hud #ri-bar{display:flex;gap:4px;align-items:stretch;direction:ltr;margin-inline-start:4px}
+#hud .ri-tile{position:relative;flex:0 0 auto;
+  width:clamp(30px,4.2vw,42px);height:clamp(40px,6.4vw,58px);
+  border-radius:11px;cursor:pointer;padding:0;font-family:inherit;overflow:visible;
   background:linear-gradient(180deg,rgba(12,8,34,.9),rgba(12,8,34,.66));
-  border:1.5px solid rgba(255,255,255,.2)}
-#hud .ri-panel h5{margin:0 0 3px;font-size:9.5px;font-weight:900;direction:rtl;
-  color:rgba(255,255,255,.62);letter-spacing:.2px;text-align:center;font-family:inherit}
-#hud .ri-row{display:flex;gap:4px}
-#hud .ri-tile{position:relative;width:clamp(38px,5.4vw,50px);height:clamp(34px,4.8vw,44px);
-  border-radius:9px;cursor:pointer;padding:0;font-family:inherit;overflow:visible;
-  background:linear-gradient(180deg,rgba(30,24,58,.92),rgba(14,10,32,.8));
   border:1.5px solid rgba(255,255,255,.2);display:grid;place-items:center;
-  transition:transform .1s,opacity .15s,border-color .15s}
-#hud .ri-tile i{font-style:normal;font-size:clamp(17px,2.4vw,22px);line-height:1;
+  transition:transform .1s,opacity .15s}
+#hud .ri-tile i{font-style:normal;font-size:clamp(16px,2.2vw,21px);line-height:1;
   pointer-events:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))}
-#hud .ri-tile u{position:absolute;left:0;right:0;bottom:-11px;text-decoration:none;
-  font-size:8px;font-weight:800;direction:rtl;color:rgba(255,255,255,.5);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
-#hud .ri-tile b{position:absolute;right:-4px;top:-5px;min-width:16px;height:16px;
-  border-radius:8px;background:#12b45a;color:#fff;font-size:10.5px;font-weight:900;
+#hud .ri-tile b{position:absolute;right:-3px;top:-4px;min-width:15px;height:15px;
+  border-radius:8px;background:#12b45a;color:#fff;font-size:10px;font-weight:900;
   display:grid;place-items:center;padding:0 3px;box-shadow:0 1px 4px rgba(0,0,0,.55);
   pointer-events:none}
+#hud .ri-tile.nade{margin-inline-end:6px}
 #hud .ri-tile.nade b{background:#e0483f}
 #hud .ri-tile:active{transform:scale(.9)}
 #hud .ri-tile.empty{opacity:.34}
 #hud .ri-tile.empty b{background:#5a6070}
-#hud .ri-panel:has(.ri-tile:not(.empty)){border-color:rgba(255,255,255,.34)}
-@media (max-height:430px){
-  #hud .ri-panel h5{font-size:8.5px;margin-bottom:2px}
-  #hud .ri-tile u{display:none}
-}
 body.rs-building #hud #ri-bar{display:none!important}
 
 /* الأزرار السياقية: تبهت وتصغر حتى يقترب الشيء */

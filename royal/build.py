@@ -556,9 +556,10 @@ ENGINE_PATCHES = [
     #     نستبدلها بتنعيم أُسّي لا يمكن أن يتجاوز الهدف مهما بطُؤ الإطار.
     (
         'yaw-stable',
-        'let v=e.turnSnap?40:e.aim?22:13;n.yawV=_*v,n.yaw+=n.yawV*t}',
+        'let v=e.turnSnap?40:e.aim?22:13;n.yawV=_*v,n.yaw+=n.yawV*t}this.root.rotation.y=n.yaw;',
         'let v=e.turnSnap?40:e.aim?22:13;n.yawV=_*v,'
-        'n.yaw+=_*(1-Math.exp(-v*Math.min(t,.5)))}',
+        'n.yaw+=_*(1-Math.exp(-v*Math.min(t,.5)))}'
+        'this.root.rotation.y=window.__ROYAL_BODY__?window.__ROYAL_BODY__(this,n.yaw):n.yaw;',
     ),
 
     # 50) مستوى القصّ الأمامي للكاميرا كان 0.35 وسلاح المنظور الأول على

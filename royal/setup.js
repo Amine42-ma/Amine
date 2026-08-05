@@ -97,6 +97,10 @@
   function isUrl(s) { return typeof s === "string" && /^(data:|blob:|https?:)/.test(s); }
   function orient() { return editOrient || (innerWidth >= innerHeight ? "land" : "port"); }
   var editOrient = null;
+  /* رقم إصدار الإعدادات: إذا رفعناه تُنسى المفاتيح المذكورة أدناه فقط */
+  var OPT_VER = 2;
+  var FORCED = ["faceFlip", "gunFlip", "faceMove", "bodyLock", "fpsFix", "camNear", "fpsClear",
+    "holdFix", "holdClear", "holdPush", "holdOut", "parallax", "fireBtnOnly", "itemRails"];
   /* المكان والحجم يختلفان بين الطول والعرض — أمّا المظهر فواحد للاثنين */
   var GEO_KEYS = ["x", "y", "size", "wk", "hk"];
   var LOOK_KEYS = ["shape", "emoji", "icon", "opacity", "visible", "color", "bare"];
@@ -210,14 +214,15 @@
     freeWater: true,     /* السماح بدخول الأودية والماء الداخلي */
     stickyAim: true,     /* التصويب يبقى مثبّتاً حتى تضغط ثانيةً */
     faceMove: false,     /* المحرّك يدير القدمين وحدهما — لا نلمس زاوية الجسم */
-    faceFlip: false,     /* قلب 180° — النموذج أمامه +Z فالمحرّك صحيح بدونه */
+    faceFlip: false,     /* مقيس بالصورة: الجسم = زاوية التصويب مباشرةً */
+    bodyLock: true,      /* زاوية الجسم = زاوية التصويب بالضبط، كل إطار */
     zoneBotMul: 3,       /* سرعة تأذّي البوتات خارج الزون */
     zoneRamp: 4,         /* ثوانٍ حتى يصل ضرر الزون لكامله */
     playerWall: true,    /* رصاص اللاعب لا يخترق الجدران */
     sens: 1,             /* حساسية النظر */
     adsSens: 0.55,       /* حساسية النظر أثناء التصويب */
     smooth: 0.35,        /* تنعيم حركة النظر */
-    gunFlip: true,       /* ماسورة النموذج على -Z ووجه الشخصية +Z */
+    gunFlip: true,       /* ومع دوران الجسم نُعيد الماسورة للأمام */
     ctxButtons: true,    /* أزرار الفتح/الالتقاط تظهر عند الحاجة فقط */
     botDrop: true,       /* الأعداء يُسقطون غنائمهم */
     headMul: 2.2,        /* مضاعف ضرر إصابة الرأس */
@@ -347,6 +352,13 @@
 
   function applySaved() {
     var s = load(), i, j, f, k;
+    /* إصلاحات جوهرية يجب أن تصل حتى لمن عنده إعدادات محفوظة قديمة:
+       ننسى القيم القديمة لهذه المفاتيح وحدها ونُبقي كل شيء آخر كما هو. */
+    if (s.opt && (s.opt.optVer | 0) < OPT_VER) {
+      FORCED.forEach(function (kk) { delete s.opt[kk]; });
+      s.opt.optVer = OPT_VER;
+      SAVED = s; save();
+    }
     if (s.opt) for (k in s.opt) {
       if (k === "badge") { for (j in s.opt.badge) OPT.badge[j] = s.opt.badge[j]; }
       else if (k in OPT) OPT[k] = s.opt[k];
@@ -433,9 +445,10 @@
       s.lobby[b.uid] = { x: b.x, y: b.y, w: b.w, h: b.h, icon: b.icon, emoji: b.emoji, color: b.color, visible: b.visible, label: b.label };
     });
     s.opt = {
+      optVer: OPT_VER,
       climb: OPT.climb, stepH: OPT.stepH, doorStep: OPT.doorStep, doorFix: OPT.doorFix,
       freeWater: OPT.freeWater, stickyAim: OPT.stickyAim, faceMove: OPT.faceMove,
-      botLOS: OPT.botLOS, faceFlip: OPT.faceFlip, zoneBotMul: OPT.zoneBotMul,
+      botLOS: OPT.botLOS, faceFlip: OPT.faceFlip, bodyLock: OPT.bodyLock, zoneBotMul: OPT.zoneBotMul,
       zoneRamp: OPT.zoneRamp, playerWall: OPT.playerWall, gunFlip: OPT.gunFlip,
       exactWalls: OPT.exactWalls, ctxButtons: OPT.ctxButtons, botDrop: OPT.botDrop,
       headMul: OPT.headMul, directAim: OPT.directAim, meshMove: OPT.meshMove,
@@ -1002,7 +1015,7 @@
     P.map.crates = clone(FACTORY.crates);
     OPT.climb = "strict"; OPT.stepH = 0.28; OPT.doorStep = 0.75; OPT.doorFix = true;
     OPT.freeWater = true; OPT.stickyAim = true; OPT.faceMove = false; OPT.botLOS = true;
-    OPT.faceFlip = false; OPT.zoneBotMul = 3; OPT.zoneRamp = 4; OPT.playerWall = true;
+    OPT.faceFlip = false; OPT.bodyLock = true; OPT.zoneBotMul = 3; OPT.zoneRamp = 4; OPT.playerWall = true;
     OPT.sens = 1; OPT.adsSens = 0.55; OPT.smooth = 0.35;
     OPT.gunFlip = true; OPT.exactWalls = true; OPT.matchMin = 22;
     OPT.ctxButtons = true; OPT.botDrop = true; OPT.headMul = 2.2; OPT.directAim = false;
@@ -1961,6 +1974,22 @@
   window.__ROYAL_FACE__ = function (game, camYaw, moveYaw, aiming) {
     if (!OPT.faceFlip) return undefined;                  /* اترك المحرّك يعمل */
     return camYaw + Math.PI;
+  };
+
+  /* ------------------------------------------------------------------
+     زاوية جسم اللاعب كانت تُكتب من ثلاثة أماكن (تحديث الشخصية، وسطر
+     المظلّة، والتنعيم) فتختلف بينها بنصف دورة أحياناً — ومن هنا كان
+     الجسم والسلاح ينقلبان «بدل مرات». نجعل لها مصدراً واحداً لا ثاني
+     له: زاوية التصويب نفسها، تُكتب كل إطار بلا تنعيم ولا تأخير.
+     (القدمان تبقيان تلتفتان لجهة الجري عبر legYaw في المحرّك.) */
+  window.__ROYAL_BODY__ = function (ch, yaw) {
+    try {
+      if (!OPT.bodyLock) return yaw;
+      var g = window.__runtime && window.__runtime.game;
+      if (!g || g.player !== ch) return yaw;               /* البوتات كما هي */
+      if (g.phase !== "ground") return yaw;                /* الطائرة والمظلّة */
+      return g.yaw + Math.PI + (OPT.faceFlip ? Math.PI : 0);
+    } catch (e) { return yaw; }
   };
 
   /* ضرر الزون يتدرّج: يبدأ خفيفاً ويشتدّ كلما طال بقاؤك وبَعُدت */
@@ -3103,30 +3132,21 @@
     if (RAILS && document.body.contains(RAILS.wrap)) return;
     var hud = game.hud && game.hud.node; if (!hud) return;
 
-    function tile(icon, label, title, onTap) {
-      var n = el("button", { class: "ri-tile", title: title, onclick: function (e) { e.preventDefault(); onTap(); } }, [
-        el("i", { text: icon }),
-        el("b", { text: "0" }),
-        el("u", { text: label })
+    function tile(icon, title, onTap) {
+      return el("button", { class: "ri-tile", title: title, onclick: function (e) { e.preventDefault(); onTap(); } }, [
+        el("i", { text: icon }), el("b", { text: "0" })
       ]);
-      return n;
     }
-    var nadePanel = el("div", { class: "ri-panel" }, [
-      el("h5", { text: "💣 قنابل" }),
-      el("div", { class: "ri-row" }, [
-        (function () { var t = tile("💣", "يدوية", "قنبلة يدوية", function () { throwNade(game); }); t.__k = "nade"; t.classList.add("nade"); return t; })()
-      ])
-    ]);
-    var healRow = el("div", { class: "ri-row" });
+    var nade = tile("💣", "قنبلة يدوية", function () { throwNade(game); });
+    nade.__k = "nade"; nade.classList.add("nade");
+    var wrap = el("div", { id: "ri-bar" }, [nade]);
     HEALS.forEach(function (h) {
-      var t = tile(h.emo, h.name, h.name, function () { useHeal(game, h); });
-      t.__k = h.k; healRow.appendChild(t);
+      var t = tile(h.emo, h.name, function () { useHeal(game, h); });
+      t.__k = h.k; wrap.appendChild(t);
     });
-    var healPanel = el("div", { class: "ri-panel" }, [
-      el("h5", { text: "🧪 علاجات" }), healRow
-    ]);
-    var wrap = el("div", { id: "ri-bar" }, [nadePanel, healPanel]);
-    hud.appendChild(wrap);
+    /* في نفس صفّ خانات السلاح تماماً — لا يغطّي الشاشة أبداً */
+    var box = hud.querySelector("#ammobox") || document.getElementById("ammobox");
+    if (box) box.appendChild(wrap); else hud.appendChild(wrap);
     RAILS = { wrap: wrap, tiles: wrap.querySelectorAll(".ri-tile") };
     syncRails(game);
   }
