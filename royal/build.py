@@ -550,6 +550,33 @@ ENGINE_PATCHES = [
         'this.shootRay(c,y,s)}',
     ),
 
+    # 49) دوران الجسم كان غير مستقرّ: `yaw += (فرق × سرعة) × dt` تتجاوز
+    #     الهدف كلّما كان الإطار بطيئاً (سرعة×dt > 2) فينقلب الجسم للجهة
+    #     المقابلة ويظلّ يتأرجح — ومن هنا «مرّة اللاعب مقلوب ومرّة السلاح».
+    #     نستبدلها بتنعيم أُسّي لا يمكن أن يتجاوز الهدف مهما بطُؤ الإطار.
+    (
+        'yaw-stable',
+        'let v=e.turnSnap?40:e.aim?22:13;n.yawV=_*v,n.yaw+=n.yawV*t}',
+        'let v=e.turnSnap?40:e.aim?22:13;n.yawV=_*v,'
+        'n.yaw+=_*(1-Math.exp(-v*Math.min(t,.5)))}',
+    ),
+
+    # 50) مستوى القصّ الأمامي للكاميرا كان 0.35 وسلاح المنظور الأول على
+    #     0.34 — أي داخل المستوى، فيُقَصّ ويظهر مجوّفاً من الداخل.
+    (
+        'cam-near',
+        'this.camera=new Re(62,innerWidth/innerHeight,.35,4200)',
+        'this.camera=new Re(62,innerWidth/innerHeight,.08,4200)',
+    ),
+
+    # 51) دفع سلاح المنظور الأول خارج مستوى القصّ.
+    (
+        'fps-hold',
+        'i.position.set(e.fps.px,e.fps.py,e.fps.pz),i.rotation.set(e.fps.rx,e.fps.ry,e.fps.rz),',
+        'i.position.set(e.fps.px,e.fps.py,e.fps.pz),i.rotation.set(e.fps.rx,e.fps.ry,e.fps.rz),'
+        'window.__ROYAL_FPS__&&window.__ROYAL_FPS__(i,e),',
+    ),
+
     # 47) الصناديق تُخرج أيضاً حقيبة الإسعاف والقنبلة اليدوية.
     (
         'crate-loot',

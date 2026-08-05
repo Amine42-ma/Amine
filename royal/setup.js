@@ -234,7 +234,10 @@
     holdPush: 0.04,      /* دفع إضافي للأمام */
     holdOut: 0.07,       /* إبعاد عن الجسم */
     holdUp: 0,           /* رفع/خفض */
-    itemRails: true,     /* علاجات على اليمين وقنابل على اليسار */
+    fpsFix: true,        /* سلاح المنظور الأول لا يُقَصّ */
+    camNear: 0.08,       /* مستوى القصّ الأمامي */
+    fpsClear: 0.1,       /* هامش أمان أمام الكاميرا */
+    itemRails: true,     /* لوحتا العلاجات والقنابل */
     nadeFuse: 3,         /* ثوانٍ حتى انفجار القنبلة */
     nadeSpeed: 17,       /* قوّة الرمي */
     nadeR: 7.5,          /* نصف قطر الانفجار */
@@ -441,6 +444,7 @@
       parallax: OPT.parallax, shotFx: OPT.shotFx, holdFix: OPT.holdFix,
       holdClear: OPT.holdClear, holdPush: OPT.holdPush, holdOut: OPT.holdOut, holdUp: OPT.holdUp,
       itemRails: OPT.itemRails, nadeFuse: OPT.nadeFuse, nadeSpeed: OPT.nadeSpeed,
+      fpsFix: OPT.fpsFix, camNear: OPT.camNear, fpsClear: OPT.fpsClear,
       nadeR: OPT.nadeR, nadeDmg: OPT.nadeDmg,
       sfxSniperSec: OPT.sfxSniperSec, sfxRpgSec: OPT.sfxRpgSec,
       chuteAcc: OPT.chuteAcc, chuteDamp: OPT.chuteDamp, customSfx: OPT.customSfx,
@@ -1006,6 +1010,7 @@
     OPT.fireBtnOnly = true; OPT.parallax = true; OPT.shotFx = true;
     OPT.holdFix = true; OPT.holdClear = 0.06; OPT.holdPush = 0.04; OPT.holdOut = 0.07; OPT.holdUp = 0;
     OPT.itemRails = true; OPT.nadeFuse = 3; OPT.nadeSpeed = 17; OPT.nadeR = 7.5; OPT.nadeDmg = 115;
+    OPT.fpsFix = true; OPT.camNear = 0.08; OPT.fpsClear = 0.1;
     OPT.sfxSniperSec = 1.6; OPT.sfxRpgSec = 2.4;
     OPT.meshMove = true; OPT.chuteAcc = 34; OPT.chuteDamp = 2.2;
     OPT.customSfx = true; OPT.sfxPistolSec = 1.0; OPT.sfxRifleSec = 0.3; OPT.menuVol = 0.45;
@@ -1602,7 +1607,7 @@
           text: OPT.itemRails ? "✅ الشريطان ظاهران" : "🚫 مخفيّان",
           onclick: function () {
             OPT.itemRails = !OPT.itemRails; persist(); renderPlay();
-            if (!OPT.itemRails && RAILS) { RAILS.right.remove(); RAILS.left.remove(); RAILS = null; }
+            if (!OPT.itemRails && RAILS) { RAILS.wrap.remove(); RAILS = null; }
           }
         })
       ]),
@@ -2867,6 +2872,14 @@
     );
   };
 
+  /* سلاح المنظور الأول: ادفعه خارج مستوى القصّ حتى لا يُقَصّ ويظهر مجوّفاً */
+  window.__ROYAL_FPS__ = function (node, def) {
+    if (!OPT.fpsFix) return;
+    var back = (def.len || 0.8) * 0.26;              /* ما يمتدّ نحو الكاميرا */
+    var need = OPT.camNear + back + OPT.fpsClear;
+    if (node.position.z > -need) node.position.z = -need;
+  };
+
   /* ============================================================
      6.39) مؤثّرات الطلقة: خيط رصاص لامع + صاروخ RPG حقيقي
      ============================================================ */
@@ -2996,10 +3009,7 @@
         railT = 0.25;
         buildRails(game);
         syncRails(game);
-        if (RAILS) {                       /* لا تظهر إلا بعد الهبوط */
-          var on = game.phase === "ground" ? "" : "none";
-          RAILS.right.style.display = on; RAILS.left.style.display = on;
-        }
+        if (RAILS) RAILS.wrap.style.display = game.phase === "ground" ? "" : "none";
       }
     }
     var L = FX.list; if (!L.length) return;
@@ -3087,42 +3097,49 @@
   ];
   var RAILS = null, railT = 0;
 
+  /* لوحتان أفقيّتان فوق شريط الأسلحة تماماً كببجي:
+     «قنابل» على اليسار و«علاجات» على اليمين، بلاطات بنفس شكل خانات السلاح. */
   function buildRails(game) {
-    if (RAILS && document.body.contains(RAILS.right)) return;
+    if (RAILS && document.body.contains(RAILS.wrap)) return;
     var hud = game.hud && game.hud.node; if (!hud) return;
-    var right = el("div", { id: "ri-heal", class: "ri-rail" });
-    HEALS.forEach(function (h) {
-      var n = el("button", {
-        class: "ri-btn", title: h.name,
-        onclick: function (e) { e.preventDefault(); useHeal(game, h); }
-      }, [el("i", { text: h.emo }), el("b", { text: "0" })]);
-      n.__k = h.k;
-      right.appendChild(n);
-    });
-    var left = el("div", { id: "ri-nade", class: "ri-rail" }, [
-      el("button", {
-        class: "ri-btn nade", title: "قنبلة يدوية",
-        onclick: function (e) { e.preventDefault(); throwNade(game); }
-      }, [el("i", { text: "💣" }), el("b", { text: "0" })])
+
+    function tile(icon, label, title, onTap) {
+      var n = el("button", { class: "ri-tile", title: title, onclick: function (e) { e.preventDefault(); onTap(); } }, [
+        el("i", { text: icon }),
+        el("b", { text: "0" }),
+        el("u", { text: label })
+      ]);
+      return n;
+    }
+    var nadePanel = el("div", { class: "ri-panel" }, [
+      el("h5", { text: "💣 قنابل" }),
+      el("div", { class: "ri-row" }, [
+        (function () { var t = tile("💣", "يدوية", "قنبلة يدوية", function () { throwNade(game); }); t.__k = "nade"; t.classList.add("nade"); return t; })()
+      ])
     ]);
-    hud.appendChild(right); hud.appendChild(left);
-    RAILS = { right: right, left: left };
+    var healRow = el("div", { class: "ri-row" });
+    HEALS.forEach(function (h) {
+      var t = tile(h.emo, h.name, h.name, function () { useHeal(game, h); });
+      t.__k = h.k; healRow.appendChild(t);
+    });
+    var healPanel = el("div", { class: "ri-panel" }, [
+      el("h5", { text: "🧪 علاجات" }), healRow
+    ]);
+    var wrap = el("div", { id: "ri-bar" }, [nadePanel, healPanel]);
+    hud.appendChild(wrap);
+    RAILS = { wrap: wrap, tiles: wrap.querySelectorAll(".ri-tile") };
     syncRails(game);
   }
 
   function syncRails(game) {
     if (!RAILS) return;
     var it = (game.inv && game.inv.items) || {};
-    var bs = RAILS.right.children, i, n;
-    for (i = 0; i < bs.length; i++) {
-      n = it[bs[i].__k] || 0;
-      bs[i].querySelector("b").textContent = n;
-      bs[i].classList.toggle("empty", n <= 0);
+    var ts = RAILS.tiles, i, n;
+    for (i = 0; i < ts.length; i++) {
+      n = it[ts[i].__k] || 0;
+      ts[i].querySelector("b").textContent = n;
+      ts[i].classList.toggle("empty", n <= 0);
     }
-    n = it.nade || 0;
-    var nb = RAILS.left.firstChild;
-    nb.querySelector("b").textContent = n;
-    nb.classList.toggle("empty", n <= 0);
   }
 
   function useHeal(game, h) {
